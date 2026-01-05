@@ -1548,7 +1548,7 @@ def read_root():
                     return;
                 }
                 if (lastMode === 'timeline') {
-                    await timeline();
+                    await timeline({ useInput: false });
                     return;
                 }
                 await search();
@@ -1913,12 +1913,14 @@ def read_root():
                 updateTimelineStatus();
             }
 
-            async function timeline() {
+            async function timeline(options = {}) {
                 lastMode = 'timeline';
                 persistLastMode('timeline');
                 const params = new URLSearchParams();
                 const project = document.getElementById('project').value;
-                const query = document.getElementById('query').value;
+                const useInput = options.useInput !== false;
+                const queryInput = document.getElementById('query');
+                const query = useInput && queryInput ? queryInput.value : '';
                 const type = document.getElementById('type').value;
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
@@ -1935,10 +1937,12 @@ def read_root():
                 if (timelineAnchorId) {
                     params.append('anchor_id', timelineAnchorId);
                 } else {
-                    const resolvedQuery = query || timelineQuery;
+                    const resolvedQuery = useInput ? (query || timelineQuery) : timelineQuery;
                     if (resolvedQuery) {
                         params.append('query', resolvedQuery);
-                        timelineQuery = resolvedQuery;
+                        if (useInput) {
+                            timelineQuery = resolvedQuery;
+                        }
                     }
                 }
                 if (depthBefore) params.append('depth_before', depthBefore);
