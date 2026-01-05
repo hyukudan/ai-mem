@@ -235,6 +235,11 @@ def read_root():
                 font-weight: 600;
                 color: var(--muted);
             }
+            .auto-row .auto-global {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
             .pulse-toggle {
                 display: flex;
                 align-items: center;
@@ -869,6 +874,10 @@ def read_root():
                             <input type="radio" name="refreshMode" value="stats">
                             Stats only
                         </label>
+                        <label class="auto-global">
+                            <input type="checkbox" id="autoGlobal">
+                            Use global auto-refresh
+                        </label>
                         <label class="pulse-toggle">
                             <input type="checkbox" id="pulseToggle" checked>
                             Pulse
@@ -1103,6 +1112,7 @@ def read_root():
                     enabled: `ai-mem-auto-refresh-${key}`,
                     interval: `ai-mem-auto-refresh-interval-${key}`,
                     mode: `ai-mem-auto-refresh-mode-${key}`,
+                    useGlobal: `ai-mem-auto-refresh-use-global-${key}`,
                 };
             }
 
@@ -1596,9 +1606,18 @@ def read_root():
                 const modeValue = modeInput ? modeInput.value : 'all';
                 const projectValue = getCurrentProjectValue();
                 const keys = getAutoRefreshKeys(projectValue);
-                localStorage.setItem(keys.enabled, String(enabled));
-                localStorage.setItem(keys.interval, String(interval));
-                localStorage.setItem(keys.mode, modeValue);
+                const globalToggle = document.getElementById('autoGlobal');
+                const useGlobal = globalToggle ? globalToggle.checked : false;
+                localStorage.setItem(keys.useGlobal, String(useGlobal));
+                if (useGlobal) {
+                    localStorage.setItem('ai-mem-auto-refresh', String(enabled));
+                    localStorage.setItem('ai-mem-auto-refresh-interval', String(interval));
+                    localStorage.setItem('ai-mem-auto-refresh-mode', modeValue);
+                } else {
+                    localStorage.setItem(keys.enabled, String(enabled));
+                    localStorage.setItem(keys.interval, String(interval));
+                    localStorage.setItem(keys.mode, modeValue);
+                }
                 localStorage.setItem('ai-mem-auto-refresh', String(enabled));
                 localStorage.setItem('ai-mem-auto-refresh-interval', String(interval));
                 localStorage.setItem('ai-mem-auto-refresh-mode', modeValue);
@@ -1630,6 +1649,15 @@ def read_root():
                 const modeText = modeValue === 'stats' ? 'Stats only' : 'Stats + results';
                 label.textContent = `Mode: ${modeText}`;
                 label.style.display = 'inline-flex';
+            }
+
+            function updateAutoGlobal() {
+                const toggle = document.getElementById('autoGlobal');
+                if (!toggle) return;
+                const projectValue = getCurrentProjectValue();
+                const keys = getAutoRefreshKeys(projectValue);
+                localStorage.setItem(keys.useGlobal, String(toggle.checked));
+                loadAutoRefresh();
             }
 
             function getPulseConfig(project) {
@@ -1716,17 +1744,31 @@ def read_root():
                 let enabledValue = localStorage.getItem(keys.enabled);
                 let intervalValue = localStorage.getItem(keys.interval);
                 let modeValue = localStorage.getItem(keys.mode);
-                if (enabledValue === null && globalEnabled !== null) {
-                    enabledValue = globalEnabled;
-                    localStorage.setItem(keys.enabled, globalEnabled);
+                const useGlobalStored = localStorage.getItem(keys.useGlobal);
+                const useGlobal = useGlobalStored === null
+                    ? enabledValue === null && intervalValue === null && modeValue === null
+                    : useGlobalStored === 'true';
+                if (useGlobal) {
+                    enabledValue = globalEnabled ?? enabledValue;
+                    intervalValue = globalInterval ?? intervalValue;
+                    modeValue = globalMode ?? modeValue;
+                } else {
+                    if (enabledValue === null && globalEnabled !== null) {
+                        enabledValue = globalEnabled;
+                        localStorage.setItem(keys.enabled, globalEnabled);
+                    }
+                    if (intervalValue === null && globalInterval !== null) {
+                        intervalValue = globalInterval;
+                        localStorage.setItem(keys.interval, globalInterval);
+                    }
+                    if (modeValue === null && globalMode) {
+                        modeValue = globalMode;
+                        localStorage.setItem(keys.mode, globalMode);
+                    }
                 }
-                if (intervalValue === null && globalInterval !== null) {
-                    intervalValue = globalInterval;
-                    localStorage.setItem(keys.interval, globalInterval);
-                }
-                if (modeValue === null && globalMode) {
-                    modeValue = globalMode;
-                    localStorage.setItem(keys.mode, globalMode);
+                const globalToggle = document.getElementById('autoGlobal');
+                if (globalToggle) {
+                    globalToggle.checked = useGlobal;
                 }
                 const enabled = enabledValue === 'true';
                 const interval = parseInt(intervalValue || '30', 10);
@@ -2296,6 +2338,7 @@ def read_root():
                 document.getElementById('pulseToggle').addEventListener('change', updatePulseToggle);
                 document.getElementById('pulseGlobal').addEventListener('change', updatePulseGlobal);
                 document.getElementById('queryGlobal').addEventListener('change', updateQueryGlobal);
+                document.getElementById('autoGlobal').addEventListener('change', updateAutoGlobal);
                 document.querySelectorAll('input[name="refreshMode"]').forEach(input => {
                     input.addEventListener('change', updateAutoRefresh);
                 });
