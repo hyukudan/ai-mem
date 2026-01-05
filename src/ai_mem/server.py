@@ -823,6 +823,7 @@ def read_root():
                 await loadStats();
                 loadPulseToggle();
                 loadTimelineAnchor();
+                loadQuery();
             }
 
             function buildQueryParams() {
@@ -923,8 +924,10 @@ def read_root():
 
             function getCurrentProjectValue() {
                 const select = document.getElementById('project');
-                const value = select ? select.value : '';
-                if (value) return value;
+                if (select) {
+                    const value = select.value;
+                    if (value || select.options.length > 0) return value;
+                }
                 return selectedProject || localStorage.getItem('ai-mem-selected-project') || '';
             }
 
@@ -936,10 +939,27 @@ def read_root():
                 };
             }
 
+            function getQueryKey(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return `ai-mem-query-${key}`;
+            }
+
             function clearTimelineAnchorStorage(projectValue) {
                 const keys = getTimelineKeys(projectValue);
                 localStorage.removeItem(keys.id);
                 localStorage.removeItem(keys.query);
+            }
+
+            function clearQueryStorage(projectValue) {
+                const key = getQueryKey(projectValue);
+                localStorage.removeItem(key);
+            }
+
+            function persistQuery(value) {
+                const projectValue = getCurrentProjectValue();
+                const key = getQueryKey(projectValue);
+                localStorage.setItem(key, value);
+                localStorage.setItem('ai-mem-query', value);
             }
 
             function persistTimelineAnchor() {
@@ -1217,6 +1237,8 @@ def read_root():
                 localStorage.removeItem('ai-mem-selected-type');
                 localStorage.removeItem('ai-mem-date-start');
                 localStorage.removeItem('ai-mem-date-end');
+                clearQueryStorage(previousProject);
+                clearQueryStorage('');
                 localStorage.removeItem('ai-mem-query');
                 clearTimelineAnchorStorage(previousProject);
                 clearTimelineAnchorStorage('');
@@ -1446,8 +1468,18 @@ def read_root():
             }
 
             function loadQuery() {
-                const savedQuery = localStorage.getItem('ai-mem-query') || '';
-                document.getElementById('query').value = savedQuery;
+                const input = document.getElementById('query');
+                if (!input) return;
+                const projectValue = getCurrentProjectValue();
+                const key = getQueryKey(projectValue);
+                let savedQuery = localStorage.getItem(key);
+                if (savedQuery === null) {
+                    savedQuery = localStorage.getItem('ai-mem-query') || '';
+                    if (savedQuery) {
+                        localStorage.setItem(key, savedQuery);
+                    }
+                }
+                input.value = savedQuery || '';
                 updateFiltersPill();
             }
 
@@ -1645,12 +1677,12 @@ def read_root():
                 if (dateEnd) params.append('date_end', dateEnd);
                 if (timelineAnchorId) {
                     params.append('anchor_id', timelineAnchorId);
-                } else if (query) {
-                    params.append('query', query);
-                    timelineQuery = query;
-                }
-                if (timelineQuery) {
-                    params.append('query', timelineQuery);
+                } else {
+                    const resolvedQuery = query || timelineQuery;
+                    if (resolvedQuery) {
+                        params.append('query', resolvedQuery);
+                        timelineQuery = resolvedQuery;
+                    }
                 }
                 if (depthBefore) params.append('depth_before', depthBefore);
                 if (depthAfter) params.append('depth_after', depthAfter);
@@ -1892,12 +1924,13 @@ def read_root():
                     localStorage.setItem('ai-mem-selected-project', selectedProject);
                     loadPulseToggle();
                     loadTimelineAnchor();
+                    loadQuery();
                     await loadStats();
                     if (lastMode === 'timeline' && timelineQuery) {
                         const queryInput = document.getElementById('query');
                         if (queryInput) {
                             queryInput.value = timelineQuery;
-                            localStorage.setItem('ai-mem-query', timelineQuery);
+                            persistQuery(timelineQuery);
                         }
                     }
                     if (lastMode === 'timeline') {
@@ -1934,7 +1967,7 @@ def read_root():
                 document.getElementById('query').addEventListener('input', () => {
                     timelineAnchorId = '';
                     timelineQuery = document.getElementById('query').value || '';
-                    localStorage.setItem('ai-mem-query', timelineQuery);
+                    persistQuery(timelineQuery);
                     persistTimelineAnchor();
                     updateAnchorPill();
                 });
