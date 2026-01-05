@@ -330,6 +330,38 @@ def read_root():
             body.pulse-off .filters-pill.live .live-dot {
                 animation: none;
             }
+            .anchor-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 4px 8px;
+                border-radius: 999px;
+                border: 1px solid #e1dbd2;
+                background: #fff7ec;
+                color: var(--muted);
+                font-size: 11px;
+            }
+            .anchor-badge strong {
+                color: var(--ink);
+                font-weight: 600;
+            }
+            .anchor-badge .anchor-value {
+                max-width: 140px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .anchor-badge button {
+                border: none;
+                background: transparent;
+                color: var(--muted);
+                font-size: 12px;
+                cursor: pointer;
+                padding: 0;
+            }
+            .anchor-badge button:hover {
+                color: var(--ink);
+            }
             .card {
                 background: var(--panel);
                 padding: 16px;
@@ -426,6 +458,14 @@ def read_root():
                 justify-content: space-between;
                 gap: 8px;
             }
+            .stats-meta {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                margin-left: auto;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }
             .live-badge {
                 display: none;
                 align-items: center;
@@ -449,9 +489,6 @@ def read_root():
                     padding: 8px 0;
                     z-index: 1;
                 }
-            }
-            .stats-header .filters-pill {
-                margin-left: auto;
             }
             .stats-toggle {
                 border: none;
@@ -668,9 +705,12 @@ def read_root():
                     <div class="stats-card" id="statsCard">
                         <div class="stats-header">
                             <div class="stats-title" id="statsTitle">Stats<span class="live-dot" id="statsLiveDot"></span></div>
-                            <div class="filters-pill" id="filtersPillStats" style="display:none;">Filters</div>
-                            <span class="live-badge" id="sidebarLiveBadge">Live</span>
-                            <button class="stats-toggle" id="statsToggle" onclick="toggleStats()">▾ Collapse</button>
+                            <div class="stats-meta">
+                                <div class="anchor-badge" id="anchorBadge" style="display:none;"></div>
+                                <div class="filters-pill" id="filtersPillStats" style="display:none;">Filters</div>
+                                <span class="live-badge" id="sidebarLiveBadge">Live</span>
+                                <button class="stats-toggle" id="statsToggle" onclick="toggleStats()">▾ Collapse</button>
+                            </div>
                         </div>
                         <div class="stats-body" id="statsBody">
                             <div class="last-update" id="lastUpdate">Last update: --</div>
@@ -979,18 +1019,50 @@ def read_root():
                 localStorage.removeItem(keys.query);
             }
 
+            function getAnchorSummary() {
+                if (timelineAnchorId) {
+                    return { label: 'Anchor', value: timelineAnchorId };
+                }
+                if (timelineQuery) {
+                    return { label: 'Anchor query', value: timelineQuery };
+                }
+                return null;
+            }
+
             function updateAnchorPill() {
                 const pill = document.getElementById('anchorPill');
                 const label = document.getElementById('anchorLabel');
+                const badge = document.getElementById('anchorBadge');
+                const summary = getAnchorSummary();
                 if (!pill || !label) return;
-                if (timelineAnchorId) {
+                if (summary) {
                     pill.style.display = 'inline-flex';
-                    label.textContent = `Anchor: ${timelineAnchorId}`;
-                } else if (timelineQuery) {
-                    pill.style.display = 'inline-flex';
-                    label.textContent = `Anchor query: ${timelineQuery}`;
+                    label.textContent = `${summary.label}: ${summary.value}`;
                 } else {
                     pill.style.display = 'none';
+                }
+                if (badge) {
+                    if (summary) {
+                        badge.style.display = 'inline-flex';
+                        badge.innerHTML = '';
+                        const labelEl = document.createElement('strong');
+                        labelEl.textContent = summary.label;
+                        const valueEl = document.createElement('span');
+                        valueEl.className = 'anchor-value';
+                        valueEl.textContent = summary.value;
+                        valueEl.title = summary.value;
+                        const clearBtn = document.createElement('button');
+                        clearBtn.type = 'button';
+                        clearBtn.title = 'Clear anchor';
+                        clearBtn.textContent = 'x';
+                        clearBtn.addEventListener('click', clearTimelineAnchor);
+                        badge.appendChild(labelEl);
+                        badge.appendChild(valueEl);
+                        badge.appendChild(clearBtn);
+                    } else {
+                        badge.style.display = 'none';
+                        badge.innerHTML = '';
+                    }
                 }
                 updateResultsHeader();
                 updateFiltersPill();
