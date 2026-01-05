@@ -153,6 +153,19 @@ def read_root():
                 opacity: 0.5;
                 cursor: not-allowed;
             }
+            .query-options {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 11px;
+                color: var(--muted);
+            }
+            .query-options label {
+                font-size: 11px;
+                text-transform: none;
+                letter-spacing: 0;
+                color: var(--muted);
+            }
             button {
                 padding: 12px 16px;
                 border-radius: 12px;
@@ -727,6 +740,12 @@ def read_root():
                             <input type="text" id="query" placeholder="Search memories...">
                             <button type="button" class="query-clear" id="queryClear" onclick="clearQuery()">Clear</button>
                         </div>
+                        <div class="query-options">
+                            <label class="pulse-toggle">
+                                <input type="checkbox" id="queryGlobal">
+                                Use global query
+                            </label>
+                        </div>
                     </div>
                     <div>
                         <label for="project">Project</label>
@@ -1032,6 +1051,26 @@ def read_root():
                 return `ai-mem-query-${key}`;
             }
 
+            function getQueryUseGlobalKey(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return `ai-mem-query-use-global-${key}`;
+            }
+
+            function getQueryConfig(projectValue) {
+                const key = getQueryKey(projectValue);
+                const useGlobalKey = getQueryUseGlobalKey(projectValue);
+                const projectStored = localStorage.getItem(key);
+                const globalStored = localStorage.getItem('ai-mem-query') || '';
+                const useGlobalStored = localStorage.getItem(useGlobalKey);
+                const useGlobal = useGlobalStored === null
+                    ? projectStored === null
+                    : useGlobalStored === 'true';
+                const value = useGlobal
+                    ? globalStored
+                    : (projectStored === null ? globalStored : projectStored);
+                return { value, useGlobal };
+            }
+
             function getModeKey(projectValue) {
                 const key = encodeURIComponent(projectValue || 'all');
                 return `ai-mem-last-mode-${key}`;
@@ -1048,11 +1087,36 @@ def read_root():
                 localStorage.removeItem(key);
             }
 
+            function clearQueryUseGlobalStorage(projectValue) {
+                const key = getQueryUseGlobalKey(projectValue);
+                localStorage.removeItem(key);
+            }
+
             function persistQuery(value) {
                 const projectValue = getCurrentProjectValue();
                 const key = getQueryKey(projectValue);
-                localStorage.setItem(key, value);
+                const useGlobalToggle = document.getElementById('queryGlobal');
+                const useGlobal = useGlobalToggle ? useGlobalToggle.checked : false;
+                localStorage.setItem(getQueryUseGlobalKey(projectValue), String(useGlobal));
+                if (!useGlobal) {
+                    localStorage.setItem(key, value);
+                }
                 localStorage.setItem('ai-mem-query', value);
+            }
+
+            function updateQueryGlobal() {
+                const toggle = document.getElementById('queryGlobal');
+                if (!toggle) return;
+                const projectValue = getCurrentProjectValue();
+                localStorage.setItem(getQueryUseGlobalKey(projectValue), String(toggle.checked));
+                loadQuery();
+                persistQuery(document.getElementById('query').value || '');
+                updateQueryClearButton();
+                if (lastMode === 'timeline') {
+                    timeline();
+                } else {
+                    search();
+                }
             }
 
             function persistLastMode(mode) {
@@ -1419,6 +1483,8 @@ def read_root():
                 localStorage.removeItem('ai-mem-date-end');
                 clearQueryStorage(previousProject);
                 clearQueryStorage('');
+                clearQueryUseGlobalStorage(previousProject);
+                clearQueryUseGlobalStorage('');
                 localStorage.removeItem('ai-mem-query');
                 clearTimelineAnchorStorage(previousProject);
                 clearTimelineAnchorStorage('');
@@ -1661,15 +1727,12 @@ def read_root():
                 const input = document.getElementById('query');
                 if (!input) return;
                 const projectValue = getCurrentProjectValue();
-                const key = getQueryKey(projectValue);
-                let savedQuery = localStorage.getItem(key);
-                if (savedQuery === null) {
-                    savedQuery = localStorage.getItem('ai-mem-query') || '';
-                    if (savedQuery) {
-                        localStorage.setItem(key, savedQuery);
-                    }
+                const config = getQueryConfig(projectValue);
+                input.value = config.value || '';
+                const toggle = document.getElementById('queryGlobal');
+                if (toggle) {
+                    toggle.checked = config.useGlobal;
                 }
-                input.value = savedQuery || '';
                 updateQueryClearButton();
                 updateFiltersPill();
             }
@@ -2155,6 +2218,7 @@ def read_root():
                 document.getElementById('refreshInterval').addEventListener('change', updateAutoRefresh);
                 document.getElementById('pulseToggle').addEventListener('change', updatePulseToggle);
                 document.getElementById('pulseGlobal').addEventListener('change', updatePulseGlobal);
+                document.getElementById('queryGlobal').addEventListener('change', updateQueryGlobal);
                 document.querySelectorAll('input[name="refreshMode"]').forEach(input => {
                     input.addEventListener('change', updateAutoRefresh);
                 });
