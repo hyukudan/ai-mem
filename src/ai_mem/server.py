@@ -748,6 +748,10 @@ def read_root():
                             <input type="checkbox" id="pulseToggle" checked>
                             Pulse
                         </label>
+                        <label class="pulse-toggle">
+                            <input type="checkbox" id="pulseGlobal">
+                            Use global
+                        </label>
                         <span class="subtitle pulse-help">Pulse animates live indicators.</span>
                         <span class="live-indicator" id="liveIndicator">
                             <span class="live-dot"></span>
@@ -1245,30 +1249,79 @@ def read_root():
                 updateSidebarLiveBadge();
             }
 
+            function getPulseConfig(project) {
+                const prefersReduced = window.matchMedia
+                    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+                    : false;
+                const globalStored = localStorage.getItem('ai-mem-pulse-default');
+                const globalEnabled = globalStored === null ? !prefersReduced : globalStored === 'true';
+                const projectKey = `ai-mem-pulse-${project}`;
+                const projectStored = localStorage.getItem(projectKey);
+                const useGlobalKey = `ai-mem-pulse-use-global-${project}`;
+                const useGlobalStored = localStorage.getItem(useGlobalKey);
+                const useGlobal = useGlobalStored === null
+                    ? projectStored === null
+                    : useGlobalStored === 'true';
+                const enabled = useGlobal
+                    ? globalEnabled
+                    : (projectStored === null ? globalEnabled : projectStored === 'true');
+                return { enabled, useGlobal };
+            }
+
             function updatePulseToggle() {
                 const toggle = document.getElementById('pulseToggle');
                 if (!toggle) return;
                 const enabled = toggle.checked;
-                document.body.classList.toggle('pulse-off', !enabled);
                 const project = document.getElementById('project').value || 'all';
-                localStorage.setItem(`ai-mem-pulse-${project}`, String(enabled));
+                const useGlobalToggle = document.getElementById('pulseGlobal');
+                const useGlobal = useGlobalToggle ? useGlobalToggle.checked : false;
+                if (useGlobal) {
+                    localStorage.setItem('ai-mem-pulse-default', String(enabled));
+                    localStorage.setItem(`ai-mem-pulse-use-global-${project}`, 'true');
+                } else {
+                    localStorage.setItem(`ai-mem-pulse-${project}`, String(enabled));
+                    if (useGlobalToggle) {
+                        localStorage.setItem(`ai-mem-pulse-use-global-${project}`, 'false');
+                    }
+                }
+                document.body.classList.toggle('pulse-off', !enabled);
                 updateResultsHeader();
                 updateFiltersPill();
                 updateStatsTitle();
                 updateSidebarLiveBadge();
             }
 
+            function updatePulseGlobal() {
+                const toggle = document.getElementById('pulseToggle');
+                const globalToggle = document.getElementById('pulseGlobal');
+                if (!toggle || !globalToggle) return;
+                const project = document.getElementById('project').value || 'all';
+                const useGlobal = globalToggle.checked;
+                localStorage.setItem(`ai-mem-pulse-use-global-${project}`, String(useGlobal));
+                if (!useGlobal) {
+                    const projectKey = `ai-mem-pulse-${project}`;
+                    if (localStorage.getItem(projectKey) === null) {
+                        localStorage.setItem(projectKey, String(toggle.checked));
+                    }
+                }
+                loadPulseToggle();
+            }
+
             function loadPulseToggle() {
                 const toggle = document.getElementById('pulseToggle');
                 if (!toggle) return;
                 const project = document.getElementById('project').value || 'all';
-                const stored = localStorage.getItem(`ai-mem-pulse-${project}`);
-                const prefersReduced = window.matchMedia
-                    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-                    : false;
-                const enabled = stored === null ? !prefersReduced : stored === 'true';
-                toggle.checked = enabled;
-                document.body.classList.toggle('pulse-off', !enabled);
+                const config = getPulseConfig(project);
+                toggle.checked = config.enabled;
+                const globalToggle = document.getElementById('pulseGlobal');
+                if (globalToggle) {
+                    globalToggle.checked = config.useGlobal;
+                }
+                document.body.classList.toggle('pulse-off', !config.enabled);
+                updateResultsHeader();
+                updateFiltersPill();
+                updateStatsTitle();
+                updateSidebarLiveBadge();
             }
 
             function loadAutoRefresh() {
@@ -1783,6 +1836,7 @@ def read_root():
                 document.getElementById('autoRefresh').addEventListener('change', updateAutoRefresh);
                 document.getElementById('refreshInterval').addEventListener('change', updateAutoRefresh);
                 document.getElementById('pulseToggle').addEventListener('change', updatePulseToggle);
+                document.getElementById('pulseGlobal').addEventListener('change', updatePulseGlobal);
                 document.querySelectorAll('input[name="refreshMode"]').forEach(input => {
                     input.addEventListener('change', updateAutoRefresh);
                 });
