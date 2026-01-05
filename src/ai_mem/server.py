@@ -385,6 +385,17 @@ def read_root():
                 border-radius: 999px;
                 font-size: 10px;
             }
+            .timeline-badge {
+                margin-left: 6px;
+                padding: 2px 6px;
+                border-radius: 999px;
+                background: #efe5d8;
+                color: #6b5f50;
+                font-size: 10px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+            }
             .anchor-badge {
                 display: inline-flex;
                 align-items: center;
@@ -1219,9 +1230,12 @@ def read_root():
                 const pulseOn = pulseToggle ? pulseToggle.checked : true;
                 header.classList.toggle('live', live);
                 const liveDot = `<span class="live-dot" title="${getLiveTitle(live)}"></span>`;
-                const pulseStatus = live && !pulseOn
-                    ? '<span class="pulse-status">Pulse disabled</span>'
-                    : '';
+                    const pulseStatus = live && !pulseOn
+                        ? '<span class="pulse-status">Pulse disabled</span>'
+                        : '';
+                    const timelineBadge = lastMode === 'timeline'
+                        ? '<span class="timeline-badge">Timeline</span>'
+                        : '';
                 if (lastMode === 'timeline') {
                     const depthBefore = timelineDepthBefore || '3';
                     const depthAfter = timelineDepthAfter || '3';
@@ -1229,7 +1243,7 @@ def read_root():
                     if (anchorSummary) {
                         label = `${label} • ${anchorSummary.label}: ${anchorSummary.value}`;
                     }
-                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}</span><div class="row inline"><button class="secondary" onclick="clearTimelineAnchor()">Clear anchor</button><button class="secondary" onclick="clearAllFilters()">Clear filters</button></div>`;
+                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}${timelineBadge}</span><div class="row inline"><button class="secondary" onclick="clearTimelineAnchor()">Clear anchor</button><button class="secondary" onclick="clearAllFilters()">Clear filters</button><button class="secondary" onclick="search()">Exit</button></div>`;
                     header.style.display = 'flex';
                     return;
                 }
