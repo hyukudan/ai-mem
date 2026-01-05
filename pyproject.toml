@@ -1,0 +1,30 @@
+[project]
+name = "ai-mem"
+version = "0.1.0"
+description = "Long-term memory for LLMs"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "chromadb>=0.4.0",
+    "google-generativeai>=0.3.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.20.0",
+    "pathspec>=0.11.0",
+    "fastembed>=0.4.0",
+]
+requires-python = ">=3.10"
+readme = "README.md"
+license = {text = "AGPL-3.0"}
+
+[project.scripts]
+ai-mem = "ai_mem.cli:app"
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"

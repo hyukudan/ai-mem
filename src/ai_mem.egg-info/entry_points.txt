@@ -1,0 +1,2 @@
+[console_scripts]
+ai-mem = ai_mem.cli:app
