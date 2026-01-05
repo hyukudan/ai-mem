@@ -157,6 +157,11 @@ ai-mem server
 ```
 > Open `http://localhost:8000` in your browser to see the Memory Stream.
 
+Viewer tips:
+- Query input supports `Esc` to clear, plus a clear button.
+- Toggle "Use global query" to share the same query across projects.
+- Timeline mode shows an anchor badge and an Exit button in the header/sidebar.
+
 ## 🛠️ Architecture
 
 **ai-mem** follows a layered retrieval pattern:
