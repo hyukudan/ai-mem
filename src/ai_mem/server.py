@@ -352,6 +352,26 @@ def read_root():
             body.pulse-off .filters-pill.live .live-dot {
                 animation: none;
             }
+            .timeline-status {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 6px 10px;
+                border-radius: 999px;
+                background: #efe5d8;
+                color: #6b5f50;
+                font-size: 11px;
+                font-weight: 600;
+            }
+            .timeline-status strong {
+                color: var(--ink);
+                font-weight: 600;
+            }
+            .timeline-status button {
+                padding: 2px 6px;
+                border-radius: 999px;
+                font-size: 10px;
+            }
             .anchor-badge {
                 display: inline-flex;
                 align-items: center;
@@ -471,7 +491,8 @@ def read_root():
             }
             .stats-card.collapsed #stats,
             .stats-card.collapsed #updateHistory,
-            .stats-card.collapsed .anchor-pill {
+            .stats-card.collapsed .anchor-pill,
+            .stats-card.collapsed .timeline-status {
                 display: none;
             }
             .stats-header {
@@ -749,6 +770,7 @@ def read_root():
                         </div>
                     </div>
                     <div class="filters-pill" id="filtersPillSidebar" style="display:none;">Filters active</div>
+                    <div class="timeline-status" id="timelineStatus" style="display:none;"></div>
                     <div class="token-row">
                         <label for="token">API token (optional)</label>
                         <input type="password" id="token" placeholder="Set token for API requests">
@@ -1117,6 +1139,7 @@ def read_root():
                 }
                 updateResultsHeader();
                 updateFiltersPill();
+                updateTimelineStatus();
             }
 
             function updateResultsHeader() {
@@ -1157,6 +1180,26 @@ def read_root():
                 header.innerHTML = '';
             }
 
+            function updateTimelineStatus() {
+                const status = document.getElementById('timelineStatus');
+                if (!status) return;
+                if (lastMode !== 'timeline') {
+                    status.style.display = 'none';
+                    status.innerHTML = '';
+                    return;
+                }
+                const summary = getAnchorSummary();
+                const label = summary ? summary.label : 'Timeline';
+                const value = summary ? summary.value : '';
+                const valueSpan = value ? `<span title="${value}">${value}</span>` : '';
+                status.style.display = 'inline-flex';
+                status.innerHTML = `
+                    <strong>${label}</strong>
+                    ${valueSpan}
+                    <button class="secondary" type="button" onclick="search()">Exit</button>
+                `;
+            }
+
             function getFilterDetails() {
                 const dots = [];
                 const query = (document.getElementById('query').value || '').trim();
@@ -1188,6 +1231,7 @@ def read_root():
                 if (!pill) return;
                 const details = getFilterDetails();
                 updateStatsTitle(details);
+                updateTimelineStatus();
                 const autoRefresh = document.getElementById('autoRefresh');
                 const live = autoRefresh ? autoRefresh.checked : false;
                 const pulseToggle = document.getElementById('pulseToggle');
@@ -1803,6 +1847,7 @@ def read_root():
                 renderResults(data);
                 updateResultsHeader();
                 updateFiltersPill();
+                updateTimelineStatus();
             }
 
             async function timeline() {
@@ -1841,6 +1886,7 @@ def read_root():
                 renderResults(data);
                 updateAnchorPill();
                 updateFiltersPill();
+                updateTimelineStatus();
                 persistTimelineAnchor();
             }
 
