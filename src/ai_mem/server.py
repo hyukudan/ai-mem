@@ -131,6 +131,28 @@ def read_root():
                 font-size: 14px;
                 background: #fffdf8;
             }
+            .input-with-action {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .input-with-action input {
+                flex: 1;
+            }
+            .input-with-action .query-clear {
+                padding: 8px 12px;
+                border-radius: 10px;
+                border: 1px solid #e1dbd2;
+                background: #f1ede4;
+                color: #3a3731;
+                font-size: 12px;
+                font-weight: 600;
+                min-width: 64px;
+            }
+            .input-with-action .query-clear:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
             button {
                 padding: 12px 16px;
                 border-radius: 12px;
@@ -680,7 +702,10 @@ def read_root():
                 <div class="controls">
                     <div>
                         <label for="query">Query</label>
-                        <input type="text" id="query" placeholder="Search memories...">
+                        <div class="input-with-action">
+                            <input type="text" id="query" placeholder="Search memories...">
+                            <button type="button" class="query-clear" id="queryClear" onclick="clearQuery()">Clear</button>
+                        </div>
                     </div>
                     <div>
                         <label for="project">Project</label>
@@ -1283,6 +1308,20 @@ def read_root():
                 search();
             }
 
+            function clearQuery() {
+                const input = document.getElementById('query');
+                if (!input) return;
+                input.value = '';
+                timelineAnchorId = '';
+                timelineQuery = '';
+                persistQuery('');
+                persistTimelineAnchor();
+                updateQueryClearButton();
+                updateAnchorPill();
+                updateResultsHeader();
+                updateFiltersPill();
+            }
+
             function clearAllFilters() {
                 if (!confirm('Clear all filters and reset the view?')) {
                     return;
@@ -1320,6 +1359,7 @@ def read_root():
                 localStorage.removeItem('ai-mem-timeline-depth-before');
                 localStorage.removeItem('ai-mem-timeline-depth-after');
                 updateLimitWarning();
+                updateQueryClearButton();
                 updateAnchorPill();
                 updateResultsHeader();
                 updateFiltersPill();
@@ -1334,6 +1374,15 @@ def read_root():
                 localStorage.setItem('ai-mem-selected-type', selectedType);
                 localStorage.setItem('ai-mem-date-start', selectedDateStart);
                 localStorage.setItem('ai-mem-date-end', selectedDateEnd);
+            }
+
+            function updateQueryClearButton() {
+                const input = document.getElementById('query');
+                const button = document.getElementById('queryClear');
+                if (!input || !button) return;
+                const hasValue = Boolean(input.value.trim());
+                button.disabled = !hasValue;
+                button.title = hasValue ? 'Clear query' : 'Query is empty';
             }
 
             function updateLimitWarning() {
@@ -1552,6 +1601,7 @@ def read_root():
                     }
                 }
                 input.value = savedQuery || '';
+                updateQueryClearButton();
                 updateFiltersPill();
             }
 
@@ -2003,6 +2053,7 @@ def read_root():
                         if (queryInput) {
                             queryInput.value = timelineQuery;
                             persistQuery(timelineQuery);
+                            updateQueryClearButton();
                         }
                     }
                     if (lastMode === 'timeline') {
@@ -2036,11 +2087,18 @@ def read_root():
                 document.getElementById('query').addEventListener('input', noteTyping);
                 document.getElementById('query').addEventListener('keydown', noteTyping);
                 document.getElementById('query').addEventListener('focus', noteTyping);
+                document.getElementById('query').addEventListener('keydown', event => {
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        clearQuery();
+                    }
+                });
                 document.getElementById('query').addEventListener('input', () => {
                     timelineAnchorId = '';
                     timelineQuery = document.getElementById('query').value || '';
                     persistQuery(timelineQuery);
                     persistTimelineAnchor();
+                    updateQueryClearButton();
                     updateAnchorPill();
                 });
                 document.getElementById('depthBefore').addEventListener('change', () => {
