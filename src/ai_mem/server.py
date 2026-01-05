@@ -261,6 +261,12 @@ def read_root():
                 color: #b23b21;
                 font-weight: 600;
             }
+            .pulse-status {
+                margin-left: 6px;
+                font-size: 10px;
+                color: #b23b21;
+                font-weight: 600;
+            }
             .results-header .live-dot {
                 width: 6px;
                 height: 6px;
@@ -419,6 +425,21 @@ def read_root():
                 align-items: center;
                 justify-content: space-between;
                 gap: 8px;
+            }
+            .live-badge {
+                display: none;
+                align-items: center;
+                gap: 6px;
+                font-size: 10px;
+                font-weight: 700;
+                background: #e6f3ee;
+                color: #1f6f59;
+                border-radius: 999px;
+                padding: 2px 8px;
+            }
+            .live-badge.off {
+                background: #f6e7e3;
+                color: #b23b21;
             }
             @media (max-width: 960px) {
                 .stats-header {
@@ -590,6 +611,9 @@ def read_root():
                     box-shadow: 0 0 0 2px rgba(31, 111, 89, 0.2);
                     animation-duration: 2.2s;
                 }
+                .pulse-status {
+                    display: none;
+                }
                 .filters-pill button {
                     display: none;
                 }
@@ -645,6 +669,7 @@ def read_root():
                         <div class="stats-header">
                             <div class="stats-title" id="statsTitle">Stats<span class="live-dot" id="statsLiveDot"></span></div>
                             <div class="filters-pill" id="filtersPillStats" style="display:none;">Filters</div>
+                            <span class="live-badge" id="sidebarLiveBadge">Live</span>
                             <button class="stats-toggle" id="statsToggle" onclick="toggleStats()">▾ Collapse</button>
                         </div>
                         <div class="stats-body" id="statsBody">
@@ -920,7 +945,9 @@ def read_root():
                 const pulseOn = pulseToggle ? pulseToggle.checked : true;
                 header.classList.toggle('live', live);
                 const liveDot = `<span class="live-dot" title="${getLiveTitle(live)}"></span>`;
-                const pulseStatus = live && !pulseOn ? '<span class="pulse-status">Pulse off</span>' : '';
+                const pulseStatus = live && !pulseOn
+                    ? '<span class="pulse-status">Pulse disabled</span>'
+                    : '';
                 if (lastMode === 'timeline') {
                     const depthBefore = timelineDepthBefore || '3';
                     const depthAfter = timelineDepthAfter || '3';
@@ -994,7 +1021,9 @@ def read_root():
                         return;
                     }
                     const liveDot = `<span class="live-dot" title="${getLiveTitle(live)}"></span>`;
-                    const pulseStatus = live && !pulseOn ? '<span class="pulse-status">Pulse off</span>' : '';
+                    const pulseStatus = live && !pulseOn
+                        ? '<span class="pulse-status">Pulse disabled</span>'
+                        : '';
                     target.innerHTML = `${details.icons}<span title="${details.summary}">Filters (${details.count})</span>${liveDot}${pulseStatus}<button class="secondary" onclick="clearAllFilters()">Clear</button>`;
                 });
             }
@@ -1020,6 +1049,27 @@ def read_root():
                 if (liveDot) {
                     liveDot.title = getLiveTitle(live);
                 }
+            }
+
+            function updateSidebarLiveBadge() {
+                const badge = document.getElementById('sidebarLiveBadge');
+                if (!badge) return;
+                const autoRefresh = document.getElementById('autoRefresh');
+                const live = autoRefresh ? autoRefresh.checked : false;
+                const pulseToggle = document.getElementById('pulseToggle');
+                const pulseOn = pulseToggle ? pulseToggle.checked : true;
+                const compact = window.innerWidth <= 960;
+                badge.style.display = live ? 'inline-flex' : 'none';
+                badge.classList.toggle('off', live && !pulseOn);
+                if (!live) {
+                    badge.textContent = '';
+                    return;
+                }
+                if (pulseOn) {
+                    badge.textContent = 'Live';
+                    return;
+                }
+                badge.textContent = compact ? 'Live off' : 'Live (pulse off)';
             }
 
             function clearTimelineAnchor() {
@@ -1192,6 +1242,7 @@ def read_root():
                     refreshAll();
                     autoRefreshTimer = setInterval(refreshAll, interval * 1000);
                 }
+                updateSidebarLiveBadge();
             }
 
             function updatePulseToggle() {
@@ -1204,6 +1255,7 @@ def read_root():
                 updateResultsHeader();
                 updateFiltersPill();
                 updateStatsTitle();
+                updateSidebarLiveBadge();
             }
 
             function loadPulseToggle() {
@@ -1793,6 +1845,7 @@ def read_root():
             loadStatsCollapse();
             bindProjectChange();
             loadProjects().then(search);
+            window.addEventListener('resize', updateSidebarLiveBadge);
         </script>
     </body>
     </html>
