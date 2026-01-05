@@ -1122,6 +1122,7 @@ def read_root():
             function updateResultsHeader() {
                 const header = document.getElementById('resultsHeader');
                 if (!header) return;
+                const anchorSummary = getAnchorSummary();
                 const details = getFilterDetails();
                 const filtersLabel = details.count > 0 ? `Filters (${details.count})` : 'Filters (0)';
                 const icons = details.count ? `<span class="filter-icons">${details.icons}</span>` : '';
@@ -1138,10 +1139,8 @@ def read_root():
                     const depthBefore = timelineDepthBefore || '3';
                     const depthAfter = timelineDepthAfter || '3';
                     let label = `Timeline (${depthBefore} before / ${depthAfter} after)`;
-                    if (timelineAnchorId) {
-                        label = `${label} • Anchor: ${timelineAnchorId}`;
-                    } else if (timelineQuery) {
-                        label = `${label} • Query: ${timelineQuery}`;
+                    if (anchorSummary) {
+                        label = `${label} • ${anchorSummary.label}: ${anchorSummary.value}`;
                     }
                     header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}</span><div class="row inline"><button class="secondary" onclick="clearTimelineAnchor()">Clear anchor</button><button class="secondary" onclick="clearAllFilters()">Clear filters</button></div>`;
                     header.style.display = 'flex';
