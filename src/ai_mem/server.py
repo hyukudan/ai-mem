@@ -581,6 +581,9 @@ def read_root():
                     padding: 8px 10px;
                     gap: 8px;
                 }
+                .pulse-help {
+                    display: none;
+                }
                 .results-header.live .live-dot,
                 .stats-title.live .live-dot,
                 .filters-pill.live .live-dot {
@@ -720,7 +723,7 @@ def read_root():
                             <input type="checkbox" id="pulseToggle" checked>
                             Pulse
                         </label>
-                        <span class="subtitle">Pulse animates live indicators.</span>
+                        <span class="subtitle pulse-help">Pulse animates live indicators.</span>
                         <span class="live-indicator" id="liveIndicator">
                             <span class="live-dot"></span>
                             Live
