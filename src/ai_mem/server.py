@@ -938,6 +938,7 @@ def read_root():
                     select.value = current;
                 }
                 await loadStats();
+                loadAutoRefresh();
                 loadPulseToggle();
                 loadLastMode();
                 loadTimelineAnchor();
@@ -1085,6 +1086,15 @@ def read_root():
             function getModeKey(projectValue) {
                 const key = encodeURIComponent(projectValue || 'all');
                 return `ai-mem-last-mode-${key}`;
+            }
+
+            function getAutoRefreshKeys(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return {
+                    enabled: `ai-mem-auto-refresh-${key}`,
+                    interval: `ai-mem-auto-refresh-interval-${key}`,
+                    mode: `ai-mem-auto-refresh-mode-${key}`,
+                };
             }
 
             function clearTimelineAnchorStorage(projectValue) {
@@ -1575,6 +1585,11 @@ def read_root():
                 intervalInput.value = String(interval);
                 const modeInput = document.querySelector('input[name="refreshMode"]:checked');
                 const modeValue = modeInput ? modeInput.value : 'all';
+                const projectValue = getCurrentProjectValue();
+                const keys = getAutoRefreshKeys(projectValue);
+                localStorage.setItem(keys.enabled, String(enabled));
+                localStorage.setItem(keys.interval, String(interval));
+                localStorage.setItem(keys.mode, modeValue);
                 localStorage.setItem('ai-mem-auto-refresh', String(enabled));
                 localStorage.setItem('ai-mem-auto-refresh-interval', String(interval));
                 localStorage.setItem('ai-mem-auto-refresh-mode', modeValue);
@@ -1670,9 +1685,29 @@ def read_root():
             }
 
             function loadAutoRefresh() {
-                const enabled = localStorage.getItem('ai-mem-auto-refresh') === 'true';
-                const interval = parseInt(localStorage.getItem('ai-mem-auto-refresh-interval') || '30', 10);
-                const mode = localStorage.getItem('ai-mem-auto-refresh-mode') || 'all';
+                const projectValue = getCurrentProjectValue();
+                const keys = getAutoRefreshKeys(projectValue);
+                const globalEnabled = localStorage.getItem('ai-mem-auto-refresh');
+                const globalInterval = localStorage.getItem('ai-mem-auto-refresh-interval');
+                const globalMode = localStorage.getItem('ai-mem-auto-refresh-mode');
+                let enabledValue = localStorage.getItem(keys.enabled);
+                let intervalValue = localStorage.getItem(keys.interval);
+                let modeValue = localStorage.getItem(keys.mode);
+                if (enabledValue === null && globalEnabled !== null) {
+                    enabledValue = globalEnabled;
+                    localStorage.setItem(keys.enabled, globalEnabled);
+                }
+                if (intervalValue === null && globalInterval !== null) {
+                    intervalValue = globalInterval;
+                    localStorage.setItem(keys.interval, globalInterval);
+                }
+                if (modeValue === null && globalMode) {
+                    modeValue = globalMode;
+                    localStorage.setItem(keys.mode, globalMode);
+                }
+                const enabled = enabledValue === 'true';
+                const interval = parseInt(intervalValue || '30', 10);
+                const mode = modeValue || 'all';
                 document.getElementById('autoRefresh').checked = enabled;
                 document.getElementById('refreshInterval').value = String(interval);
                 const modeInputs = document.querySelectorAll('input[name="refreshMode"]');
@@ -2198,6 +2233,7 @@ def read_root():
                 select.addEventListener('change', async () => {
                     selectedProject = document.getElementById('project').value;
                     localStorage.setItem('ai-mem-selected-project', selectedProject);
+                    loadAutoRefresh();
                     loadPulseToggle();
                     loadTimelineAnchor();
                     loadQuery();
