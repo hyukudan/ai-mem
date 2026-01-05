@@ -887,6 +887,7 @@ def read_root():
                 }
                 await loadStats();
                 loadPulseToggle();
+                loadLastMode();
                 loadTimelineAnchor();
                 loadQuery();
             }
@@ -1009,6 +1010,11 @@ def read_root():
                 return `ai-mem-query-${key}`;
             }
 
+            function getModeKey(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return `ai-mem-last-mode-${key}`;
+            }
+
             function clearTimelineAnchorStorage(projectValue) {
                 const keys = getTimelineKeys(projectValue);
                 localStorage.removeItem(keys.id);
@@ -1025,6 +1031,26 @@ def read_root():
                 const key = getQueryKey(projectValue);
                 localStorage.setItem(key, value);
                 localStorage.setItem('ai-mem-query', value);
+            }
+
+            function persistLastMode(mode) {
+                const projectValue = getCurrentProjectValue();
+                const key = getModeKey(projectValue);
+                localStorage.setItem(key, mode);
+                localStorage.setItem('ai-mem-last-mode', mode);
+            }
+
+            function loadLastMode() {
+                const projectValue = getCurrentProjectValue();
+                const key = getModeKey(projectValue);
+                let stored = localStorage.getItem(key);
+                if (stored === null) {
+                    stored = localStorage.getItem('ai-mem-last-mode');
+                    if (stored) {
+                        localStorage.setItem(key, stored);
+                    }
+                }
+                lastMode = stored || 'search';
             }
 
             function persistTimelineAnchor() {
@@ -1771,6 +1797,7 @@ def read_root():
 
             async function search() {
                 lastMode = 'search';
+                persistLastMode('search');
                 const response = await fetch(`/api/search?${buildQueryParams()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
                 const data = await response.json();
@@ -1781,6 +1808,7 @@ def read_root():
 
             async function timeline() {
                 lastMode = 'timeline';
+                persistLastMode('timeline');
                 const params = new URLSearchParams();
                 const project = document.getElementById('project').value;
                 const query = document.getElementById('query').value;
@@ -2047,6 +2075,7 @@ def read_root():
                     loadPulseToggle();
                     loadTimelineAnchor();
                     loadQuery();
+                    loadLastMode();
                     await loadStats();
                     if (lastMode === 'timeline' && timelineQuery) {
                         const queryInput = document.getElementById('query');
@@ -2140,11 +2169,24 @@ def read_root():
             loadTimelineDepth();
             loadListLimit();
             loadSelectedProject();
+            loadLastMode();
             loadSelectedFilters();
             loadQuery();
             loadStatsCollapse();
             bindProjectChange();
-            loadProjects().then(search);
+            loadProjects().then(async () => {
+                if (lastMode === 'timeline') {
+                    const queryInput = document.getElementById('query');
+                    if (queryInput && timelineQuery) {
+                        queryInput.value = timelineQuery;
+                        persistQuery(timelineQuery);
+                        updateQueryClearButton();
+                    }
+                    await timeline();
+                    return;
+                }
+                await search();
+            });
             window.addEventListener('resize', updateSidebarLiveBadge);
         </script>
     </body>
