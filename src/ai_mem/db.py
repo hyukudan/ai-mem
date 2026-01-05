@@ -562,18 +562,31 @@ class DatabaseManager:
         project: str,
         anchor_time: float,
         limit: int,
+        obs_type: Optional[str] = None,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
         cursor = self.conn.cursor()
-        cursor.execute(
-            """
+        params: List[Any] = [project, anchor_time]
+        conditions = ["project = ?", "created_at < ?"]
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if date_start is not None:
+            conditions.append("created_at >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("created_at <= ?")
+            params.append(date_end)
+        sql = """
             SELECT id, summary, project, type, created_at
             FROM observations
-            WHERE project = ? AND created_at < ?
+            WHERE {conditions}
             ORDER BY created_at DESC
             LIMIT ?
-            """,
-            (project, anchor_time, limit),
-        )
+        """.format(conditions=" AND ".join(conditions))
+        params.append(limit)
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         return [
             ObservationIndex(
@@ -592,18 +605,31 @@ class DatabaseManager:
         project: str,
         anchor_time: float,
         limit: int,
+        obs_type: Optional[str] = None,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
         cursor = self.conn.cursor()
-        cursor.execute(
-            """
+        params: List[Any] = [project, anchor_time]
+        conditions = ["project = ?", "created_at > ?"]
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if date_start is not None:
+            conditions.append("created_at >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("created_at <= ?")
+            params.append(date_end)
+        sql = """
             SELECT id, summary, project, type, created_at
             FROM observations
-            WHERE project = ? AND created_at > ?
+            WHERE {conditions}
             ORDER BY created_at ASC
             LIMIT ?
-            """,
-            (project, anchor_time, limit),
-        )
+        """.format(conditions=" AND ".join(conditions))
+        params.append(limit)
+        cursor.execute(sql, params)
         rows = cursor.fetchall()
         return [
             ObservationIndex(

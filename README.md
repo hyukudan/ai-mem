@@ -181,7 +181,7 @@ When you run `ai-mem server`, a full REST API is available at `http://localhost:
 
 *   `POST /api/memories`: Add a new memory.
 *   `GET /api/search?query=...`: Search the memory index.
-*   `GET /api/timeline?query=...`: Timeline context around a query.
+*   `GET /api/timeline?query=...`: Timeline context around a query or anchor (supports `project`, `obs_type`, `date_start`, `date_end`, `depth_before`, `depth_after`).
 *   `POST /api/observations`: Fetch full observation details.
 *   `GET /api/observations`: List observations (export).
 *   `DELETE /api/observations/{id}`: Delete observation.

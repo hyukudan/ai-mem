@@ -150,6 +150,9 @@ def timeline(
     depth_after: int = typer.Option(3, help="Observations after anchor"),
     project: Optional[str] = typer.Option(None, help="Project path filter"),
     all_projects: bool = typer.Option(False, help="Search across all projects"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """Get chronological context around an observation."""
@@ -162,6 +165,9 @@ def timeline(
         depth_before=depth_before,
         depth_after=depth_after,
         project=project,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
     )
     if output == "json":
         print(json.dumps([item.model_dump() for item in results], indent=2))

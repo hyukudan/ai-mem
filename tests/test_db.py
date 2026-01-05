@@ -199,6 +199,71 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(grouped.get("note"), "alpha")
             self.assertEqual(grouped.get("bugfix"), "beta")
 
+    def test_before_after_filters(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            session = Session(project="proj")
+            db.add_session(session)
+
+            obs_early = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Early",
+                summary="Early",
+                created_at=100.0,
+            )
+            obs_mid = Observation(
+                session_id=session.id,
+                project="proj",
+                type="bugfix",
+                content="Mid",
+                summary="Mid",
+                created_at=200.0,
+            )
+            obs_late = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Late",
+                summary="Late",
+                created_at=300.0,
+            )
+            for obs in (obs_early, obs_mid, obs_late):
+                db.add_observation(obs)
+
+            before_notes = db.get_observations_before(
+                project="proj",
+                anchor_time=250.0,
+                limit=10,
+                obs_type="note",
+            )
+            self.assertEqual([item.id for item in before_notes], [obs_early.id])
+
+            after_notes = db.get_observations_after(
+                project="proj",
+                anchor_time=250.0,
+                limit=10,
+                obs_type="note",
+            )
+            self.assertEqual([item.id for item in after_notes], [obs_late.id])
+
+            before_date = db.get_observations_before(
+                project="proj",
+                anchor_time=350.0,
+                limit=10,
+                date_start=250.0,
+            )
+            self.assertEqual([item.id for item in before_date], [obs_late.id])
+
+            after_date = db.get_observations_after(
+                project="proj",
+                anchor_time=150.0,
+                limit=10,
+                date_end=250.0,
+            )
+            self.assertEqual([item.id for item in after_date], [obs_mid.id])
+
     def test_stats_trend(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")

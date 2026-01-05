@@ -302,9 +302,19 @@ class MemoryManager:
         depth_before: int = 3,
         depth_after: int = 3,
         project: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
     ) -> List[ObservationIndex]:
         if not anchor_id and query:
-            results = self.search(query, limit=1, project=project)
+            results = self.search(
+                query,
+                limit=1,
+                project=project,
+                obs_type=obs_type,
+                date_start=date_start,
+                date_end=date_end,
+            )
             if results:
                 anchor_id = results[0].id
 
@@ -315,16 +325,24 @@ class MemoryManager:
         if not anchor:
             return []
 
+        start_ts = _parse_date(date_start)
+        end_ts = _parse_date(date_end)
         project_name = project or anchor["project"]
         before = self.db.get_observations_before(
             project=project_name,
             anchor_time=anchor["created_at"],
             limit=depth_before,
+            obs_type=obs_type,
+            date_start=start_ts,
+            date_end=end_ts,
         )
         after = self.db.get_observations_after(
             project=project_name,
             anchor_time=anchor["created_at"],
             limit=depth_after,
+            obs_type=obs_type,
+            date_start=start_ts,
+            date_end=end_ts,
         )
         anchor_index = ObservationIndex(
             id=anchor["id"],

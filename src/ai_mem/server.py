@@ -1207,6 +1207,17 @@ def read_root():
                 warning.style.display = limitValue > 100 ? 'block' : 'none';
             }
 
+            async function refreshResultsForFilters() {
+                if (lastMode === 'timeline') {
+                    const query = (document.getElementById('query').value || '').trim();
+                    if (timelineAnchorId || timelineQuery || query) {
+                        await timeline();
+                        return;
+                    }
+                }
+                await search();
+            }
+
             async function refreshAll() {
                 if (shouldPauseAutoRefresh()) {
                     return;
@@ -1557,6 +1568,9 @@ def read_root():
                 const params = new URLSearchParams();
                 const project = document.getElementById('project').value;
                 const query = document.getElementById('query').value;
+                const type = document.getElementById('type').value;
+                const dateStart = document.getElementById('dateStart').value;
+                const dateEnd = document.getElementById('dateEnd').value;
                 const depthBefore = document.getElementById('depthBefore').value;
                 const depthAfter = document.getElementById('depthAfter').value;
                 timelineDepthBefore = depthBefore || timelineDepthBefore;
@@ -1564,6 +1578,9 @@ def read_root():
                 localStorage.setItem('ai-mem-timeline-depth-before', timelineDepthBefore);
                 localStorage.setItem('ai-mem-timeline-depth-after', timelineDepthAfter);
                 if (project) params.append('project', project);
+                if (type) params.append('obs_type', type);
+                if (dateStart) params.append('date_start', dateStart);
+                if (dateEnd) params.append('date_end', dateEnd);
                 if (timelineAnchorId) {
                     params.append('anchor_id', timelineAnchorId);
                 } else if (query) {
@@ -1815,23 +1832,28 @@ def read_root():
             function bindProjectChange() {
                 const select = document.getElementById('project');
                 if (select.dataset.bound) return;
-                select.addEventListener('change', () => loadStats());
-                select.addEventListener('change', () => {
+                select.addEventListener('change', async () => {
                     selectedProject = document.getElementById('project').value;
                     localStorage.setItem('ai-mem-selected-project', selectedProject);
                     loadPulseToggle();
+                    clearTimelineAnchor();
+                    await loadStats();
+                    await search();
                 });
                 document.getElementById('type').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    refreshResultsForFilters();
                 });
                 document.getElementById('dateStart').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    refreshResultsForFilters();
                 });
                 document.getElementById('dateEnd').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    refreshResultsForFilters();
                 });
                 document.getElementById('autoRefresh').addEventListener('change', updateAutoRefresh);
                 document.getElementById('refreshInterval').addEventListener('change', updateAutoRefresh);
@@ -1957,6 +1979,9 @@ def get_timeline(
     depth_before: int = 3,
     depth_after: int = 3,
     project: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
 ):
     _check_token(request)
     try:
@@ -1966,6 +1991,9 @@ def get_timeline(
             depth_before=depth_before,
             depth_after=depth_after,
             project=project,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
         )
         return [item.model_dump() for item in results]
     except Exception as exc:
