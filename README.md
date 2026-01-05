@@ -161,6 +161,7 @@ Viewer tips:
 - Query input supports `Esc` to clear, plus a clear button.
 - Toggle "Use global query" to share the same query across projects.
 - Timeline mode shows an anchor badge and an Exit button in the header/sidebar.
+- Auto-refresh settings (on/off, interval, mode) are stored per project.
 
 ## 🛠️ Architecture
 
