@@ -822,6 +822,7 @@ def read_root():
                 }
                 await loadStats();
                 loadPulseToggle();
+                loadTimelineAnchor();
             }
 
             function buildQueryParams() {
@@ -918,6 +919,44 @@ def read_root():
                 const collapsed = stored === 'true' || (stored === null && window.innerWidth <= 960);
                 card.classList.toggle('collapsed', collapsed);
                 toggle.textContent = collapsed ? '▸ Expand' : '▾ Collapse';
+            }
+
+            function getCurrentProjectValue() {
+                const select = document.getElementById('project');
+                const value = select ? select.value : '';
+                if (value) return value;
+                return selectedProject || localStorage.getItem('ai-mem-selected-project') || '';
+            }
+
+            function getTimelineKeys(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return {
+                    id: `ai-mem-timeline-anchor-id-${key}`,
+                    query: `ai-mem-timeline-anchor-query-${key}`,
+                };
+            }
+
+            function clearTimelineAnchorStorage(projectValue) {
+                const keys = getTimelineKeys(projectValue);
+                localStorage.removeItem(keys.id);
+                localStorage.removeItem(keys.query);
+            }
+
+            function persistTimelineAnchor() {
+                const projectValue = getCurrentProjectValue();
+                const keys = getTimelineKeys(projectValue);
+                if (timelineAnchorId) {
+                    localStorage.setItem(keys.id, timelineAnchorId);
+                    localStorage.removeItem(keys.query);
+                    return;
+                }
+                if (timelineQuery) {
+                    localStorage.setItem(keys.query, timelineQuery);
+                    localStorage.removeItem(keys.id);
+                    return;
+                }
+                localStorage.removeItem(keys.id);
+                localStorage.removeItem(keys.query);
             }
 
             function updateAnchorPill() {
@@ -1077,10 +1116,10 @@ def read_root():
             }
 
             function clearTimelineAnchor() {
+                const projectValue = getCurrentProjectValue();
                 timelineAnchorId = '';
                 timelineQuery = '';
-                localStorage.removeItem('ai-mem-timeline-anchor-id');
-                localStorage.removeItem('ai-mem-timeline-anchor-query');
+                clearTimelineAnchorStorage(projectValue);
                 updateAnchorPill();
                 updateFiltersPill();
                 if (lastMode === 'timeline') {
@@ -1156,6 +1195,7 @@ def read_root():
                 if (!confirm('Clear all filters and reset the view?')) {
                     return;
                 }
+                const previousProject = getCurrentProjectValue();
                 document.getElementById('query').value = '';
                 document.getElementById('project').value = '';
                 document.getElementById('type').value = '';
@@ -1178,6 +1218,8 @@ def read_root():
                 localStorage.removeItem('ai-mem-date-start');
                 localStorage.removeItem('ai-mem-date-end');
                 localStorage.removeItem('ai-mem-query');
+                clearTimelineAnchorStorage(previousProject);
+                clearTimelineAnchorStorage('');
                 localStorage.removeItem('ai-mem-timeline-anchor-id');
                 localStorage.removeItem('ai-mem-timeline-anchor-query');
                 localStorage.removeItem('ai-mem-list-limit');
@@ -1349,8 +1391,28 @@ def read_root():
             }
 
             function loadTimelineAnchor() {
-                timelineAnchorId = localStorage.getItem('ai-mem-timeline-anchor-id') || '';
-                timelineQuery = localStorage.getItem('ai-mem-timeline-anchor-query') || '';
+                const projectValue = getCurrentProjectValue();
+                const keys = getTimelineKeys(projectValue);
+                let anchorId = localStorage.getItem(keys.id) || '';
+                let anchorQuery = localStorage.getItem(keys.query) || '';
+                if (!anchorId && !anchorQuery) {
+                    const legacyId = localStorage.getItem('ai-mem-timeline-anchor-id') || '';
+                    const legacyQuery = localStorage.getItem('ai-mem-timeline-anchor-query') || '';
+                    if (legacyId || legacyQuery) {
+                        anchorId = legacyId;
+                        anchorQuery = legacyQuery;
+                        if (legacyId) {
+                            localStorage.setItem(keys.id, legacyId);
+                        }
+                        if (legacyQuery) {
+                            localStorage.setItem(keys.query, legacyQuery);
+                        }
+                        localStorage.removeItem('ai-mem-timeline-anchor-id');
+                        localStorage.removeItem('ai-mem-timeline-anchor-query');
+                    }
+                }
+                timelineAnchorId = anchorId;
+                timelineQuery = anchorQuery;
                 updateAnchorPill();
             }
 
@@ -1598,13 +1660,7 @@ def read_root():
                 renderResults(data);
                 updateAnchorPill();
                 updateFiltersPill();
-                if (timelineAnchorId) {
-                    localStorage.setItem('ai-mem-timeline-anchor-id', timelineAnchorId);
-                    localStorage.removeItem('ai-mem-timeline-anchor-query');
-                } else if (timelineQuery) {
-                    localStorage.setItem('ai-mem-timeline-anchor-query', timelineQuery);
-                    localStorage.removeItem('ai-mem-timeline-anchor-id');
-                }
+                persistTimelineAnchor();
             }
 
             async function loadDetail(id) {
@@ -1616,8 +1672,7 @@ def read_root():
                     timelineAnchorId = id;
                     timelineQuery = '';
                     updateAnchorPill();
-                    localStorage.setItem('ai-mem-timeline-anchor-id', timelineAnchorId);
-                    localStorage.removeItem('ai-mem-timeline-anchor-query');
+                    persistTimelineAnchor();
                 }
                 const detail = document.getElementById('detail');
                 const tags = (mem.tags || []).map(tag => `<span class="pill">${tag}</span>`).join('');
@@ -1836,7 +1891,7 @@ def read_root():
                     selectedProject = document.getElementById('project').value;
                     localStorage.setItem('ai-mem-selected-project', selectedProject);
                     loadPulseToggle();
-                    clearTimelineAnchor();
+                    loadTimelineAnchor();
                     await loadStats();
                     await search();
                 });
@@ -1869,13 +1924,8 @@ def read_root():
                     timelineAnchorId = '';
                     timelineQuery = document.getElementById('query').value || '';
                     localStorage.setItem('ai-mem-query', timelineQuery);
+                    persistTimelineAnchor();
                     updateAnchorPill();
-                    if (timelineQuery) {
-                        localStorage.setItem('ai-mem-timeline-anchor-query', timelineQuery);
-                        localStorage.removeItem('ai-mem-timeline-anchor-id');
-                    } else {
-                        localStorage.removeItem('ai-mem-timeline-anchor-query');
-                    }
                 });
                 document.getElementById('depthBefore').addEventListener('change', () => {
                     timelineDepthBefore = document.getElementById('depthBefore').value || timelineDepthBefore;
