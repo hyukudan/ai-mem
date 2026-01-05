@@ -1893,7 +1893,18 @@ def read_root():
                     loadPulseToggle();
                     loadTimelineAnchor();
                     await loadStats();
-                    await search();
+                    if (lastMode === 'timeline' && timelineQuery) {
+                        const queryInput = document.getElementById('query');
+                        if (queryInput) {
+                            queryInput.value = timelineQuery;
+                            localStorage.setItem('ai-mem-query', timelineQuery);
+                        }
+                    }
+                    if (lastMode === 'timeline') {
+                        await timeline();
+                    } else {
+                        await search();
+                    }
                 });
                 document.getElementById('type').addEventListener('change', () => {
                     persistFilters();
