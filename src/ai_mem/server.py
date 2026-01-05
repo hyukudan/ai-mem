@@ -227,6 +227,14 @@ def read_root():
                 background: var(--accent);
                 box-shadow: 0 0 0 6px rgba(31, 111, 89, 0.15);
             }
+            .auto-row .auto-mode {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                font-size: 11px;
+                font-weight: 600;
+                color: var(--muted);
+            }
             .pulse-toggle {
                 display: flex;
                 align-items: center;
@@ -874,6 +882,7 @@ def read_root():
                             <span class="live-dot"></span>
                             Live
                         </span>
+                        <span class="auto-mode" id="autoModeLabel"></span>
                     </div>
                     <div class="actions">
                         <div class="row">
@@ -1597,6 +1606,7 @@ def read_root():
                 if (indicator) {
                     indicator.classList.toggle('active', enabled);
                 }
+                updateAutoModeLabel(modeValue, enabled);
                 updateStatsTitle();
                 if (autoRefreshTimer) {
                     clearInterval(autoRefreshTimer);
@@ -1607,6 +1617,19 @@ def read_root():
                     autoRefreshTimer = setInterval(refreshAll, interval * 1000);
                 }
                 updateSidebarLiveBadge();
+            }
+
+            function updateAutoModeLabel(modeValue, enabled) {
+                const label = document.getElementById('autoModeLabel');
+                if (!label) return;
+                if (!enabled) {
+                    label.textContent = '';
+                    label.style.display = 'none';
+                    return;
+                }
+                const modeText = modeValue === 'stats' ? 'Stats only' : 'Stats + results';
+                label.textContent = `Mode: ${modeText}`;
+                label.style.display = 'inline-flex';
             }
 
             function getPulseConfig(project) {
