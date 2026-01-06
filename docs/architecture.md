@@ -118,6 +118,29 @@ The same scoreboard and token insights also power the web UI at `http://localhos
 
 `ai-mem endless` drives long-running sessions by looping over context generation, auto-adjusting the observation window to honor token budgets while printing scoreboard rows and cache health at each interval. Use `snapshot export/merge` to persist memory checkpoints or sync another device so that multiple LLMs share the same evolving history without losing IDs or metadata.
 
+Use `snapshot export/merge` to persist memory checkpoints or sync another device so that multiple LLMs share the same evolving history without losing IDs or metadata.
+
+### Cross-Model Sharing
+
+The core design allows multiple heterogeneous clients to read/write to the same memory state simultaneously.
+
+```mermaid
+graph LR
+    subgraph "Workstation"
+        A[Claude Desktop<br/>(via MCP)] -->|Query| S[ai-mem Server]
+        B[Gemini CLI<br/>(via Proxy)] -->|Query| S
+        C[VS Code<br/>(via Hooks)] -->|Query| S
+    end
+    
+    subgraph "Shared State"
+        S --> DB[(Sqlite + Vector)]
+    end
+    
+    A -.->|Injects| Context
+    B -.->|Injects| Context
+    C -.->|Injects| Context
+```
+
 ## Storage Layout
 
 By default, data is stored in `~/.ai-mem`, making it easy to back up or sync.

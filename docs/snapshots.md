@@ -44,6 +44,16 @@ This command reads the observations from the file and inserts them into your loc
 ## Use Cases
 
 ### 1. Cross-Machine Handoff
+
+```mermaid
+graph LR
+    A[Global Memory] -->|Export| B(snapshot.ndjson)
+    B -->|SCP/Sync| C(Remote Machine)
+    C -->|Merge| D[Remote Memory]
+    D -.->|Preserves IDs| A
+```
+
+Work on your laptop during the day, then sync context to your desktop at night.
 Work on your laptop during the day, then sync context to your desktop at night.
 1. **Laptop**: `ai-mem snapshot export handoff.ndjson`
 2. **Transfer**: `scp handoff.ndjson desktop:~/`

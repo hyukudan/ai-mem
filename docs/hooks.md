@@ -2,6 +2,25 @@
 
 ## Hooks (Model Agnostic)
 
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant H as Hook Script
+    participant M as ai-mem Store
+
+    U->>H: Trigger Event (e.g., session_start)
+    H->>M: ai-mem hook session_start
+    M-->>H: Context (if requested)
+    H-->>U: Output / Action
+    
+    rect rgb(240, 240, 240)
+        Note right of U: User Prompt
+        U->>H: "Fix this bug"
+        H->>M: ai-mem hook user_prompt
+        M-->>M: Store & Embed
+    end
+```
+
 Use scripts in `scripts/hooks` with any client that supports shell hooks.
 
 Examples:
@@ -69,9 +88,31 @@ Helper scripts are included for popular IDEs:
 
 - VS Code tasks: `./scripts/install-vscode-tasks.sh`
 - JetBrains External Tools: `./scripts/install-jetbrains-tools.sh`
+- Neovim Lua Module: `./scripts/install-neovim.sh`
 - Cursor MCP: `./scripts/install-mcp-cursor.sh`
 
 These install project-local tasks or config entries so you can launch ai-mem servers, proxies, and hooks from inside the IDE.
+
+## Neovim Integration
+
+To install the Neovim integration:
+
+```bash
+./scripts/install-neovim.sh
+```
+
+This creates `~/.config/nvim/lua/ai-mem.lua`. Then in your `init.lua`, add:
+
+```lua
+require("ai-mem").setup({bin = "/path/to/ai-mem"}) -- Optional bin path override
+```
+
+Available commands:
+- `:AIMemStart` - Start a session
+- `:AIMemEnd` - End session and summarize
+- `:AIMemNote` - Add a quick note
+- `:AIMemContext` - View current context in a split
+- `:AIMemSel` - (Visual mode) Add selection as an observation
 
 ## Context, scoreboard, and streaming
 

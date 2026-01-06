@@ -4,6 +4,17 @@ Endless Mode is a powerful feature in **ai-mem** that allows for continuous, ada
 
 ## How it works
 
+```mermaid
+graph TD
+    A[Start Loop] --> B{Timer Tick}
+    B --> C[Execute Query]
+    C --> D[Retrieve Relevant Memories]
+    D --> E[Prune to Token Limit]
+    E --> F[Generate Output]
+    F --> G[Update Scoreboard]
+    G --> A
+```
+
 When you run `ai-mem endless`, the system:
 1.  **Polls** the vector store and FTS (Full-Text Search) index at a set interval.
 2.  **Retrieves** the most relevant memories based on your query.
@@ -63,3 +74,12 @@ This visibility helps you debug *why* the model knows what it knows (or why it f
 ## Integration with MCP
 
 When running the **MCP Server** (`ai-mem mcp`), "Endless Mode" concepts are applied automatically if the client requests continuous updates. However, running `ai-mem endless` manually in a terminal is the best way to *visualize* the shifting context that all your connected MCP clients can potentially access if they query the "current context" tool.
+
+### MCP vs CLI Endless
+
+| Feature | CLI (`ai-mem endless`) | MCP Server |
+| :--- | :--- | :--- |
+| **Trigger** | Automatic (Timer) | Client Request (Tool Call) |
+| **Output** | Console / JSON Stream | Function Result |
+| **Scoreboard** | Visible to User (Human) | Visible to Model (Metadata) |
+| **Use Case** | Monitoring, Shell Integration | Autonomous Agent RAG |

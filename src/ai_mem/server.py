@@ -1444,6 +1444,11 @@ def read_root():
                             <button class="chip" onclick="startSession()">Start</button>
                             <button class="secondary" onclick="endLatestSession()">End latest</button>
                             <button class="secondary" onclick="refreshSessions()">Refresh</button>
+                            <button class="secondary" onclick="toggleSessionAnalytics()">Analytics</button>
+                        </div>
+                        <div id="sessionAnalytics" style="display:none; margin-top:12px; padding:12px; background:#faf7f2; border-radius:12px;">
+                            <div class="subtitle">Session Analytics (Top 50)</div>
+                            <div id="sessionAnalyticsTable" style="margin-top:8px;"></div>
                         </div>
                         <div class="session-list" id="sessionList">
                             <div class="subtitle">No sessions loaded.</div>
@@ -2311,6 +2316,62 @@ def read_root():
             function updateSessionStatus(text) {
                 const status = document.getElementById('sessionStatus');
                 if (status) status.textContent = text;
+            }
+
+            async function toggleSessionAnalytics() {
+                const container = document.getElementById('sessionAnalytics');
+                if (!container) return;
+                const isHidden = container.style.display === 'none';
+                container.style.display = isHidden ? 'block' : 'none';
+                if (isHidden) {
+                     await loadSessionAnalytics();
+                }
+            }
+
+            async function loadSessionAnalytics() {
+                const project = getCurrentProjectValue();
+                const params = new URLSearchParams();
+                if (project) params.append('project', project);
+                params.append('limit', '50');
+                const response = await fetch(`/api/stats/sessions?${params.toString()}`, { headers: getAuthHeaders() });
+                if (await handleAuthError(response)) return;
+                const data = await response.json();
+                renderSessionAnalytics(data);
+            }
+
+            function renderSessionAnalytics(items) {
+                const wrapper = document.getElementById('sessionAnalyticsTable');
+                if (!wrapper) return;
+                if (!items.length) {
+                    wrapper.innerHTML = '<div class="subtitle">No data available.</div>';
+                    return;
+                }
+                const rows = items.map(item => {
+                    const duration = item.duration ? (item.duration / 60).toFixed(1) + 'm' : '-';
+                    const start = new Date(item.start_time * 1000).toLocaleString([], {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'});
+                    return `<tr style="border-bottom: 1px solid #e1dbd2;">
+                        <td style="padding:4px;">${item.id.slice(0,8)}</td>
+                        <td style="padding:4px;">${escapeHtml(item.goal || '-')}</td>
+                        <td style="padding:4px;">${item.obs_count}</td>
+                        <td style="padding:4px;">${duration}</td>
+                        <td style="padding:4px;">${start}</td>
+                    </tr>`;
+                }).join('');
+                
+                wrapper.innerHTML = `
+                    <table style="width:100%; font-size:12px; border-collapse: collapse;">
+                        <thead>
+                            <tr style="text-align:left; color:var(--muted); border-bottom: 1px solid #var(--muted);">
+                                <th style="padding:4px;">ID</th>
+                                <th style="padding:4px;">Goal</th>
+                                <th style="padding:4px;">Obs</th>
+                                <th style="padding:4px;">Duration</th>
+                                <th style="padding:4px;">Started</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                `;
             }
 
             function renderSessions(items, showAll) {
@@ -5400,6 +5461,17 @@ def preview_context_post(payload: ContextRequest, request: Request):
         wrap=False if payload.wrap is None else payload.wrap,
     )
     return {"context": context_text, "metadata": meta}
+
+
+@app.get("/api/stats/sessions")
+def get_session_stats_api(
+    request: Request,
+    project: Optional[str] = None,
+    limit: int = 50,
+):
+    _check_token(request)
+    stats = get_manager().db.get_session_stats(project=project, limit=limit)
+    return stats
 
 
 @app.get("/api/context/inject")

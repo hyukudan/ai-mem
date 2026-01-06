@@ -4,6 +4,14 @@ Config is stored in:
 - `~/.config/ai-mem/config.json`
 - Override with `AI_MEM_CONFIG=/path/to/config.json`
 
+```mermaid
+graph TD
+    A[Defaults] --> B(Merge)
+    C[Config File<br/>~/.config/ai-mem/config.json] --> B
+    D[Env Vars<br/>AI_MEM_*] --> B
+    B --> E[Run-time Config]
+```
+
 Show current config:
 
 ```bash
@@ -97,7 +105,18 @@ Date filters accept epoch, ISO-8601, or relative durations like 7d, 24h, 30m.
 
 ## Search Caching
 
-Avoid re-running identical queries by tuning the search cache. Set `search.cache_ttl_seconds` (default 30s) and `search.cache_max_entries` (default 256) in `~/.config/ai-mem/config.json` or via the environment:
+Avoid re-running identical queries by tuning the search cache.
+
+```mermaid
+graph LR
+    A[Query] --> B{In Cache?}
+    B -- Yes --> C[Return Cached Result<br/>(Hit)]
+    B -- No --> D[Perform Hybrid Search]
+    D --> E[Store in Cache]
+    E --> F[Return Result<br/>(Miss)]
+```
+
+Set `search.cache_ttl_seconds` (default 30s) and `search.cache_max_entries` (default 256) in `~/.config/ai-mem/config.json` or via the environment:
 
 ```bash
 export AI_MEM_SEARCH_CACHE_TTL=20

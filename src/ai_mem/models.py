@@ -41,6 +41,7 @@ class Observation(BaseModel):
     tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     content_hash: Optional[str] = None
+    diff: Optional[str] = None
     assets: List[ObservationAsset] = Field(default_factory=list)
 
 class ObservationIndex(BaseModel):

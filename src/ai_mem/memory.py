@@ -478,6 +478,7 @@ class MemoryManager:
         created_at: Optional[float] = None,
         importance_score: float = 0.5,
         assets: Optional[List[Dict[str, Any]]] = None,
+        diff: Optional[str] = None,
     ) -> Optional[Observation]:
         session = None
         if session_id:
@@ -535,6 +536,7 @@ class MemoryManager:
             tags=tags or [],
             metadata=metadata,
             content_hash=content_hash,
+            diff=diff,
         )
         normalized_assets = self._normalize_assets(assets or [])
         if normalized_assets:
@@ -546,7 +548,7 @@ class MemoryManager:
                     path=asset.get("path"),
                     content=asset.get("content"),
                     metadata=asset.get("metadata") or {},
-                    created_at=asset.get("created_at"),
+                    created_at=asset.get("created_at") or time.time(),
                 )
                 for asset in normalized_assets
             ]

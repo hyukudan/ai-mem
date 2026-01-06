@@ -1,5 +1,28 @@
 # Proxies
 
+## Request Flow
+
+```mermaid
+sequenceDiagram
+    participant C as Client (e.g., Claude Desktop)
+    participant P as ai-mem Proxy
+    participant S as ai-mem Store
+    participant U as Upstream LLM (e.g., Anthropic API)
+
+    C->>P: POST /v1/messages
+    Note over P: Intercept Request
+    P->>S: Query Context (RAG)
+    S-->>P: Relevant Memories
+    P->>P: Inject Context into System Prompt
+    P->>U: Forward Modified Request
+    U-->>P: Stream Response
+    P-->>C: Stream Response
+    
+    par Async
+        P->>S: Store interaction (if enabled)
+    end
+```
+
 ## OpenAI-compatible proxy
 
 ```bash

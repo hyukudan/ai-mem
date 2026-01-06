@@ -2,6 +2,20 @@
 
 This catalog highlights the installer scripts and helper configs that let you drop ai-mem into the same workflows Claude-Mem provides for Claude Desktop, Cursor, Antigravity, and popular IDEs.
 
+```mermaid
+graph TD
+    A[ai-mem] -->|Script| B[presets/hooks]
+    B --> C[Bash Hooks]
+    B --> D[VS Code Tasks]
+    B --> E[JetBrains Tools]
+    B --> F[Cursor MCP]
+    
+    C --> G(Shell Clients)
+    D --> H(IDE)
+    E --> H
+    F --> I(MCP Clients)
+```
+
 ## Claude Desktop & mem-search skill
 
 1. Install the Claude Code plugin:

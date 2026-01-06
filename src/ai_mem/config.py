@@ -50,6 +50,10 @@ class VectorConfig(BaseModel):
     pgvector_dimension: int = 1536
     pgvector_index_type: str = "ivfflat"
     pgvector_lists: int = 100
+    qdrant_url: Optional[str] = None
+    qdrant_api_key: Optional[str] = None
+    qdrant_collection: Optional[str] = "observations"
+    qdrant_vector_size: int = 1536
 
 
 class ContextConfig(BaseModel):
@@ -211,6 +215,11 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
     pgvector_index_type = os.environ.get("AI_MEM_PGVECTOR_INDEX_TYPE")
     pgvector_lists = _env_int("AI_MEM_PGVECTOR_LISTS")
 
+    qdrant_url = os.environ.get("AI_MEM_QDRANT_URL")
+    qdrant_api_key = os.environ.get("AI_MEM_QDRANT_API_KEY")
+    qdrant_collection = os.environ.get("AI_MEM_QDRANT_COLLECTION")
+    qdrant_vector_size = _env_int("AI_MEM_QDRANT_VECTOR_SIZE")
+
     if vector_provider:
         config.vector.provider = vector_provider
     cache_ttl = _env_int("AI_MEM_SEARCH_CACHE_TTL")
@@ -244,5 +253,13 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         config.vector.pgvector_index_type = pgvector_index_type
     if pgvector_lists is not None:
         config.vector.pgvector_lists = pgvector_lists
+    if qdrant_url:
+        config.vector.qdrant_url = qdrant_url
+    if qdrant_api_key:
+        config.vector.qdrant_api_key = qdrant_api_key
+    if qdrant_collection:
+        config.vector.qdrant_collection = qdrant_collection
+    if qdrant_vector_size is not None:
+        config.vector.qdrant_vector_size = qdrant_vector_size
 
     return config

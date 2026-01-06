@@ -129,6 +129,9 @@ class DatabaseManager:
         if "content_hash" not in existing:
             cursor.execute("ALTER TABLE observations ADD COLUMN content_hash TEXT")
             self.conn.commit()
+        if "diff" not in existing:
+            cursor.execute("ALTER TABLE observations ADD COLUMN diff TEXT")
+            self.conn.commit()
 
     def _ensure_asset_table(self) -> None:
         cursor = self.conn.cursor()
@@ -277,9 +280,10 @@ class DatabaseManager:
                 created_at,
                 importance_score,
                 tags,
-                metadata
+                metadata,
+                diff
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 obs.id,
@@ -294,6 +298,7 @@ class DatabaseManager:
                 obs.importance_score,
                 json.dumps(obs.tags),
                 json.dumps(obs.metadata),
+                obs.diff,
             ),
         )
         self.conn.commit()
@@ -1112,6 +1117,7 @@ class DatabaseManager:
             "importance_score": row["importance_score"],
             "tags": json.loads(row["tags"] or "[]"),
             "metadata": json.loads(row["metadata"] or "{}"),
+            "diff": row["diff"] if "diff" in row.keys() else None,
             "assets": self.get_assets_for_observation(row["id"]),
         }
 
@@ -1124,3 +1130,52 @@ class DatabaseManager:
             "start_time": row["start_time"],
             "end_time": row["end_time"],
         }
+
+    def get_session_stats(self, project: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        cursor = self.conn.cursor()
+        query = """
+            SELECT 
+                s.id, 
+                s.project, 
+                s.goal, 
+                s.start_time, 
+                s.end_time,
+                COUNT(o.id) as obs_count,
+                MAX(o.created_at) as last_activity
+            FROM sessions s
+            LEFT JOIN observations o ON s.id = o.session_id
+        """
+        params = []
+        if project:
+            query += " WHERE s.project = ?"
+            params.append(project)
+        
+        query += " GROUP BY s.id ORDER BY s.start_time DESC LIMIT ?"
+        params.append(limit)
+        
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        
+        stats = []
+        for row in rows:
+            # simple type breakdown requires another query or complex SQL. 
+            # For now let's stick to basics + a separate query for types per session might be too slow for many sessions.
+            # Let's do a subquery for types if possible, or just load basics.
+            # actually, let's just return basic stats first.
+            
+            # Calculate duration
+            start = row["start_time"]
+            end = row["end_time"] or row["last_activity"] or start
+            duration = end - start
+            
+            stats.append({
+                "id": row["id"],
+                "project": row["project"],
+                "goal": row["goal"],
+                "start_time": row["start_time"],
+                "end_time": row["end_time"],
+                "duration": duration,
+                "obs_count": row["obs_count"],
+            })
+        return stats
+
