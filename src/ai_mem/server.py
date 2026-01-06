@@ -1291,6 +1291,7 @@ def read_root():
                 const modeValue = modeInput ? modeInput.value : 'all';
                 const intervalInput = document.getElementById('refreshInterval');
                 const interval = Math.max(5, parseInt(intervalInput ? intervalInput.value : '30', 10));
+                const compact = window.innerWidth <= 960;
                 const pulseToggle = document.getElementById('pulseToggle');
                 const pulseOn = pulseToggle ? pulseToggle.checked : true;
                 header.classList.toggle('live', live);
@@ -1306,8 +1307,11 @@ def read_root():
                 }
                 const globalToggle = document.getElementById('autoGlobal');
                 const autoScope = globalToggle && globalToggle.checked ? 'global' : 'project';
+                const fullModeLabel = modeValue === 'stats' ? 'Stats only' : 'Stats + results';
+                const compactModeLabel = modeValue === 'stats' ? 'Stats' : 'All';
+                const modeLabel = compact ? compactModeLabel : fullModeLabel;
                 const autoBadge = live
-                    ? `<span class="auto-mode-badge" title="Auto-refresh: ${modeValue === 'stats' ? 'Stats only' : 'Stats + results'} • ${interval}s • ${autoScope}">${modeValue === 'stats' ? 'Stats only' : 'Stats + results'}</span>`
+                    ? `<span class="auto-mode-badge" title="Auto-refresh: ${fullModeLabel} • ${interval}s • ${autoScope}">${modeLabel}</span>`
                     : '';
                 if (lastMode === 'timeline') {
                     const depthBefore = timelineDepthBefore || '3';
@@ -2469,7 +2473,10 @@ def read_root():
                 }
                 await search();
             });
-            window.addEventListener('resize', updateSidebarLiveBadge);
+            window.addEventListener('resize', () => {
+                updateSidebarLiveBadge();
+                updateResultsHeader();
+            });
         </script>
     </body>
     </html>
