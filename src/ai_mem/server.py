@@ -637,6 +637,17 @@ def read_root():
                 flex-wrap: wrap;
                 gap: 8px;
             }
+            .session-stats {
+                display: grid;
+                gap: 6px;
+                font-size: 12px;
+                color: var(--muted);
+            }
+            .session-stats .stat-row {
+                display: flex;
+                justify-content: space-between;
+                gap: 10px;
+            }
             .session-row {
                 display: grid;
                 gap: 6px;
@@ -1938,6 +1949,9 @@ def read_root():
                 const obsResponse = await fetch(`/api/sessions/${id}/observations?limit=50`, { headers: getAuthHeaders() });
                 if (await handleAuthError(obsResponse)) return;
                 const observations = obsResponse.ok ? await obsResponse.json() : [];
+                const statsResponse = await fetch(`/api/stats?session_id=${id}&tag_limit=5&day_limit=14&type_tag_limit=3`, { headers: getAuthHeaders() });
+                if (await handleAuthError(statsResponse)) return;
+                const stats = statsResponse.ok ? await statsResponse.json() : null;
                 const detail = document.getElementById('detail');
                 const start = session.start_time ? formatStreamTime(session.start_time) : '';
                 const end = session.end_time ? formatStreamTime(session.end_time) : '';
@@ -1946,6 +1960,24 @@ def read_root():
                 const sessionSummary = session.summary
                     ? `<div class="accent">Summary</div><pre>${escapeHtml(session.summary)}</pre>`
                     : '';
+                let statsHtml = '';
+                if (stats) {
+                    const total = stats.total || 0;
+                    const byType = (stats.by_type || [])
+                        .map(item => `<div class="stat-row"><span>${escapeHtml(item.type || '-')}</span><strong>${item.count || 0}</strong></div>`)
+                        .join('');
+                    const topTags = (stats.top_tags || [])
+                        .map(item => `<span>${escapeHtml(item.tag || '-')} (${item.count || 0})</span>`)
+                        .join(' • ');
+                    statsHtml = `
+                        <div class="accent">Session stats</div>
+                        <div class="session-stats">
+                            <div class="stat-row"><span>Total observations</span><strong>${total}</strong></div>
+                            ${byType ? `<div>${byType}</div>` : ''}
+                            ${topTags ? `<div class="meta">Top tags: ${topTags}</div>` : ''}
+                        </div>
+                    `;
+                }
                 const rows = (observations || []).map(obs => {
                     const summary = escapeHtml(obs.summary || obs.content || '(no summary)');
                     const meta = `${escapeHtml(obs.type || 'note')} • ${escapeHtml(obs.id || '')}`;
@@ -1957,6 +1989,7 @@ def read_root():
                     <div class="meta">${escapeHtml(project)} • ${start ? `Start ${start}` : ''}${end ? ` • End ${end}` : ''}</div>
                     ${goal}
                     ${sessionSummary}
+                    ${statsHtml}
                     <div class="accent">Observations</div>
                     <div class="button-row">
                         <label class="pulse-toggle">

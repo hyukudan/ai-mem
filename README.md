@@ -308,6 +308,7 @@ Viewer features:
 - Observation details include a Copy URL button for citations.
 - Search and timeline results show a rough token estimate per summary.
 - Session list previews the latest session summary when available.
+- Session detail view shows totals, top types, and top tags.
 
 ## Hooks (Model Agnostic)
 
