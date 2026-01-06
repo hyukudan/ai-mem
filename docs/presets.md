@@ -40,7 +40,7 @@ This catalog highlights the installer scripts and helper configs that let you dr
    ./scripts/run-all.sh
    ```
 
-2. In parallel, keep an `ai-mem endless` session running to refresh context for long-lived flows:
+2. In parallel, keep an `ai-mem endless` session running (see [Endless Mode](endless_mode.md)) to refresh context for long-lived flows:
 
    ```bash
    ai-mem endless --query "next steps" --interval 20 --token-limit 950
@@ -54,7 +54,7 @@ This catalog highlights the installer scripts and helper configs that let you dr
    ./scripts/run-gemini-stack.sh
    ```
 
-4. Capture a checkpoint from one device, ship it to another, and merge it to keep both assistants aligned:
+4. Capture a checkpoint from one device (see [Snapshots](snapshots.md)), ship it to another, and merge it to keep both assistants aligned:
 
    ```bash
    ai-mem snapshot export ~/tmp/ai-mem-checkpoint.ndjson

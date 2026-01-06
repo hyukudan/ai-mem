@@ -61,8 +61,8 @@ ai-mem is a local-first memory layer that serves **any large language model**, w
 
 - **Model-agnostic context streaming** – Context chunks are formatted via the same helper no matter which model requests them, so your Claude Desktop session, Gemini CLI, or ChatGPT plugin can all read from a single source of truth.
 - **Shared metadata & scoreboard** – Responses include metadata that enumerates vector vs. FTS scores, recency, and cache hits/misses, letting you introspect model prompts before each completion.
-- **Endless Mode** – `ai-mem endless` polls the store at a configurable interval, prints metrics per iteration, and keeps total tokens within configurable limits for long-lived workflows.
-- **Snapshot-based syncing** – `ai-mem snapshot export`/`import`/`merge` round-trips checkpoints so you can persist memory dumps, share them, or stitch them back to-facing sessions without losing IDs.
+- **Endless Mode** – `ai-mem endless` polls the store at a configurable interval to keep total tokens within limits. See [Endless Mode Guide](docs/endless_mode.md).
+- **Snapshot-based syncing** – `ai-mem snapshot export`/`import`/`merge` round-trips checkpoints. See [Snapshots Guide](docs/snapshots.md).
 - **Hooks & IDE scripts** – Run `./scripts/install-hooks.sh`, `./scripts/install-vscode-tasks.sh`, `./scripts/install-jetbrains-tools.sh`, or the Antigravity/Claude installers to make every hook call `ai-mem hook ...` automatically.
 - **Web viewer + MCP server** – Live stream + scoreboard at `http://localhost:37777`, plus REST endpoints that expose observations, scorecards, and citations for external agents like Gemini, Claude, or Antigravity.
 - **CLI-first control** – All key flows (add/search/context/timeline/endless/snapshot) are available via `ai-mem` so you can script onboarding via a single CLI.
@@ -105,6 +105,8 @@ See the `docs/` folder for targeted guides:
 - [🧩 Presets](docs/presets.md) – Scripts for installing Claude mem-search skills, VS Code tasks, JetBrains tools, and Antigravity/VS integrations so everything wires into `ai-mem hook ...`.
 - [📖 API Reference](docs/api-reference.md) – REST routes, observation schema, scoreboard payloads.
 - [🏛️ Architecture](docs/architecture.md) – Component diagrams, data flow, and search strategy.
+- [∞ Endless Mode](docs/endless_mode.md) – Continuous context injection and scoreboard monitoring.
+- [📸 Snapshots](docs/snapshots.md) – Backup, export, and merging strategies.
 - [💻 Development](docs/development.md) – Testing, roadmap, contributor guide, and venv tips.
 
 ## Credits & inspiration
