@@ -1298,9 +1298,11 @@ def read_root():
                 const pulseStatus = live && !pulseOn
                     ? '<span class="pulse-status">Pulse disabled</span>'
                     : '';
-                const timelineBadge = lastMode === 'timeline' || anchorSummary
-                    ? '<span class="timeline-badge">Timeline</span>'
-                    : '';
+                let timelineBadge = '';
+                if (lastMode === 'timeline' || anchorSummary) {
+                    const suffix = anchorSummary ? '' : ' (no anchor)';
+                    timelineBadge = `<span class="timeline-badge">Timeline${suffix}</span>`;
+                }
                 const globalToggle = document.getElementById('autoGlobal');
                 const autoScope = globalToggle && globalToggle.checked ? 'global' : 'project';
                 const autoBadge = live
