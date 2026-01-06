@@ -12,6 +12,15 @@ Use the installer script to copy hooks into a shared folder:
 
 This installs hooks into `~/.config/ai-mem/hooks` by default (override with `--dest`).
 
+## CLI Hook Runner
+
+If your client can execute a single command, use the built-in hook runner:
+
+```bash
+ai-mem hook session_start --project "$PWD"
+echo "User asked about OAuth refresh tokens." | ai-mem hook user_prompt --content-file -
+```
+
 ## Available Hooks
 
 - `session_start.sh`: print context to inject at session start.

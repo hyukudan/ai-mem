@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import List, Optional
@@ -70,6 +71,50 @@ def _parse_float(value: object) -> Optional[float]:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _env_bool(name: str) -> Optional[bool]:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    text = value.strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return True
+
+
+def _env_int(name: str) -> Optional[int]:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _env_list(name: str) -> List[str]:
+    value = os.environ.get(name)
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _read_content(value: Optional[str], content_file: Optional[str]) -> str:
+    if value is not None:
+        return value
+    if content_file:
+        if content_file == "-":
+            return sys.stdin.read()
+        try:
+            with open(content_file, "r", encoding="utf-8") as handle:
+                return handle.read()
+        except OSError:
+            return ""
+    env_value = os.environ.get("AI_MEM_CONTENT")
+    return env_value or ""
 
 
 def get_memory_manager() -> MemoryManager:
@@ -398,6 +443,150 @@ def context(
         print(json.dumps({"context": context_text, "metadata": meta}, indent=2))
         return
     console.print(context_text)
+
+
+@app.command()
+def hook(
+    event: str = typer.Argument(
+        ...,
+        help="Hook event: session_start, user_prompt, assistant_response, tool_output, session_end",
+    ),
+    content: Optional[str] = typer.Option(None, "--content", "-c", help="Content to store"),
+    content_file: Optional[str] = typer.Option(None, help="Read content from file (use '-' for stdin)"),
+    project: Optional[str] = typer.Option(None, help="Project path override"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID override"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type override"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tags to associate"),
+    no_summary: Optional[bool] = typer.Option(
+        None, "--no-summary/--summary", help="Disable or enable summarization"
+    ),
+    query: Optional[str] = typer.Option(None, help="Context query (session_start)"),
+    total: Optional[int] = typer.Option(None, help="Context index count"),
+    full: Optional[int] = typer.Option(None, help="Context full count"),
+    full_field: Optional[str] = typer.Option(None, help="Context full field (content or summary)"),
+    context_tag: Optional[List[str]] = typer.Option(
+        None, "--context-tag", help="Context tag filters (repeatable)"
+    ),
+    no_wrap: bool = typer.Option(False, help="Disable <ai-mem-context> wrapper"),
+    session_tracking: Optional[bool] = typer.Option(
+        None, "--session-tracking/--no-session-tracking", help="Start/end sessions automatically"
+    ),
+    summary_on_end: Optional[bool] = typer.Option(
+        None, "--summary-on-end/--no-summary-on-end", help="Summarize on session_end"
+    ),
+    summary_count: int = typer.Option(20, help="Summary count"),
+    summary_obs_type: Optional[str] = typer.Option(None, help="Summary observation type filter"),
+):
+    """Run hook logic without shell scripts."""
+    manager = get_memory_manager()
+    normalized = event.strip().lower().replace("-", "_")
+
+    project_name = project or os.environ.get("AI_MEM_PROJECT") or os.getcwd()
+    session_value = session_id or os.environ.get("AI_MEM_SESSION_ID") or None
+    tags = tag if tag is not None else _env_list("AI_MEM_TAGS")
+
+    env_tracking = _env_bool("AI_MEM_SESSION_TRACKING") or False
+    track_sessions = session_tracking if session_tracking is not None else env_tracking
+
+    if normalized == "session_start":
+        if track_sessions:
+            manager.start_session(project=project_name, goal="", session_id=session_value)
+
+        query_value = query or os.environ.get("AI_MEM_QUERY") or None
+        total_value = total if total is not None else _env_int("AI_MEM_CONTEXT_TOTAL")
+        full_value = full if full is not None else _env_int("AI_MEM_CONTEXT_FULL")
+        full_field_value = full_field or os.environ.get("AI_MEM_CONTEXT_FULL_FIELD") or None
+        context_tags = context_tag if context_tag is not None else _env_list("AI_MEM_CONTEXT_TAGS")
+        if context_tag is None and not context_tags:
+            context_tags = None
+        env_no_wrap = _env_bool("AI_MEM_CONTEXT_NO_WRAP") or False
+        wrap = not (no_wrap or env_no_wrap)
+
+        context_text, _ = build_context(
+            manager,
+            project=None if session_value else project_name,
+            session_id=session_value,
+            query=query_value,
+            obs_type=obs_type,
+            tag_filters=context_tags,
+            total_count=total_value,
+            full_count=full_value,
+            full_field=full_field_value,
+            wrap=wrap,
+        )
+        sys.stdout.write(context_text)
+        return
+
+    content_text = _read_content(content, content_file)
+    if not content_text.strip():
+        return
+
+    default_types = {
+        "user_prompt": "interaction",
+        "assistant_response": "interaction",
+        "tool_output": "tool_output",
+        "session_end": "note",
+    }
+    default_tags = {
+        "user_prompt": "user",
+        "assistant_response": "assistant",
+        "tool_output": "tool",
+        "session_end": "session_end",
+    }
+    if normalized not in default_types:
+        console.print(f"[red]Unknown hook event: {event}[/red]")
+        raise typer.Exit(1)
+
+    obs_type_value = obs_type or os.environ.get("AI_MEM_OBS_TYPE") or default_types[normalized]
+    env_no_summary = _env_bool("AI_MEM_NO_SUMMARY")
+    if no_summary is None:
+        if env_no_summary is None:
+            no_summary_value = normalized == "tool_output"
+        else:
+            no_summary_value = env_no_summary
+    else:
+        no_summary_value = no_summary
+
+    event_tag = default_tags[normalized]
+    all_tags = [event_tag] if event_tag else []
+    all_tags.extend(tags or [])
+    deduped_tags = []
+    seen = set()
+    for item in all_tags:
+        if item not in seen:
+            seen.add(item)
+            deduped_tags.append(item)
+
+    manager.add_observation(
+        content=content_text,
+        obs_type=obs_type_value,
+        project=None if session_value else project_name,
+        session_id=session_value,
+        tags=deduped_tags,
+        summarize=not no_summary_value,
+    )
+
+    if normalized == "session_end":
+        if track_sessions:
+            if session_value:
+                manager.end_session(session_value)
+            else:
+                manager.end_latest_session(project_name)
+
+        env_summary_on_end = _env_bool("AI_MEM_SUMMARY_ON_END") or False
+        should_summarize = summary_on_end if summary_on_end is not None else env_summary_on_end
+        if should_summarize:
+            env_summary_count = _env_int("AI_MEM_SUMMARY_COUNT")
+            if env_summary_count is not None and summary_count == 20:
+                summary_count = env_summary_count
+            summary_type = summary_obs_type or os.environ.get("AI_MEM_SUMMARY_OBS_TYPE")
+            manager.summarize_project(
+                project=None if session_value else project_name,
+                session_id=session_value,
+                limit=summary_count,
+                obs_type=summary_type,
+                store=True,
+            )
 
 
 @app.command()

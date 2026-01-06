@@ -365,6 +365,16 @@ AI_MEM_PROJECT="$PWD" scripts/hooks/session_start.sh
 AI_MEM_PROJECT="$PWD" AI_MEM_CONTENT="Fix OAuth flow" scripts/hooks/user_prompt.sh
 ```
 
+You can also use the CLI hook runner (no shell scripts required):
+
+```bash
+# Session start: print context
+ai-mem hook session_start --project "$PWD"
+
+# Store a user prompt from stdin
+echo "Fix OAuth flow" | ai-mem hook user_prompt --project "$PWD" --content-file -
+```
+
 Hook environment variables (common):
 - AI_MEM_BIN: path to ai-mem binary
 - AI_MEM_PROJECT: project path
