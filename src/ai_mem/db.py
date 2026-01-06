@@ -100,6 +100,25 @@ class DatabaseManager:
         self.conn.commit()
         self._ensure_columns()
 
+    def _tag_clause(
+        self,
+        tag_filters: Optional[List[str]],
+        params: List[Any],
+        column: str = "tags",
+    ) -> Optional[str]:
+        if not tag_filters:
+            return None
+        clauses = []
+        for tag in tag_filters:
+            value = str(tag).strip()
+            if not value:
+                continue
+            clauses.append(f"{column} LIKE ?")
+            params.append(f'%"{value}"%')
+        if not clauses:
+            return None
+        return "(" + " OR ".join(clauses) + ")"
+
     def _ensure_columns(self) -> None:
         cursor = self.conn.cursor()
         cursor.execute("PRAGMA table_info(observations)")
@@ -204,17 +223,69 @@ class DatabaseManager:
         rows = cursor.fetchall()
         return [self._row_to_observation(row) for row in rows]
 
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return self._row_to_session(row)
+
+    def list_sessions(
+        self,
+        project: Optional[str] = None,
+        active_only: bool = False,
+        goal_query: Optional[str] = None,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        cursor = self.conn.cursor()
+        params: List[Any] = []
+        sql = "SELECT * FROM sessions"
+        conditions: List[str] = []
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+        if active_only:
+            conditions.append("end_time IS NULL")
+        if goal_query:
+            conditions.append("LOWER(goal) LIKE ?")
+            params.append(f"%{goal_query.lower()}%")
+        if date_start is not None:
+            conditions.append("start_time >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("start_time <= ?")
+            params.append(date_end)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY start_time DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+        return [self._row_to_session(row) for row in rows]
+
     def list_observations(
         self,
         project: Optional[str] = None,
+        session_id: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         cursor = self.conn.cursor()
         params: List[Any] = []
         sql = "SELECT * FROM observations"
+        conditions: List[str] = []
         if project:
-            sql += " WHERE project = ?"
+            conditions.append("project = ?")
             params.append(project)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC"
         if limit is not None:
             sql += " LIMIT ?"
@@ -233,8 +304,10 @@ class DatabaseManager:
         self,
         project: Optional[str] = None,
         obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
+        tag_filters: Optional[List[str]] = None,
         tag_limit: int = 10,
         day_limit: int = 14,
         type_tag_limit: int = 3,
@@ -248,12 +321,18 @@ class DatabaseManager:
         if obs_type:
             conditions.append("type = ?")
             params.append(obs_type)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
         if date_start is not None:
             conditions.append("created_at >= ?")
             params.append(date_start)
         if date_end is not None:
             conditions.append("created_at <= ?")
             params.append(date_end)
+        tag_clause = self._tag_clause(tag_filters, params)
+        if tag_clause:
+            conditions.append(tag_clause)
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
         cursor.execute(f"SELECT COUNT(*) AS count FROM observations {where_clause}", params)
@@ -293,12 +372,18 @@ class DatabaseManager:
             if obs_type:
                 project_conditions.append("type = ?")
                 project_params.append(obs_type)
+            if session_id:
+                project_conditions.append("session_id = ?")
+                project_params.append(session_id)
             if date_start is not None:
                 project_conditions.append("created_at >= ?")
                 project_params.append(date_start)
             if date_end is not None:
                 project_conditions.append("created_at <= ?")
                 project_params.append(date_end)
+            tag_clause = self._tag_clause(tag_filters, project_params)
+            if tag_clause:
+                project_conditions.append(tag_clause)
             project_where = (
                 f"WHERE {' AND '.join(project_conditions)}" if project_conditions else ""
             )
@@ -457,8 +542,10 @@ class DatabaseManager:
         query: str,
         project: Optional[str] = None,
         obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
+        tag_filters: Optional[List[str]] = None,
         limit: int = 20,
     ) -> List[ObservationIndex]:
         cursor = self.conn.cursor()
@@ -478,6 +565,10 @@ class DatabaseManager:
             conditions.append("observations.type = ?")
             params.append(obs_type)
 
+        if session_id:
+            conditions.append("observations.session_id = ?")
+            params.append(session_id)
+
         if date_start is not None:
             conditions.append("observations.created_at >= ?")
             params.append(date_start)
@@ -485,6 +576,10 @@ class DatabaseManager:
         if date_end is not None:
             conditions.append("observations.created_at <= ?")
             params.append(date_end)
+
+        tag_clause = self._tag_clause(tag_filters, params, column="observations.tags")
+        if tag_clause:
+            conditions.append(tag_clause)
 
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
         sql = f"""
@@ -520,6 +615,9 @@ class DatabaseManager:
         self,
         project: Optional[str],
         limit: int,
+        obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
@@ -533,12 +631,21 @@ class DatabaseManager:
         if project:
             conditions.append("project = ?")
             params.append(project)
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
         if date_start is not None:
             conditions.append("created_at >= ?")
             params.append(date_start)
         if date_end is not None:
             conditions.append("created_at <= ?")
             params.append(date_end)
+        tag_clause = self._tag_clause(tag_filters, params)
+        if tag_clause:
+            conditions.append(tag_clause)
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC LIMIT ?"
@@ -563,6 +670,8 @@ class DatabaseManager:
         anchor_time: float,
         limit: int,
         obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
@@ -572,12 +681,18 @@ class DatabaseManager:
         if obs_type:
             conditions.append("type = ?")
             params.append(obs_type)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
         if date_start is not None:
             conditions.append("created_at >= ?")
             params.append(date_start)
         if date_end is not None:
             conditions.append("created_at <= ?")
             params.append(date_end)
+        tag_clause = self._tag_clause(tag_filters, params)
+        if tag_clause:
+            conditions.append(tag_clause)
         sql = """
             SELECT id, summary, project, type, created_at
             FROM observations
@@ -606,6 +721,8 @@ class DatabaseManager:
         anchor_time: float,
         limit: int,
         obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
@@ -615,12 +732,18 @@ class DatabaseManager:
         if obs_type:
             conditions.append("type = ?")
             params.append(obs_type)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
         if date_start is not None:
             conditions.append("created_at >= ?")
             params.append(date_start)
         if date_end is not None:
             conditions.append("created_at <= ?")
             params.append(date_end)
+        tag_clause = self._tag_clause(tag_filters, params)
+        if tag_clause:
+            conditions.append(tag_clause)
         sql = """
             SELECT id, summary, project, type, created_at
             FROM observations
@@ -657,4 +780,14 @@ class DatabaseManager:
             "importance_score": row["importance_score"],
             "tags": json.loads(row["tags"] or "[]"),
             "metadata": json.loads(row["metadata"] or "{}"),
+        }
+
+    def _row_to_session(self, row: sqlite3.Row) -> Dict[str, Any]:
+        return {
+            "id": row["id"],
+            "project": row["project"],
+            "goal": row["goal"],
+            "summary": row["summary"],
+            "start_time": row["start_time"],
+            "end_time": row["end_time"],
         }

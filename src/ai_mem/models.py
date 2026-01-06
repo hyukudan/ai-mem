@@ -14,6 +14,7 @@ ObservationType = Literal[
     "tool_output",
     "file_content",
     "note",
+    "summary",
 ]
 
 class Observation(BaseModel):

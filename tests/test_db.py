@@ -29,6 +29,51 @@ class DatabaseTests(unittest.TestCase):
             self.assertTrue(results)
             self.assertEqual(results[0].id, obs.id)
 
+    def test_tag_filters(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            session = Session(project="proj")
+            db.add_session(session)
+
+            obs_alpha = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Alpha note",
+                summary="Alpha note",
+                tags=["alpha"],
+                created_at=100.0,
+            )
+            obs_beta = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Beta note",
+                summary="Beta note",
+                tags=["beta"],
+                created_at=200.0,
+            )
+            db.add_observation(obs_alpha)
+            db.add_observation(obs_beta)
+
+            results = db.search_observations_fts(
+                "note",
+                project="proj",
+                tag_filters=["alpha"],
+                limit=5,
+            )
+            self.assertEqual([item.id for item in results], [obs_alpha.id])
+
+            recent = db.get_recent_observations(
+                "proj",
+                limit=5,
+                tag_filters=["beta"],
+            )
+            self.assertEqual([item.id for item in recent], [obs_beta.id])
+
+            stats = db.get_stats(project="proj", tag_filters=["alpha"])
+            self.assertEqual(stats["total"], 1)
+
     def test_stats(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
@@ -302,6 +347,58 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(stats["recent_total"], 2)
             self.assertEqual(stats["previous_total"], 1)
             self.assertEqual(stats["trend_delta"], 1)
+
+    def test_sessions_list(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            active = Session(project="proj-a", goal="Alpha goal", start_time=100.0)
+            ended = Session(project="proj-a", goal="Beta goal", start_time=200.0, end_time=123.0)
+            db.add_session(active)
+            db.add_session(ended)
+
+            sessions_all = db.list_sessions(project="proj-a")
+            self.assertEqual(len(sessions_all), 2)
+
+            sessions_active = db.list_sessions(project="proj-a", active_only=True)
+            self.assertEqual(len(sessions_active), 1)
+            self.assertEqual(sessions_active[0]["id"], active.id)
+
+            goal_match = db.list_sessions(project="proj-a", goal_query="alpha")
+            self.assertEqual(len(goal_match), 1)
+            self.assertEqual(goal_match[0]["id"], active.id)
+
+            recent = db.list_sessions(project="proj-a", date_start=150.0)
+            self.assertEqual(len(recent), 1)
+            self.assertEqual(recent[0]["id"], ended.id)
+
+    def test_observations_by_session(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            session_a = Session(project="proj-a")
+            session_b = Session(project="proj-a")
+            db.add_session(session_a)
+            db.add_session(session_b)
+
+            obs_a = Observation(
+                session_id=session_a.id,
+                project="proj-a",
+                type="note",
+                content="A",
+                summary="A",
+            )
+            obs_b = Observation(
+                session_id=session_b.id,
+                project="proj-a",
+                type="note",
+                content="B",
+                summary="B",
+            )
+            db.add_observation(obs_a)
+            db.add_observation(obs_b)
+
+            results = db.list_observations(session_id=session_a.id)
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["id"], obs_a.id)
 
 
 if __name__ == "__main__":

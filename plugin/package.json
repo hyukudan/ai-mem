@@ -1,0 +1,8 @@
+{
+  "name": "ai-mem-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ai-mem hooks for Claude Code",
+  "type": "module",
+  "dependencies": {}
+}

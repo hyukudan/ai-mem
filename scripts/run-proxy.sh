@@ -2,10 +2,9 @@
 set -euo pipefail
 
 if [ ! -d ".venv" ]; then
-  ./scripts/bootstrap.sh
+  echo "Missing .venv. Run ./scripts/bootstrap.sh first."
+  exit 1
 fi
 
 source .venv/bin/activate
-
-port="${AI_MEM_PORT:-8000}"
-ai-mem server --port "$port"
+exec ai-mem proxy "$@"

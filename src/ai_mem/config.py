@@ -34,6 +34,16 @@ class SearchConfig(BaseModel):
     fts_top_k: int = 20
 
 
+class ContextConfig(BaseModel):
+    total_observation_count: int = 12
+    full_observation_count: int = 4
+    observation_types: list[str] = Field(default_factory=list)
+    tag_filters: list[str] = Field(default_factory=list)
+    full_observation_field: str = "content"
+    show_token_estimates: bool = True
+    wrap_context_tag: bool = True
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -41,6 +51,7 @@ class AppConfig(BaseModel):
     embeddings: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
+    context: ContextConfig = Field(default_factory=ContextConfig)
 
 
 def _config_path() -> Path:
@@ -61,7 +72,8 @@ def load_config() -> AppConfig:
     if path.exists():
         with path.open("r", encoding="utf-8") as handle:
             data = json.load(handle)
-        return AppConfig.model_validate(data)
+        config = AppConfig.model_validate(data)
+        return _apply_env_overrides(config)
 
     legacy_path = _legacy_config_path()
     if legacy_path.exists():
@@ -73,9 +85,10 @@ def load_config() -> AppConfig:
                 "api_key": legacy.get("api_key"),
             }
         }
-        return AppConfig.model_validate(migrated)
+        config = AppConfig.model_validate(migrated)
+        return _apply_env_overrides(config)
 
-    return AppConfig()
+    return _apply_env_overrides(AppConfig())
 
 
 def save_config(config: AppConfig) -> None:
@@ -107,3 +120,59 @@ def resolve_storage_paths(config: AppConfig) -> StorageConfig:
     if not storage.vector_dir:
         storage.vector_dir = str(data_dir / "vector-db")
     return storage
+
+
+def _env_int(name: str) -> Optional[int]:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
+def _env_bool(name: str) -> Optional[bool]:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    value = value.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return None
+
+
+def _env_list(name: str) -> Optional[list[str]]:
+    value = os.environ.get(name)
+    if not value:
+        return None
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _apply_env_overrides(config: AppConfig) -> AppConfig:
+    context_total = _env_int("AI_MEM_CONTEXT_TOTAL")
+    context_full = _env_int("AI_MEM_CONTEXT_FULL")
+    context_types = _env_list("AI_MEM_CONTEXT_TYPES")
+    context_tags = _env_list("AI_MEM_CONTEXT_TAGS")
+    context_full_field = os.environ.get("AI_MEM_CONTEXT_FULL_FIELD")
+    context_show_tokens = _env_bool("AI_MEM_CONTEXT_SHOW_TOKENS")
+    context_wrap = _env_bool("AI_MEM_CONTEXT_WRAP")
+
+    if context_total is not None:
+        config.context.total_observation_count = context_total
+    if context_full is not None:
+        config.context.full_observation_count = context_full
+    if context_types is not None:
+        config.context.observation_types = context_types
+    if context_tags is not None:
+        config.context.tag_filters = context_tags
+    if context_full_field:
+        config.context.full_observation_field = context_full_field
+    if context_show_tokens is not None:
+        config.context.show_token_estimates = context_show_tokens
+    if context_wrap is not None:
+        config.context.wrap_context_tag = context_wrap
+
+    return config

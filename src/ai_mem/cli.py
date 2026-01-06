@@ -8,6 +8,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import load_config, update_config
+from .context import build_context
 from .memory import MemoryManager
 
 app = typer.Typer(help="AI Memory: Persistent memory for any LLM.")
@@ -35,6 +36,17 @@ def config(
     data_dir: Optional[str] = typer.Option(None, help="Data directory for SQLite + vector store"),
     sqlite_path: Optional[str] = typer.Option(None, help="Override SQLite database path"),
     vector_dir: Optional[str] = typer.Option(None, help="Override vector store directory"),
+    context_total: Optional[int] = typer.Option(None, help="Context index item count"),
+    context_full: Optional[int] = typer.Option(None, help="Context full item count"),
+    context_types: Optional[str] = typer.Option(None, help="Comma-separated context observation types"),
+    context_tags: Optional[str] = typer.Option(None, help="Comma-separated context tag filters"),
+    context_full_field: Optional[str] = typer.Option(None, help="Context full field (content or summary)"),
+    context_show_tokens: Optional[bool] = typer.Option(
+        None, "--context-show-tokens/--context-hide-tokens", help="Toggle context token estimates"
+    ),
+    context_wrap: Optional[bool] = typer.Option(
+        None, "--context-wrap/--context-no-wrap", help="Toggle <ai-mem-context> wrapping"
+    ),
     show: bool = typer.Option(False, help="Show current configuration"),
 ):
     """Configure providers, embeddings, and storage paths."""
@@ -51,13 +63,20 @@ def config(
             data_dir,
             sqlite_path,
             vector_dir,
+            context_total,
+            context_full,
+            context_types,
+            context_tags,
+            context_full_field,
+            context_show_tokens,
+            context_wrap,
         ]
     ):
         config_data = load_config().model_dump()
         console.print(json.dumps(config_data, indent=2))
         return
 
-    patch = {"llm": {}, "embeddings": {}, "storage": {}}
+    patch = {"llm": {}, "embeddings": {}, "storage": {}, "context": {}}
     if llm_provider:
         patch["llm"]["provider"] = llm_provider
     if llm_model:
@@ -80,6 +99,20 @@ def config(
         patch["storage"]["sqlite_path"] = sqlite_path
     if vector_dir:
         patch["storage"]["vector_dir"] = vector_dir
+    if context_total is not None:
+        patch["context"]["total_observation_count"] = context_total
+    if context_full is not None:
+        patch["context"]["full_observation_count"] = context_full
+    if context_types is not None:
+        patch["context"]["observation_types"] = [item.strip() for item in context_types.split(",") if item.strip()]
+    if context_tags is not None:
+        patch["context"]["tag_filters"] = [item.strip() for item in context_tags.split(",") if item.strip()]
+    if context_full_field:
+        patch["context"]["full_observation_field"] = context_full_field
+    if context_show_tokens is not None:
+        patch["context"]["show_token_estimates"] = context_show_tokens
+    if context_wrap is not None:
+        patch["context"]["wrap_context_tag"] = context_wrap
 
     update_config(patch)
     console.print("[green]Configuration updated.[/green]")
@@ -90,18 +123,25 @@ def add(
     content: str = typer.Argument(..., help="Text to store as memory"),
     obs_type: str = typer.Option("note", help="Observation type"),
     project: Optional[str] = typer.Option(None, help="Project path override"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID override"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tags to associate"),
     no_summary: bool = typer.Option(False, help="Disable summarization"),
 ):
     """Store a new memory observation."""
     manager = get_memory_manager()
+    if session_id and not project:
+        project = None
     obs = manager.add_observation(
         content=content,
         obs_type=obs_type,
         project=project,
+        session_id=session_id,
         tags=tag or [],
         summarize=not no_summary,
     )
+    if not obs:
+        console.print("[yellow]Skipped: content marked as private.[/yellow]")
+        return
     console.print(f"[green]Memory stored![/green] (ID: {obs.id})")
 
 
@@ -111,22 +151,30 @@ def search(
     limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
     project: Optional[str] = typer.Option(None, help="Project path filter"),
     obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
     all_projects: bool = typer.Option(False, help="Search across all projects"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """Search memory index (compact results)."""
     manager = get_memory_manager()
-    if not project and not all_projects:
+    if session_id:
+        project = None
+    elif not project and not all_projects:
         project = os.getcwd()
+    if all_projects:
+        project = None
     results = manager.search(
         query,
         limit=limit,
         project=project,
         obs_type=obs_type,
+        session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        tag_filters=tag,
     )
     if output == "json":
         print(json.dumps([item.model_dump() for item in results], indent=2))
@@ -151,14 +199,20 @@ def timeline(
     project: Optional[str] = typer.Option(None, help="Project path filter"),
     all_projects: bool = typer.Option(False, help="Search across all projects"),
     obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """Get chronological context around an observation."""
     manager = get_memory_manager()
-    if not project and not all_projects:
+    if session_id:
+        project = None
+    elif not project and not all_projects:
         project = os.getcwd()
+    if all_projects:
+        project = None
     results = manager.timeline(
         anchor_id=anchor_id,
         query=query,
@@ -166,8 +220,10 @@ def timeline(
         depth_after=depth_after,
         project=project,
         obs_type=obs_type,
+        session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        tag_filters=tag,
     )
     if output == "json":
         print(json.dumps([item.model_dump() for item in results], indent=2))
@@ -184,12 +240,60 @@ def timeline(
 
 
 @app.command()
+def context(
+    query: Optional[str] = typer.Option(None, help="Optional search query"),
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Include all projects"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    obs_types: Optional[str] = typer.Option(None, help="Comma-separated observation types"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    total: Optional[int] = typer.Option(None, help="Max index items"),
+    full: Optional[int] = typer.Option(None, help="Max full items"),
+    full_field: Optional[str] = typer.Option(None, help="Full context field (content or summary)"),
+    show_tokens: Optional[bool] = typer.Option(
+        None, "--show-tokens/--hide-tokens", help="Toggle token estimates"
+    ),
+    no_wrap: bool = typer.Option(False, help="Disable <ai-mem-context> wrapper"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Generate formatted context for injection into other LLMs."""
+    manager = get_memory_manager()
+    if session_id:
+        project = None
+    elif not project and not all_projects:
+        project = os.getcwd()
+    if all_projects:
+        project = None
+    context_text, meta = build_context(
+        manager,
+        project=project,
+        session_id=session_id,
+        query=query,
+        obs_type=obs_type,
+        obs_types=[item.strip() for item in obs_types.split(",") if item.strip()] if obs_types else None,
+        tag_filters=tag,
+        total_count=total,
+        full_count=full,
+        full_field=full_field,
+        show_tokens=show_tokens,
+        wrap=not no_wrap,
+    )
+    if output == "json":
+        print(json.dumps({"context": context_text, "metadata": meta}, indent=2))
+        return
+    console.print(context_text)
+
+
+@app.command()
 def stats(
     project: Optional[str] = typer.Option(None, help="Project path filter"),
     all_projects: bool = typer.Option(False, help="Include all projects"),
     obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     tag_limit: int = typer.Option(10, help="Max tags to include"),
     day_limit: int = typer.Option(14, help="Max days to include"),
     type_tag_limit: int = typer.Option(3, help="Max tags per type to include"),
@@ -197,13 +301,19 @@ def stats(
 ):
     """Show observation counts grouped by type and project."""
     manager = get_memory_manager()
-    if not project and not all_projects:
+    if session_id:
+        project = None
+    elif not project and not all_projects:
         project = os.getcwd()
+    if all_projects:
+        project = None
     data = manager.get_stats(
         project=project,
         obs_type=obs_type,
+        session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        tag_filters=tag,
         tag_limit=tag_limit,
         day_limit=day_limit,
         type_tag_limit=type_tag_limit,
@@ -274,6 +384,50 @@ def stats(
 
 
 @app.command()
+def summarize(
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Include all projects"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    count: int = typer.Option(20, help="Number of recent observations to summarize"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tags to attach to summary"),
+    dry_run: bool = typer.Option(False, help="Generate summary without storing"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Summarize recent observations into a session summary."""
+    manager = get_memory_manager()
+    if session_id:
+        project = None
+    elif not project and not all_projects:
+        project = os.getcwd()
+    if all_projects:
+        project = None
+    result = manager.summarize_project(
+        project=project,
+        session_id=session_id,
+        limit=count,
+        obs_type=obs_type,
+        store=not dry_run,
+        tags=tag,
+    )
+    if not result:
+        console.print("[yellow]No observations found to summarize.[/yellow]")
+        return
+    summary = result.get("summary", "")
+    if output == "json":
+        payload = {"summary": summary, "metadata": result.get("metadata")}
+        obs = result.get("observation")
+        if obs:
+            payload["observation"] = obs.model_dump()
+        print(json.dumps(payload, indent=2))
+        return
+    console.print(summary)
+    obs = result.get("observation")
+    if obs:
+        console.print(f"[green]Stored summary:[/green] {obs.id}")
+
+
+@app.command()
 def get(
     ids: List[str] = typer.Argument(..., help="Observation IDs"),
     output: str = typer.Option("json", "--format", "-f", help="Output format: text, json"),
@@ -300,6 +454,161 @@ def server(
 
     console.print(f"[green]Starting ai-mem server at http://localhost:{port}[/green]")
     start_server(port=port)
+
+
+@app.command(name="sessions")
+def list_sessions(
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Include all projects"),
+    active_only: bool = typer.Option(False, help="Only sessions without an end time"),
+    goal: Optional[str] = typer.Option(None, help="Filter by goal text"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    limit: Optional[int] = typer.Option(None, help="Max sessions to return"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """List known sessions."""
+    manager = get_memory_manager()
+    if not project and not all_projects:
+        project = os.getcwd()
+    if all_projects:
+        project = None
+    sessions = manager.list_sessions(
+        project=project,
+        active_only=active_only,
+        goal_query=goal,
+        date_start=date_start,
+        date_end=date_end,
+        limit=limit,
+    )
+    if output == "json":
+        print(json.dumps(sessions, indent=2))
+        return
+    table = Table(title="Sessions")
+    table.add_column("ID", style="dim")
+    table.add_column("Project", style="green")
+    table.add_column("Start", style="cyan")
+    table.add_column("End", style="magenta")
+    for item in sessions:
+        table.add_row(
+            item.get("id", "-"),
+            item.get("project", "-"),
+            str(item.get("start_time", "-")),
+            str(item.get("end_time", "-")),
+        )
+    console.print(table)
+
+
+@app.command(name="session-start")
+def session_start(
+    project: Optional[str] = typer.Option(None, help="Project path override"),
+    goal: Optional[str] = typer.Option(None, help="Session goal"),
+    session_id: Optional[str] = typer.Option(None, "--id", "-i", help="Session ID override"),
+):
+    """Start a new session for a project."""
+    manager = get_memory_manager()
+    project_name = project or os.getcwd()
+    session = manager.start_session(
+        project=project_name,
+        goal=goal or "",
+        session_id=session_id,
+    )
+    console.print(f"[green]Session started:[/green] {session.id}")
+
+
+@app.command(name="session-end")
+def session_end(
+    session_id: Optional[str] = typer.Option(None, "--id", "-i", help="Session ID to close"),
+    project: Optional[str] = typer.Option(None, help="Project path (used when no ID is provided)"),
+):
+    """End a session by ID (or close the current one)."""
+    manager = get_memory_manager()
+    if session_id:
+        session = manager.end_session(session_id)
+    else:
+        project_name = project or os.getcwd()
+        session = manager.end_latest_session(project_name)
+    if not session:
+        console.print("[yellow]No matching session found.[/yellow]")
+        raise typer.Exit(1)
+    console.print(f"[green]Session ended:[/green] {session.id}")
+
+
+@app.command()
+def proxy(
+    host: str = typer.Option("0.0.0.0", help="Proxy host"),
+    port: int = typer.Option(8081, help="Proxy port"),
+    upstream: Optional[str] = typer.Option(None, help="Upstream OpenAI-compatible base URL"),
+    upstream_key: Optional[str] = typer.Option(None, help="Upstream API key"),
+    inject: bool = typer.Option(True, "--inject/--no-inject", help="Inject ai-mem context"),
+    store: bool = typer.Option(True, "--store/--no-store", help="Store prompt/response pairs"),
+    project: Optional[str] = typer.Option(None, help="Default project path"),
+    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Summarize stored content"),
+):
+    """Start an OpenAI-compatible proxy that injects context and stores interactions."""
+    from .proxy import start_proxy
+
+    cfg = load_config()
+    upstream_base = upstream or cfg.llm.base_url or os.environ.get("AI_MEM_PROXY_UPSTREAM_BASE_URL")
+    if not upstream_base:
+        console.print("[red]Proxy requires --upstream or AI_MEM_PROXY_UPSTREAM_BASE_URL.[/red]")
+        raise typer.Exit(1)
+    upstream_secret = (
+        upstream_key
+        or os.environ.get("AI_MEM_PROXY_UPSTREAM_KEY")
+        or os.environ.get("AI_MEM_PROXY_UPSTREAM_API_KEY")
+        or cfg.llm.api_key
+    )
+    console.print(f"[green]Starting ai-mem proxy at http://{host}:{port}[/green]")
+    start_proxy(
+        host=host,
+        port=port,
+        upstream_base_url=upstream_base,
+        upstream_api_key=upstream_secret,
+        inject_context=inject,
+        store_interactions=store,
+        default_project=project,
+        summarize=summarize,
+    )
+
+
+@app.command(name="gemini-proxy")
+def gemini_proxy(
+    host: str = typer.Option("0.0.0.0", help="Proxy host"),
+    port: int = typer.Option(8090, help="Proxy port"),
+    upstream: Optional[str] = typer.Option(None, help="Gemini API base URL"),
+    upstream_key: Optional[str] = typer.Option(None, help="Gemini API key"),
+    inject: bool = typer.Option(True, "--inject/--no-inject", help="Inject ai-mem context"),
+    store: bool = typer.Option(True, "--store/--no-store", help="Store prompt/response pairs"),
+    project: Optional[str] = typer.Option(None, help="Default project path"),
+    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Summarize stored content"),
+):
+    """Start a Gemini API proxy that injects context and stores interactions."""
+    from .gemini_proxy import start_proxy as start_gemini_proxy
+
+    base_url = (
+        upstream
+        or os.environ.get("AI_MEM_GEMINI_UPSTREAM_BASE_URL")
+        or "https://generativelanguage.googleapis.com"
+    )
+    api_key = (
+        upstream_key
+        or os.environ.get("AI_MEM_GEMINI_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+    )
+    if not api_key:
+        console.print("[yellow]Gemini proxy running without API key (pass --upstream-key or AI_MEM_GEMINI_API_KEY).[/yellow]")
+    console.print(f"[green]Starting ai-mem Gemini proxy at http://{host}:{port}[/green]")
+    start_gemini_proxy(
+        host=host,
+        port=port,
+        upstream_base_url=base_url,
+        upstream_api_key=api_key,
+        inject_context=inject,
+        store_interactions=store,
+        default_project=project,
+        summarize=summarize,
+    )
 
 
 @app.command()
@@ -409,11 +718,12 @@ def watch(
 def export(
     path: str = typer.Argument(..., help="Path to write exported JSON"),
     project: Optional[str] = typer.Option(None, help="Project path filter"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
     limit: Optional[int] = typer.Option(None, help="Limit number of observations"),
 ):
     """Export observations to a JSON file."""
     manager = get_memory_manager()
-    data = manager.export_observations(project=project, limit=limit)
+    data = manager.export_observations(project=project, session_id=session_id, limit=limit)
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2)
     console.print(f"[green]Exported {len(data)} observations to {path}[/green]")
@@ -441,10 +751,15 @@ def import_memories(
         obs_type = item.get("type") or "note"
         if not content:
             continue
-        manager.add_observation(
+        item_project = item.get("project")
+        session_id = item.get("session_id")
+        if project and item_project and project != item_project:
+            session_id = None
+        result = manager.add_observation(
             content=content,
             obs_type=obs_type,
-            project=project or item.get("project"),
+            project=project or item_project,
+            session_id=session_id,
             tags=item.get("tags") or [],
             metadata=item.get("metadata") or {},
             title=item.get("title"),
@@ -454,7 +769,8 @@ def import_memories(
             created_at=item.get("created_at"),
             importance_score=item.get("importance_score", 0.5),
         )
-        imported += 1
+        if result:
+            imported += 1
     console.print(f"[green]Imported {imported} observations[/green]")
 
 

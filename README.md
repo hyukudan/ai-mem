@@ -1,247 +1,498 @@
 # ai-mem: Universal Long-Term Memory for LLMs
 
-**ai-mem** is an open-source tool designed to give **Long-Term Memory** to any Large Language Model (LLM), including Google Gemini, OpenAI-compatible local models (vLLM/LM Studio/Ollama), and more.
+ai-mem is a local-first memory layer for any LLM. It stores observations in a SQLite + FTS5 database, adds semantic search via a local vector store (Chroma), and injects the right context when you start a new task. It works with Gemini, OpenAI-compatible APIs (vLLM/LM Studio/Ollama), and any client that can call hooks or an MCP tool.
 
-Inspired by [claude-mem](https://github.com/thedotmack/claude-mem), this project generalizes the concept of persistent context, allowing you to maintain knowledge across sessions, projects, and different AI providers.
+This project is inspired by claude-mem (https://github.com/thedotmack/claude-mem). We borrow ideas and adapt them for a multi-provider, local-first workflow. See Credits and Attribution for details.
 
-![License](https://img.shields.io/badge/license-AGPL%203.0-blue.svg)
-![Python](https://img.shields.io/badge/python-3.10+-green.svg)
+License: AGPL-3.0
 
-## 🚀 Why ai-mem?
+## Table of Contents
 
-Current LLM interfaces have a limited context window. Once you close a chat or start a new session, the model "forgets" everything you taught it about your coding style, project architecture, or specific requirements.
+- Overview
+- Key Features
+- Core Concepts
+- Architecture
+- Installation
+- Quick Start
+- Convenience Scripts
+- Configuration
+- Using the CLI
+- Sessions
+- Context Injection
+- Web Viewer
+- Hooks (Model Agnostic)
+- Claude Code Plugin
+- MCP Tools (Claude Desktop and others)
+- Proxies (OpenAI-compatible and Gemini)
+- API Token (Optional)
+- REST API
+- Storage Layout
+- Privacy and Redaction
+- Troubleshooting
+- Roadmap
+- Development and Testing
+- Credits and Attribution
 
-**ai-mem** solves this by acting as an external **Memory Layer** that:
-1.  **Captures** important interactions, facts, and decisions.
-2.  **Compresses** verbose logs into concise insights using an AI summarizer.
-3.  **Stores** knowledge in a local Vector Database (ChromaDB) with project-level isolation.
-4.  **Retrieves** the most relevant context automatically via Semantic Search (RAG) when you start a new task.
+## Overview
 
-## ✨ Key Features
+LLM chats forget context when you start a new session. ai-mem acts as a memory layer that:
 
-*   **🤖 Model Agnostic:** Gemini native + OpenAI-compatible local models out of the box.
-*   **🔒 Local & Private:** Your data stays on your machine (SQLite + FTS5 + ChromaDB).
-*   **🧩 Local Embeddings:** Fast, offline embeddings via `fastembed` by default.
-*   **📂 Project Scoped:** Automatically detects your current project directory to keep memories organized.
-*   **🕸️ Web Viewer UI:** A built-in dashboard to visualize, search, and manage your memory stream in real-time.
-*   **🔌 API Server:** Exposes a REST API so other agents, scripts, or IDE extensions can query memory programmatically.
-*   **🧠 Semantic Search:** Finds information by *meaning*, not just keywords.
-*   **📉 Cost & Token Management:** Summarizes old memories to save on context window usage.
+1. Captures observations (prompts, outputs, notes, tool logs).
+2. Summarizes long content to keep memory compact.
+3. Stores knowledge locally (SQLite + FTS5 + Chroma).
+4. Retrieves relevant context on demand (search -> timeline -> full details).
+5. Injects that context into any LLM client.
 
-## 📦 Installation
+You can use ai-mem entirely locally with fast embeddings, or connect it to Gemini or any OpenAI-compatible model. It is designed to work in terminals, IDEs, or agent frameworks.
 
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/ai-mem.git
-cd ai-mem
+## Key Features
 
-# Install dependencies (global)
-pip install -e .
+- Model agnostic: Gemini native + OpenAI-compatible local models.
+- Local and private: SQLite + FTS5 + ChromaDB stored on disk.
+- Semantic + keyword search: hybrid retrieval for relevance.
+- Progressive disclosure: search -> timeline -> full detail to control token cost.
+- Web viewer UI: browse, search, and manage memory at http://localhost:8000.
+- Sessions: track goals and scope retrieval to a session.
+- Privacy tags: <private>...</private> is stripped before storage.
+- Context injection: generate <ai-mem-context> blocks for any model.
+- Hooks and proxies: automatic storage and injection.
+- MCP tools: search memory from Claude Desktop or other MCP clients.
+- Citations: reference observations via /api/observation/{id}.
+
+## Core Concepts
+
+- Observation: a single memory item. It has an id, session_id, project, type, content, summary, tags, metadata, and timestamps.
+- Project: a folder path used to group observations.
+- Session: a scoped work unit with a goal and timestamps. Sessions help you filter memory for a task.
+- Progressive disclosure:
+  - search: compact summaries
+  - timeline: surrounding context
+  - get: full details
+
+Observation types are flexible, but common values include:
+- note, decision, bugfix, feature, refactor, discovery, change, interaction, tool_output, file_content, summary
+
+## Architecture
+
+ai-mem uses a layered retrieval pipeline:
+
+1. SQLite + FTS5 for keyword search and fast filtering.
+2. Chroma vector store for semantic search over chunks.
+3. Progressive disclosure to control context size.
+
+Core components:
+
+- MemoryManager: orchestrates storage, retrieval, and session tracking.
+- SQLite DB: observations and sessions.
+- Vector store: embeddings and semantic search.
+- Context builder: formats <ai-mem-context> blocks with token estimates.
+- Web server: REST API + viewer UI.
+- Proxies: OpenAI-compatible proxy and Gemini proxy.
+- MCP server: tools for external clients.
+- Hook scripts: for any lifecycle-based client.
+
+Architecture diagram (simplified):
+
+```
+                     +-----------------------+
+                     |  CLI / UI / REST API  |
+                     +-----------+-----------+
+                                 |
+                                 v
+                     +-----------------------+
+   Hooks / MCP <---->|  MemoryManager + RAG  |<---- Proxies (OpenAI/Gemini)
+                     +-----------+-----------+
+                                 |
+                    +------------+------------+
+                    |                         |
+                    v                         v
+             +--------------+         +---------------+
+             | SQLite + FTS |         | Chroma Vector |
+             | observations |         | embeddings    |
+             +--------------+         +---------------+
 ```
 
-## 🧪 Virtualenv (Recommended)
+## Installation
+
+Requirements:
+- Python 3.10+
+- pip, venv
+
+Clone and install:
 
 ```bash
+git clone https://github.com/yourusername/ai-mem.git
+cd ai-mem
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
-Or use the bootstrap script:
+Or use the bootstrap helper:
 
 ```bash
 ./scripts/bootstrap.sh
 ```
 
-Start API + UI (single process):
+## Quick Start
 
-```bash
-./scripts/run.sh
-```
-
-Start API + UI alongside the MCP stdio server:
-
-```bash
-./scripts/run-all.sh
-```
-
-## ⚡ Quick Start
-
-### 1. Zero-config (CLI only)
-By default, `ai-mem` runs with **local embeddings** and **no LLM** required. This lets you use the CLI without API keys.
+CLI only (no API keys required):
 
 ```bash
 ai-mem add "We use Python 3.11 and pandas 2.0 in Omega."
 ai-mem search "Omega dependencies"
 ```
 
-### 2. Configuration (Optional)
-Configure an LLM provider and embeddings. Embeddings are local (`fastembed`) unless you change them.
+Start the server and UI:
 
 ```bash
-# Gemini (LLM) + local embeddings
-ai-mem config --llm-provider gemini --llm-model gemini-1.5-flash --llm-api-key YOUR_GEMINI_API_KEY
+./scripts/run.sh
+```
+
+Open http://localhost:8000
+
+## Convenience Scripts
+
+Scripts in scripts/ start common stacks:
+
+- ./scripts/run.sh: server + UI only
+- ./scripts/run-all.sh: server + UI + MCP
+- ./scripts/run-stack.sh: server + OpenAI-compatible proxy
+- ./scripts/run-full.sh: server + OpenAI-compatible proxy + MCP
+- ./scripts/run-gemini-stack.sh: server + Gemini proxy
+- ./scripts/run-gemini-full.sh: server + Gemini proxy + MCP
+- ./scripts/run-dual-stack.sh: server + OpenAI-compatible proxy + Gemini proxy
+- ./scripts/run-dual-full.sh: server + OpenAI-compatible proxy + Gemini proxy + MCP
+- ./scripts/run-proxy.sh: OpenAI-compatible proxy only
+- ./scripts/run-gemini-proxy.sh: Gemini proxy only
+- ./scripts/run-mcp.sh: MCP server only
+
+## Configuration
+
+Config is stored in:
+- ~/.config/ai-mem/config.json
+- Override with AI_MEM_CONFIG=/path/to/config.json
+
+Show current config:
+
+```bash
+ai-mem config --show
+```
+
+Configure LLM and embeddings:
+
+```bash
+# Gemini + local embeddings
+ai-mem config --llm-provider gemini --llm-model gemini-1.5-flash --llm-api-key YOUR_KEY
 ai-mem config --embeddings-provider fastembed
 
-# Local OpenAI-compatible LLM (vLLM/LM Studio/Ollama) + local embeddings
-ai-mem config --llm-provider openai-compatible --llm-base-url http://localhost:8000/v1 --llm-model YOUR_MODEL_NAME
-ai-mem config --embeddings-provider fastembed
+# OpenAI-compatible model (vLLM, LM Studio, Ollama)
+ai-mem config --llm-provider openai-compatible --llm-base-url http://localhost:8000/v1 --llm-model YOUR_MODEL
 
 # If your OpenAI-compatible server exposes embeddings
 ai-mem config --embeddings-provider openai-compatible --embeddings-base-url http://localhost:8000/v1 --embeddings-model YOUR_EMBED_MODEL
 
-# Auto: use OpenAI-compatible embeddings when configured, otherwise local fastembed
+# Auto embeddings: use OpenAI-compatible if configured, else fastembed
 ai-mem config --embeddings-provider auto
 ```
 
-Example vLLM server:
+Context defaults:
 
 ```bash
-python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-7B-Instruct --port 8000
+ai-mem config --context-total 12 --context-full 4 --context-show-tokens
 ```
 
-### 3. Adding Memories
-You can manually add knowledge or pipe output from other commands.
+Environment overrides (context only):
 
 ```bash
-# Manual addition
-ai-mem add "The project 'Omega' uses Python 3.11 and requires pandas 2.0. Avoid using numpy directly."
+export AI_MEM_CONTEXT_TOTAL=12
+export AI_MEM_CONTEXT_FULL=4
+export AI_MEM_CONTEXT_TYPES=note,bugfix
+export AI_MEM_CONTEXT_TAGS=auth,infra
+export AI_MEM_CONTEXT_FULL_FIELD=content
+export AI_MEM_CONTEXT_SHOW_TOKENS=true
+export AI_MEM_CONTEXT_WRAP=true
+```
+
+## Using the CLI
+
+Common commands:
+
+```bash
+# Add
+ai-mem add "We decided to use Redis for session cache." --obs-type decision --tag architecture
+
+# Search
+ai-mem search "Redis session cache" --limit 10
+
+# Timeline
+ai-mem timeline --query "Redis" --depth-before 3 --depth-after 3
+
+# Full observation details
+ai-mem get <observation_id>
+
+# Stats
+ai-mem stats --tag infra
+
+# Export / import
+ai-mem export memories.json
+ai-mem import memories.json
+
+# Watch a command
+ai-mem watch --command "pytest -q"
 
 # Ingest a codebase
 ai-mem ingest .
 ```
 
-### 4. Retrieving Context
-Before asking your LLM a question, fetch the relevant context.
+## Sessions
+
+Sessions let you scope memory to a task.
 
 ```bash
-# Compact index (Layer 1)
-ai-mem search "How do I set up the dependencies for Omega?"
+# Start / end
+ai-mem session-start --goal "Fix OAuth flow"
+ai-mem sessions --active-only
+ai-mem session-end --id <session_id>
 
-# Timeline context (Layer 2)
-ai-mem timeline --query "dependencies for Omega"
+# Add directly to a session
+ai-mem add "Session-specific note" --session-id <session_id>
 
-# Full details (Layer 3)
-ai-mem get <observation_id>
+# Search within a session
+ai-mem search "OAuth" --session-id <session_id>
 ```
 
-### 5. Watch Mode (CLI)
-Capture command output or a growing log file.
+Session summaries:
 
 ```bash
-ai-mem watch --command "pytest -q"
-ai-mem watch --file /var/log/system.log
+ai-mem summarize --session-id <session_id> --count 50
 ```
 
-### 6. Export / Import
-Move observations between machines or back up your memory store.
+## Context Injection
+
+Generate a formatted context block for any client:
 
 ```bash
-ai-mem export memories.json
-ai-mem import memories.json
+# Default project (cwd)
+ai-mem context
+
+# With a query
+aio-mem context --query "OAuth flow" --tag auth --tag bug
+
+# Session scope
+ai-mem context --session-id <session_id>
 ```
 
-### 7. Cleanup
-Remove single observations or entire projects.
+By default ai-mem wraps output in <ai-mem-context> to prevent recursive ingestion.
+Use --no-wrap if you need raw text.
 
-```bash
-ai-mem delete <observation_id>
-ai-mem delete-project /path/to/project
-```
+## Web Viewer
 
-### 4. The Web Viewer
-Launch the local server to browse your memories visually.
+Launch the server UI:
 
 ```bash
 ai-mem server
 ```
-> Open `http://localhost:8000` in your browser to see the Memory Stream.
 
-Viewer tips:
-- Query input supports `Esc` to clear, plus a clear button.
-- Toggle "Use global query" to share the same query across projects.
-- Timeline mode shows an anchor badge and an Exit button in the header/sidebar.
-- Auto-refresh settings (on/off, interval, mode) are stored per project.
-- "Use global auto-refresh" lets you share auto-refresh settings across projects.
-- The sidebar auto-refresh label shows mode/interval/scope (tooltip) and highlights global scope.
-- The results header auto-refresh badge shows a dot when scope is global.
-- Timeline badge shows "no anchor" when active without an anchor; hover for tooltip.
-- The global dot marker is hidden on compact mobile badges.
+Viewer features:
+- Search, timeline, stats, and context preview.
+- Session start/end, summaries, and export.
+- Stream view for new observations.
+- Session ID filter for search, timeline, stats, context, and stream.
+- Observation details include a Copy URL button for citations.
 
-## 🛠️ Architecture
+## Hooks (Model Agnostic)
 
-**ai-mem** follows a layered retrieval pattern:
+Use scripts in scripts/hooks with any client that supports shell hooks.
 
-1.  **SQLite + FTS5:** Fast keyword search for observations, summaries, and tags.
-2.  **ChromaDB:** Semantic retrieval via local embeddings.
-3.  **Progressive Disclosure:** `search` → `timeline` → `get` keeps token usage low.
-
-## 🤖 Automation & Integration
-
-### Using with Scripts
-You can use `ai-mem` in your CI/CD pipelines or local scripts to inject context automatically.
+Examples:
 
 ```bash
-# Example: Injecting memory into a CLI LLM tool
-CONTEXT=$(ai-mem get "Fixing the login bug" --format json)
-llm-tool --system "$CONTEXT" "Help me fix the login bug in auth.py"
+# Session start: print context
+AI_MEM_PROJECT="$PWD" scripts/hooks/session_start.sh
+
+# Store a user prompt
+AI_MEM_PROJECT="$PWD" AI_MEM_CONTENT="Fix OAuth flow" scripts/hooks/user_prompt.sh
 ```
 
-### REST API
-When you run `ai-mem server`, a full REST API is available at `http://localhost:8000/docs`.
+Hook environment variables (common):
+- AI_MEM_BIN: path to ai-mem binary
+- AI_MEM_PROJECT: project path
+- AI_MEM_SESSION_ID: scope context + storage to a specific session
+- AI_MEM_CONTENT: content to store
+- AI_MEM_TAGS: comma-separated tags
+- AI_MEM_OBS_TYPE: override type
+- AI_MEM_NO_SUMMARY: disable summarization
+- AI_MEM_SESSION_TRACKING: session_start opens, session_end closes
 
-*   `POST /api/memories`: Add a new memory.
-*   `GET /api/search?query=...`: Search the memory index.
-*   `GET /api/timeline?query=...`: Timeline context around a query or anchor (supports `project`, `obs_type`, `date_start`, `date_end`, `depth_before`, `depth_after`).
-*   `POST /api/observations`: Fetch full observation details.
-*   `GET /api/observations`: List observations (export).
-*   `DELETE /api/observations/{id}`: Delete observation.
-*   `GET /api/projects`: List all tracked projects.
-*   `GET /api/stats`: Summary counts by type/project/tags/days (supports `project`, `obs_type`, `date_start`, `date_end`, `tag_limit`, `day_limit`, `type_tag_limit`; returns `recent_total`, `previous_total`, `trend_delta`, `trend_pct`).
-*   `POST /api/projects/delete`: Delete all observations for a project.
-*   `GET /api/export`: Export observations.
-*   `POST /api/import`: Import observations.
-*   `GET /api/health`: Health check.
+## Claude Code Plugin
 
-## 🔐 API Token (Optional)
-
-Set `AI_MEM_API_TOKEN` to require a bearer token on all API routes (including the UI). The viewer includes a token field that stores the value in localStorage.
+A local plugin is available in plugin/.
 
 ```bash
-AI_MEM_API_TOKEN=your-token ./scripts/run.sh
+./scripts/install-claude-plugin.sh
 ```
 
-Then set the same token in the viewer sidebar.
+Set AI_MEM_BIN for venvs:
 
-## 🔌 MCP Tools (Optional)
+```bash
+export AI_MEM_BIN="$PWD/.venv/bin/ai-mem"
+```
 
-Start the MCP stdio server:
+See plugin/README.md for details.
+
+## MCP Tools (Claude Desktop and others)
+
+Start MCP stdio server:
 
 ```bash
 ai-mem mcp
 ```
 
-Or use the helper script:
+Tools:
+- search
+- mem-search (alias)
+- timeline
+- get_observations
+- summarize
+
+Search and timeline accept session_id to scope results.
+
+## Proxies
+
+### OpenAI-compatible proxy
 
 ```bash
-./scripts/run-mcp.sh
+AI_MEM_PROXY_UPSTREAM_BASE_URL="http://localhost:8000" ai-mem proxy --port 8081
 ```
 
-Available tools: `search`, `timeline`, `get_observations` plus `__IMPORTANT` workflow guidance.
+Point your client to http://localhost:8081/v1
 
-## 🗺️ Roadmap
+Supported endpoints:
+- /v1/chat/completions
+- /v1/completions
+- /v1/responses
 
-- [x] Core CLI (Config, Add, Search, Timeline, Get)
-- [x] Gemini Provider Support
-- [x] Local embeddings (fastembed)
-- [x] OpenAI-compatible embeddings auto-detect
-- [ ] VS Code Extension
-- [x] "Watch Mode" (Auto-ingest terminal output)
+Headers:
+- x-ai-mem-project: override project
+- x-ai-mem-session-id: scope context + storage to a session
+- x-ai-mem-query: override query for context
+- x-ai-mem-inject: true/false
+- x-ai-mem-store: true/false
+- x-ai-mem-obs-type
+- x-ai-mem-obs-types
+- x-ai-mem-tags
+- x-ai-mem-total
+- x-ai-mem-full
+- x-ai-mem-full-field
+- x-ai-mem-show-tokens
+- x-ai-mem-wrap
 
-## 🙌 Attribution
+### Gemini proxy
 
-This project is inspired by and references architecture from [claude-mem](https://github.com/thedotmack/claude-mem). Portions of the design and concepts follow claude-mem's progressive disclosure and storage model. See their repo for the original implementation.
+```bash
+AI_MEM_GEMINI_API_KEY="YOUR_KEY" ai-mem gemini-proxy --port 8090
+```
 
-## 📄 License
+Point your Gemini client to http://localhost:8090
 
-AGPL-3.0 License.
+Supported endpoints:
+- :generateContent
+- :streamGenerateContent
+
+## API Token (Optional)
+
+Set AI_MEM_API_TOKEN to require a bearer token on all API routes (including the UI).
+The viewer includes a token field that stores the value in localStorage.
+
+```bash
+AI_MEM_API_TOKEN=your-token ./scripts/run.sh
+```
+
+## REST API
+
+When you run ai-mem server, see docs at:
+- http://localhost:8000/docs
+
+Key endpoints:
+- POST /api/memories: add a memory (project, session_id, obs_type, tags, metadata, title, summarize)
+- GET /api/search: search (project, session_id, obs_type, tags, date_start, date_end)
+- GET /api/timeline: timeline (project, session_id, obs_type, tags, date_start, date_end, depth_before, depth_after)
+- GET /api/observations: list observations (project, session_id, limit)
+- GET /api/observations/{id}: single observation
+- GET /api/observation/{id}: alias
+- DELETE /api/observations/{id}
+- GET /api/projects
+- GET /api/sessions (project, active_only, goal, date_start, date_end, limit)
+- GET /api/sessions/{id}
+- GET /api/sessions/{id}/observations
+- POST /api/sessions/start (project, goal, session_id)
+- POST /api/sessions/end (session_id or latest)
+- GET /api/stats (project, session_id, obs_type, tags, date_start, date_end, tag_limit, day_limit, type_tag_limit)
+- GET /api/context/preview (project, session_id, query, obs_type, obs_types, tags, total, full, full_field, show_tokens, wrap)
+- GET /api/context/inject (same as preview)
+- GET /api/context (alias)
+- GET /api/context/config
+- POST /api/context/preview
+- POST /api/context/inject
+- GET /api/stream (project, session_id, obs_type, tags, query, token)
+- GET /api/export (project, session_id, limit)
+- POST /api/import (preserves session_id unless project override changes scope)
+- POST /api/summarize (project, session_id, count, obs_type, store, tags)
+- GET /api/health
+- GET /api/readiness
+- GET /api/version
+
+## Storage Layout
+
+Default data directory: ~/.ai-mem
+
+- SQLite: ~/.ai-mem/ai-mem.sqlite
+- Vector DB: ~/.ai-mem/vector-db
+
+You can override these in config:
+
+```bash
+ai-mem config --data-dir /path/to/data
+ai-mem config --sqlite-path /path/to/ai-mem.sqlite
+ai-mem config --vector-dir /path/to/vector-db
+```
+
+## Privacy and Redaction
+
+Use <private>...</private> to prevent sensitive content from being stored.
+The private segments are removed before hashing, indexing, and storage.
+
+<ai-mem-context> is reserved and stripped to prevent recursive ingestion.
+
+## Troubleshooting
+
+- Proxy fails to start: set AI_MEM_PROXY_UPSTREAM_BASE_URL.
+- Gemini proxy warns about API key: set AI_MEM_GEMINI_API_KEY or GOOGLE_API_KEY.
+- No results: check project path, session_id, or tags.
+- Token estimates are rough: they are based on character count heuristics.
+- Port in use: change AI_MEM_PORT, AI_MEM_PROXY_PORT, or AI_MEM_GEMINI_PROXY_PORT.
+
+## Roadmap
+
+Planned or proposed improvements:
+
+- Provider adapters: Anthropic, Azure OpenAI, and additional local runtimes.
+- Pluggable vector stores (pgvector, Qdrant) and faster hybrid search.
+- Richer observations: attachments, file diffs, structured metadata.
+- Incremental sync/export formats (JSONL, snapshots, merge tools).
+- UI enhancements: session analytics, tag management, saved filters.
+- Hook presets for more clients and IDEs.
+
+## Development and Testing
+
+Run tests:
+
+```bash
+.venv/bin/python -m pytest tests/test_db.py tests/test_summary.py tests/test_privacy.py tests/test_chunking.py
+```
+
+## Credits and Attribution
+
+ai-mem is inspired by claude-mem (https://github.com/thedotmack/claude-mem).
+We adopt similar memory concepts and extend them with multi-provider support and local-first defaults.

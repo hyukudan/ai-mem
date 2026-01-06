@@ -28,12 +28,17 @@ class MCPServer:
             },
             {
                 "name": "search",
-                "description": "Search memory index. Params: query, limit, project, obs_type.",
+                "description": "Search memory index. Params: query, limit, project, session_id, obs_type, date_start, date_end, tags.",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
+            {
+                "name": "mem-search",
+                "description": "Alias for search (natural language memory lookup). Params: query, limit, project, session_id, obs_type, date_start, date_end, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
                 "name": "timeline",
-                "description": "Timeline around an observation. Params: anchor or query, depth_before, depth_after, project.",
+                "description": "Timeline around an observation. Params: anchor or query, depth_before, depth_after, project, session_id, obs_type, date_start, date_end, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
@@ -46,25 +51,59 @@ class MCPServer:
                     "additionalProperties": True,
                 },
             },
+            {
+                "name": "summarize",
+                "description": "Summarize recent observations. Params: project, session_id, count, obs_type, store, tags.",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
         ]
 
     def call_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         if name == "__IMPORTANT":
             return self._wrap_text(_tool_instructions())
-        if name == "search":
+        if name in {"search", "mem-search"}:
             return self._search(args)
         if name == "timeline":
             return self._timeline(args)
         if name == "get_observations":
             return self._get_observations(args)
+        if name == "summarize":
+            return self._summarize(args)
         return self._wrap_text(f"Unknown tool: {name}", is_error=True)
+
+    @staticmethod
+    def _parse_tags(value: Any) -> Optional[List[str]]:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            tags = [str(item).strip() for item in value if str(item).strip()]
+            return tags or None
+        if isinstance(value, str):
+            tags = [item.strip() for item in value.split(",") if item.strip()]
+            return tags or None
+        return None
 
     def _search(self, args: Dict[str, Any]) -> Dict[str, Any]:
         query = str(args.get("query", "")).strip()
         limit = int(args.get("limit", 10))
         project = args.get("project")
+        session_id = args.get("session_id")
         obs_type = args.get("obs_type") or args.get("type")
-        results = self.manager.search(query, limit=limit, project=project, obs_type=obs_type)
+        date_start = args.get("date_start")
+        date_end = args.get("date_end")
+        tags = self._parse_tags(args.get("tags") or args.get("tag"))
+        if session_id:
+            project = None
+        results = self.manager.search(
+            query,
+            limit=limit,
+            project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
+            tag_filters=tags,
+        )
         payload = [item.model_dump() for item in results]
         return self._wrap_text(json.dumps(payload, indent=2))
 
@@ -74,12 +113,24 @@ class MCPServer:
         depth_before = int(args.get("depth_before", 3))
         depth_after = int(args.get("depth_after", 3))
         project = args.get("project")
+        session_id = args.get("session_id")
+        obs_type = args.get("obs_type") or args.get("type")
+        date_start = args.get("date_start")
+        date_end = args.get("date_end")
+        tags = self._parse_tags(args.get("tags") or args.get("tag"))
+        if session_id:
+            project = None
         results = self.manager.timeline(
             anchor_id=anchor,
             query=query,
             depth_before=depth_before,
             depth_after=depth_after,
             project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
+            tag_filters=tags,
         )
         payload = [item.model_dump() for item in results]
         return self._wrap_text(json.dumps(payload, indent=2))
@@ -88,6 +139,25 @@ class MCPServer:
         ids = args.get("ids") or []
         results = self.manager.get_observations(ids)
         return self._wrap_text(json.dumps(results, indent=2))
+
+    def _summarize(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        project = args.get("project")
+        session_id = args.get("session_id")
+        count = int(args.get("count", 20))
+        obs_type = args.get("obs_type") or args.get("type")
+        store = args.get("store", True)
+        if isinstance(store, str):
+            store = store.strip().lower() not in {"false", "0", "no"}
+        tags = args.get("tags")
+        result = self.manager.summarize_project(
+            project=project,
+            session_id=session_id,
+            limit=count,
+            obs_type=obs_type,
+            store=bool(store),
+            tags=tags if isinstance(tags, list) else None,
+        )
+        return self._wrap_text(json.dumps(result or {}, indent=2))
 
     @staticmethod
     def _wrap_text(text: str, is_error: bool = False) -> Dict[str, Any]:

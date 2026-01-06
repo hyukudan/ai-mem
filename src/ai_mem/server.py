@@ -1,12 +1,16 @@
+import asyncio
+import json
 import os
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
 import uvicorn
 
+from .context import build_context, estimate_tokens
+from . import __version__
 from .memory import MemoryManager
 
 app = FastAPI(title="ai-mem Server")
@@ -30,7 +34,7 @@ def get_manager() -> MemoryManager:
     return _manager
 
 
-def _check_token(request: Request) -> None:
+def _check_token(request: Request, query_token: Optional[str] = None) -> None:
     if not _api_token:
         return
     auth = request.headers.get("authorization") or ""
@@ -39,14 +43,23 @@ def _check_token(request: Request) -> None:
         token = auth.split(" ", 1)[1].strip()
     if not token:
         token = request.headers.get("x-ai-mem-token", "")
+    if not token and query_token:
+        token = query_token
     if token != _api_token:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _parse_list_param(value: Optional[str]) -> Optional[List[str]]:
+    if not value:
+        return None
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 class MemoryInput(BaseModel):
     content: str
     obs_type: str = "note"
     project: Optional[str] = None
+    session_id: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     title: Optional[str] = None
@@ -64,6 +77,40 @@ class ProjectDelete(BaseModel):
 class ImportPayload(BaseModel):
     items: List[Dict[str, Any]]
     project: Optional[str] = None
+
+
+class SummarizeRequest(BaseModel):
+    project: Optional[str] = None
+    session_id: Optional[str] = None
+    count: int = 20
+    obs_type: Optional[str] = None
+    store: bool = True
+    tags: List[str] = Field(default_factory=list)
+
+
+class SessionStartRequest(BaseModel):
+    project: Optional[str] = None
+    goal: Optional[str] = None
+    session_id: Optional[str] = None
+
+
+class SessionEndRequest(BaseModel):
+    session_id: Optional[str] = None
+    project: Optional[str] = None
+
+
+class ContextRequest(BaseModel):
+    project: Optional[str] = None
+    session_id: Optional[str] = None
+    query: Optional[str] = None
+    obs_type: Optional[str] = None
+    obs_types: Optional[List[str]] = None
+    tags: Optional[List[str]] = None
+    total: Optional[int] = None
+    full: Optional[int] = None
+    full_field: Optional[str] = None
+    show_tokens: Optional[bool] = None
+    wrap: Optional[bool] = None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -370,6 +417,8 @@ def read_root():
             .filters-pill .filter-icon.type { background: #e36b2c; }
             .filters-pill .filter-icon.date { background: #2f6fb0; }
             .filters-pill .filter-icon.query { background: #9a6ea6; }
+            .filters-pill .filter-icon.tag { background: #2a8a6a; }
+            .filters-pill .filter-icon.session { background: #5c7c3a; }
             .filters-pill .live-dot {
                 width: 6px;
                 height: 6px;
@@ -524,6 +573,153 @@ def read_root():
                 border-radius: 12px;
                 background: #f3efe8;
                 display: grid;
+                gap: 8px;
+            }
+            .context-card {
+                padding: 12px;
+                border-radius: 12px;
+                background: #efe6d8;
+                display: grid;
+                gap: 10px;
+            }
+            .session-card {
+                padding: 12px;
+                border-radius: 12px;
+                background: #f1ede4;
+                display: grid;
+                gap: 8px;
+            }
+            .session-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .session-title {
+                font-weight: 600;
+                color: var(--muted);
+                text-transform: uppercase;
+                font-size: 12px;
+                letter-spacing: 0.08em;
+            }
+            .session-status {
+                font-size: 12px;
+                color: var(--muted);
+            }
+            .session-list {
+                display: grid;
+                gap: 6px;
+                max-height: 160px;
+                overflow: auto;
+            }
+            .session-item {
+                padding: 8px;
+                border-radius: 10px;
+                background: #f8f5ef;
+                display: grid;
+                gap: 4px;
+            }
+            .session-item .meta {
+                margin: 0;
+            }
+            .session-goal {
+                font-size: 12px;
+                color: var(--muted);
+            }
+            .session-actions {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            .session-row {
+                display: grid;
+                gap: 6px;
+            }
+            .stream-card {
+                padding: 12px;
+                border-radius: 12px;
+                background: #eef0e6;
+                display: grid;
+                gap: 8px;
+            }
+            .stream-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .stream-title {
+                font-weight: 600;
+                color: var(--muted);
+                text-transform: uppercase;
+                font-size: 12px;
+                letter-spacing: 0.08em;
+            }
+            .stream-status {
+                font-size: 12px;
+                color: var(--muted);
+            }
+            .stream-status.connected {
+                color: var(--accent);
+            }
+            .stream-list {
+                display: grid;
+                gap: 6px;
+                max-height: 220px;
+                overflow: auto;
+            }
+            .stream-item {
+                padding: 8px;
+                border-radius: 10px;
+                background: #f7f4ec;
+                cursor: pointer;
+                transition: background 0.15s ease;
+            }
+            .stream-item:hover {
+                background: #efe8dc;
+            }
+            .stream-meta {
+                font-size: 11px;
+                color: var(--muted);
+                margin-top: 4px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+            .stream-actions {
+                display: flex;
+                justify-content: flex-end;
+            }
+            .stream-row {
+                display: grid;
+                gap: 6px;
+            }
+            .context-title {
+                font-weight: 600;
+                color: var(--muted);
+                text-transform: uppercase;
+                font-size: 12px;
+                letter-spacing: 0.08em;
+            }
+            .context-grid {
+                display: grid;
+                gap: 8px;
+            }
+            .context-row {
+                display: grid;
+                gap: 6px;
+            }
+            .context-inline {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 13px;
+                color: var(--muted);
+            }
+            .context-actions {
+                display: flex;
+                flex-wrap: wrap;
                 gap: 8px;
             }
             .stats-body {
@@ -794,7 +990,7 @@ def read_root():
                     <h1>ai-mem Viewer</h1>
                     <div class="subtitle">Search and review memory across projects.</div>
                 </div>
-                <div class="subtitle">API: /api/search, /api/timeline, /api/observations</div>
+                <div class="subtitle">API: /api/search, /api/timeline, /api/context, /api/observations</div>
             </header>
             <aside class="panel">
                 <div class="controls">
@@ -816,6 +1012,10 @@ def read_root():
                         <select id="project"></select>
                     </div>
                     <div>
+                        <label for="sessionId">Session ID (overrides project)</label>
+                        <input type="text" id="sessionId" placeholder="optional">
+                    </div>
+                    <div>
                         <label for="type">Type</label>
                         <select id="type">
                             <option value="">Any</option>
@@ -829,7 +1029,91 @@ def read_root():
                             <option value="interaction">interaction</option>
                             <option value="tool_output">tool_output</option>
                             <option value="file_content">file_content</option>
+                            <option value="summary">summary</option>
                         </select>
+                    </div>
+                    <div>
+                        <label for="tagsFilter">Tags</label>
+                        <input type="text" id="tagsFilter" placeholder="comma,separated">
+                    </div>
+                    <div class="context-card" id="contextCard">
+                        <div class="context-title">Context</div>
+                        <div class="context-grid">
+                            <div class="context-row">
+                                <label for="contextTotal">Index count</label>
+                                <input type="number" id="contextTotal" min="1" max="100" value="12">
+                            </div>
+                            <div class="context-row">
+                                <label for="contextFull">Full count</label>
+                                <input type="number" id="contextFull" min="0" max="50" value="4">
+                            </div>
+                            <div class="context-row">
+                                <label for="contextField">Full field</label>
+                                <select id="contextField">
+                                    <option value="content">content</option>
+                                    <option value="summary">summary</option>
+                                </select>
+                            </div>
+                            <div class="context-row">
+                                <label for="contextTags">Tags</label>
+                                <input type="text" id="contextTags" placeholder="comma,separated">
+                            </div>
+                            <div class="context-row">
+                                <label for="contextTypes">Types</label>
+                                <input type="text" id="contextTypes" placeholder="note,bugfix,summary">
+                            </div>
+                            <label class="context-inline">
+                                <input type="checkbox" id="contextTokens" checked>
+                                Show token estimates
+                            </label>
+                            <label class="context-inline">
+                                <input type="checkbox" id="contextWrap" checked>
+                                Wrap &lt;ai-mem-context&gt;
+                            </label>
+                            <label class="context-inline">
+                                <input type="checkbox" id="contextGlobal">
+                                Use global context settings
+                            </label>
+                            <div class="context-actions">
+                                <button class="chip" onclick="openContextPreview()">Preview</button>
+                                <button class="chip" onclick="copyContext()">Copy</button>
+                                <button class="chip" onclick="summarizeContext()">Summarize</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="session-card" id="sessionCard">
+                        <div class="session-header">
+                            <div class="session-title">Sessions</div>
+                            <label class="pulse-toggle">
+                                <input type="checkbox" id="sessionShowAll">
+                                Show all
+                            </label>
+                        </div>
+                        <div class="session-status" id="sessionStatus">No active session</div>
+                        <div class="session-row">
+                            <label for="sessionGoal">Goal (optional)</label>
+                            <input type="text" id="sessionGoal" placeholder="e.g. fix OAuth flow">
+                        </div>
+                        <div class="session-row">
+                            <label for="sessionGoalFilter">Goal filter</label>
+                            <input type="text" id="sessionGoalFilter" placeholder="contains...">
+                        </div>
+                        <div class="session-row">
+                            <label for="sessionDateStart">Start after</label>
+                            <input type="date" id="sessionDateStart">
+                        </div>
+                        <div class="session-row">
+                            <label for="sessionDateEnd">Start before</label>
+                            <input type="date" id="sessionDateEnd">
+                        </div>
+                        <div class="session-actions">
+                            <button class="chip" onclick="startSession()">Start</button>
+                            <button class="secondary" onclick="endLatestSession()">End latest</button>
+                            <button class="secondary" onclick="refreshSessions()">Refresh</button>
+                        </div>
+                        <div class="session-list" id="sessionList">
+                            <div class="subtitle">No sessions loaded.</div>
+                        </div>
                     </div>
                     <div class="stats-card" id="statsCard">
                         <div class="stats-header">
@@ -850,6 +1134,28 @@ def read_root():
                                 <button onclick="clearTimelineAnchor()">Clear</button>
                             </div>
                             <div id="stats"></div>
+                        </div>
+                    </div>
+                    <div class="stream-card" id="streamCard">
+                        <div class="stream-header">
+                            <div class="stream-title">Live stream</div>
+                            <label class="pulse-toggle">
+                                <input type="checkbox" id="streamToggle">
+                                Stream
+                            </label>
+                        </div>
+                        <div class="stream-status" id="streamStatus">Stream off</div>
+                        <div class="stream-row">
+                            <label for="streamQuery">Query filter</label>
+                            <input type="text" id="streamQuery" placeholder="optional">
+                        </div>
+                        <div class="stream-list" id="streamList">
+                            <div class="subtitle">No events yet.</div>
+                        </div>
+                        <div class="stream-actions">
+                            <button class="secondary" onclick="exportStreamJson()">Export JSON</button>
+                            <button class="secondary" onclick="exportStreamCsv()">Export CSV</button>
+                            <button class="secondary" onclick="clearStream()">Clear</button>
                         </div>
                     </div>
                     <div class="filters-pill" id="filtersPillSidebar" style="display:none;">Filters active</div>
@@ -975,9 +1281,14 @@ def read_root():
             let timelineDepthAfter = '3';
             let listLimit = '10';
             let selectedProject = '';
+            let selectedSessionId = '';
             let selectedType = '';
+            let selectedTags = '';
             let selectedDateStart = '';
             let selectedDateEnd = '';
+            let streamSource = null;
+            let streamItems = [];
+            const streamMaxItems = 20;
 
             async function loadProjects() {
                 const response = await fetch('/api/projects', { headers: getAuthHeaders() });
@@ -1001,34 +1312,160 @@ def read_root():
                 loadLastMode();
                 loadTimelineAnchor();
                 loadQuery();
+                await loadContextConfig();
+                refreshSessions();
+                restartStreamIfActive();
             }
 
             function buildQueryParams() {
                 const query = document.getElementById('query').value || " ";
                 const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const type = document.getElementById('type').value;
+                const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const limit = document.getElementById('limit').value;
                 listLimit = limit || listLimit;
                 localStorage.setItem('ai-mem-list-limit', listLimit);
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
                 const params = new URLSearchParams({ query });
-                if (project) params.append('project', project);
+                if (sessionId) {
+                    params.append('session_id', sessionId);
+                } else if (project) {
+                    params.append('project', project);
+                }
                 if (type) params.append('obs_type', type);
+                if (tags) params.append('tags', tags);
                 if (limit) params.append('limit', limit);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
                 return params.toString();
             }
 
+            function buildContextParams() {
+                const params = new URLSearchParams();
+                const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                const query = document.getElementById('query').value;
+                const type = document.getElementById('type').value;
+                if (sessionId) {
+                    params.append('session_id', sessionId);
+                } else if (project) {
+                    params.append('project', project);
+                }
+                if (query) params.append('query', query);
+                if (type) params.append('obs_type', type);
+
+                const config = readContextForm();
+                if (config.total) params.append('total', String(config.total));
+                if (config.full !== null && config.full !== undefined) params.append('full', String(config.full));
+                if (config.fullField) params.append('full_field', config.fullField);
+                if (config.tags) params.append('tags', config.tags);
+                if (config.types) params.append('obs_types', config.types);
+                params.append('show_tokens', config.showTokens ? 'true' : 'false');
+                params.append('wrap', config.wrap ? 'true' : 'false');
+                return params;
+            }
+
+            function openContextPreview() {
+                const params = buildContextParams();
+                const url = `/api/context/preview?${params.toString()}`;
+                fetch(url, { headers: getAuthHeaders() })
+                    .then(async response => {
+                        if (await handleAuthError(response)) return;
+                        if (!response.ok) {
+                            alert('Failed to fetch context preview');
+                            return;
+                        }
+                        const text = await response.text();
+                        const blob = new Blob([text], { type: 'text/plain' });
+                        const blobUrl = URL.createObjectURL(blob);
+                        window.open(blobUrl, '_blank', 'noopener');
+                        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+                    })
+                    .catch(err => {
+                        console.error(err);
+                        alert('Failed to fetch context preview');
+                    });
+            }
+
+            async function copyContext() {
+                const params = buildContextParams();
+                const response = await fetch(`/api/context/inject?${params.toString()}`, { headers: getAuthHeaders() });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to fetch context');
+                    return;
+                }
+                const text = await response.text();
+                try {
+                    await navigator.clipboard.writeText(text);
+                    alert('Context copied');
+                } catch (err) {
+                    console.error(err);
+                    alert('Copy failed');
+                }
+            }
+
+            async function summarizeContext() {
+                const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                if (!project && !sessionId) {
+                    alert('Select a project or session to summarize.');
+                    return;
+                }
+                const type = document.getElementById('type').value;
+                const config = readContextForm();
+                const payload = {
+                    project: sessionId ? null : (project || null),
+                    session_id: sessionId || null,
+                    count: config.total || 20,
+                    obs_type: type || null,
+                    store: true,
+                };
+                const response = await fetch('/api/summarize', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...getAuthHeaders(),
+                    },
+                    body: JSON.stringify(payload),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to summarize');
+                    return;
+                }
+                const data = await response.json();
+                if (data.status !== 'ok') {
+                    alert('No observations found to summarize.');
+                    return;
+                }
+                const detail = document.getElementById('detail');
+                const obs = data.observation || {};
+                const scopeLabel = sessionId ? `Session ${sessionId}` : (project || 'Global');
+                detail.innerHTML = `
+                    <h2>Summary</h2>
+                    <div class="meta">${escapeHtml(scopeLabel)} • ${escapeHtml(obs.id || '')}</div>
+                    <pre>${escapeHtml(data.summary || '')}</pre>
+                `;
+            }
+
             function buildStatsParams(options = {}) {
                 const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const type = document.getElementById('type').value;
+                const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
                 const params = new URLSearchParams();
-                if (project) params.append('project', project);
+                if (sessionId) {
+                    params.append('session_id', sessionId);
+                } else if (project) {
+                    params.append('project', project);
+                }
                 if (type) params.append('obs_type', type);
+                if (tags) params.append('tags', tags);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
                 params.append('day_limit', String(options.day_limit ?? 7));
@@ -1054,6 +1491,14 @@ def read_root():
                 return text;
             }
 
+            function escapeHtml(value) {
+                const text = value === null || value === undefined ? '' : String(value);
+                return text
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+            }
+
             function formatLocalDate(date) {
                 const year = date.getFullYear();
                 const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -1066,6 +1511,225 @@ def read_root():
                 const minutes = String(date.getMinutes()).padStart(2, '0');
                 const seconds = String(date.getSeconds()).padStart(2, '0');
                 return `${hours}:${minutes}:${seconds}`;
+            }
+
+            function formatStreamTime(value) {
+                if (!value && value !== 0) return '';
+                const date = new Date(Number(value) * 1000);
+                if (Number.isNaN(date.getTime())) return '';
+                return formatTime(date);
+            }
+
+            function buildStreamParams() {
+                const params = new URLSearchParams();
+                const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                const type = document.getElementById('type').value;
+                const tags = (document.getElementById('tagsFilter').value || '').trim();
+                const streamQuery = (document.getElementById('streamQuery')?.value || '').trim();
+                const token = localStorage.getItem('ai-mem-token') || '';
+                if (sessionId) {
+                    params.append('session_id', sessionId);
+                } else if (project) {
+                    params.append('project', project);
+                }
+                if (type) params.append('obs_type', type);
+                if (tags) params.append('tags', tags);
+                if (streamQuery) params.append('query', streamQuery);
+                if (token) params.append('token', token);
+                return params;
+            }
+
+            function updateStreamStatus(text, connected) {
+                const status = document.getElementById('streamStatus');
+                if (!status) return;
+                status.textContent = text;
+                status.classList.toggle('connected', !!connected);
+            }
+
+            function renderStreamItems() {
+                const list = document.getElementById('streamList');
+                if (!list) return;
+                list.innerHTML = '';
+                if (!streamItems.length) {
+                    list.innerHTML = '<div class="subtitle">No events yet.</div>';
+                    return;
+                }
+                streamItems.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'stream-item';
+                    card.addEventListener('click', () => {
+                        if (item.id) {
+                            loadDetail(item.id);
+                        }
+                    });
+                    const summary = document.createElement('div');
+                    summary.textContent = item.summary || '(no summary)';
+                    const meta = document.createElement('div');
+                    meta.className = 'stream-meta';
+                    const timestamp = formatStreamTime(item.created_at);
+                    const parts = [
+                        item.project || 'Global',
+                        item.type || 'note',
+                        timestamp || '',
+                        item.token_estimate ? `~${item.token_estimate} tok` : '',
+                    ].filter(Boolean);
+                    meta.textContent = parts.join(' • ');
+                    if (item.session_id) {
+                        const sessionBtn = document.createElement('button');
+                        sessionBtn.className = 'secondary';
+                        sessionBtn.textContent = 'Session';
+                        sessionBtn.addEventListener('click', event => {
+                            event.stopPropagation();
+                            loadSessionDetail(item.session_id);
+                        });
+                        meta.appendChild(sessionBtn);
+                    }
+                    card.appendChild(summary);
+                    card.appendChild(meta);
+                    list.appendChild(card);
+                });
+            }
+
+            function addStreamItem(item) {
+                streamItems = [item, ...streamItems].slice(0, streamMaxItems);
+                renderStreamItems();
+            }
+
+            function exportStreamJson() {
+                if (!streamItems.length) {
+                    alert('No stream events to export.');
+                    return;
+                }
+                const blob = new Blob([JSON.stringify(streamItems, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `ai-mem-stream-${Date.now()}.json`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            }
+
+            function exportStreamCsv() {
+                if (!streamItems.length) {
+                    alert('No stream events to export.');
+                    return;
+                }
+                const rows = [['id', 'summary', 'project', 'session_id', 'type', 'created_at', 'tags', 'token_estimate']];
+                streamItems.forEach(item => {
+                    rows.push([
+                        item.id || '',
+                        item.summary || '',
+                        item.project || '',
+                        item.session_id || '',
+                        item.type || '',
+                        item.created_at || '',
+                        (item.tags || []).join(' '),
+                        item.token_estimate || '',
+                    ]);
+                });
+                const csv = rows.map(row => row.map(csvEscape).join(',')).join('\n');
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `ai-mem-stream-${Date.now()}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            }
+
+            function clearStream() {
+                streamItems = [];
+                renderStreamItems();
+            }
+
+            function startStream() {
+                stopStream();
+                const params = buildStreamParams();
+                const url = `/api/stream?${params.toString()}`;
+                streamSource = new EventSource(url);
+                updateStreamStatus('Connecting...', false);
+                streamSource.onopen = () => updateStreamStatus('Connected', true);
+                streamSource.onmessage = event => {
+                    if (!event.data) return;
+                    try {
+                        const payload = JSON.parse(event.data);
+                        addStreamItem(payload);
+                    } catch (err) {
+                        console.warn('Stream parse failed', err);
+                    }
+                };
+                streamSource.onerror = () => {
+                    updateStreamStatus('Reconnecting...', false);
+                };
+            }
+
+            function stopStream() {
+                if (streamSource) {
+                    streamSource.close();
+                    streamSource = null;
+                }
+                updateStreamStatus('Stream off', false);
+            }
+
+            function toggleStream() {
+                const toggle = document.getElementById('streamToggle');
+                if (!toggle) return;
+                localStorage.setItem('ai-mem-stream-enabled', String(toggle.checked));
+                if (toggle.checked) {
+                    startStream();
+                } else {
+                    stopStream();
+                }
+            }
+
+            function restartStreamIfActive() {
+                const toggle = document.getElementById('streamToggle');
+                if (toggle && toggle.checked) {
+                    startStream();
+                }
+            }
+
+            function loadStreamToggle() {
+                const toggle = document.getElementById('streamToggle');
+                if (!toggle) return;
+                const stored = localStorage.getItem('ai-mem-stream-enabled');
+                toggle.checked = stored === 'true';
+                if (toggle.checked) {
+                    startStream();
+                } else {
+                    updateStreamStatus('Stream off', false);
+                }
+            }
+
+            function loadStreamQuery() {
+                const input = document.getElementById('streamQuery');
+                if (!input) return;
+                const stored = localStorage.getItem('ai-mem-stream-query') || '';
+                input.value = stored;
+            }
+
+            function loadSessionFilters() {
+                const toggle = document.getElementById('sessionShowAll');
+                if (!toggle) return;
+                const stored = localStorage.getItem('ai-mem-sessions-show-all');
+                toggle.checked = stored === 'true';
+                const goal = document.getElementById('sessionGoalFilter');
+                if (goal) {
+                    goal.value = localStorage.getItem('ai-mem-sessions-goal') || '';
+                }
+                const dateStart = document.getElementById('sessionDateStart');
+                if (dateStart) {
+                    dateStart.value = localStorage.getItem('ai-mem-sessions-date-start') || '';
+                }
+                const dateEnd = document.getElementById('sessionDateEnd');
+                if (dateEnd) {
+                    dateEnd.value = localStorage.getItem('ai-mem-sessions-date-end') || '';
+                }
             }
 
             function updateLastUpdate() {
@@ -1097,6 +1761,235 @@ def read_root():
                 const collapsed = stored === 'true' || (stored === null && window.innerWidth <= 960);
                 card.classList.toggle('collapsed', collapsed);
                 toggle.textContent = collapsed ? '▸ Expand' : '▾ Collapse';
+            }
+
+            async function refreshSessions() {
+                const project = getCurrentProjectValue();
+                const params = new URLSearchParams();
+                const showAllToggle = document.getElementById('sessionShowAll');
+                const showAll = showAllToggle ? showAllToggle.checked : false;
+                const goalFilter = (document.getElementById('sessionGoalFilter')?.value || '').trim();
+                const dateStart = document.getElementById('sessionDateStart')?.value || '';
+                const dateEnd = document.getElementById('sessionDateEnd')?.value || '';
+                if (project) params.append('project', project);
+                params.append('active_only', showAll ? 'false' : 'true');
+                params.append('limit', showAll ? '20' : '10');
+                if (goalFilter) params.append('goal', goalFilter);
+                if (dateStart) params.append('date_start', dateStart);
+                if (dateEnd) params.append('date_end', dateEnd);
+                const response = await fetch(`/api/sessions?${params.toString()}`, { headers: getAuthHeaders() });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    updateSessionStatus('Failed to load sessions.');
+                    return;
+                }
+                const data = await response.json();
+                renderSessions(Array.isArray(data) ? data : [], showAll);
+            }
+
+            function updateSessionStatus(text) {
+                const status = document.getElementById('sessionStatus');
+                if (status) status.textContent = text;
+            }
+
+            function renderSessions(items, showAll) {
+                const list = document.getElementById('sessionList');
+                if (!list) return;
+                list.innerHTML = '';
+                if (!items.length) {
+                    updateSessionStatus(showAll ? 'No sessions' : 'No active session');
+                    list.innerHTML = '<div class="subtitle">No active sessions.</div>';
+                    return;
+                }
+                if (showAll) {
+                    const activeCount = items.filter(item => !item.end_time).length;
+                    updateSessionStatus(`${items.length} session${items.length === 1 ? '' : 's'} (${activeCount} active)`);
+                } else {
+                    updateSessionStatus(`${items.length} active session${items.length === 1 ? '' : 's'}`);
+                }
+                items.forEach(item => {
+                    const id = item.id || '';
+                    const shortId = id ? `${id.slice(0, 8)}...` : '(unknown)';
+                    const ended = !!item.end_time;
+                    const card = document.createElement('div');
+                    card.className = 'session-item';
+                    const title = document.createElement('div');
+                    title.textContent = `Session ${shortId}${ended ? ' (ended)' : ''}`;
+                    if (id) title.title = id;
+                    const meta = document.createElement('div');
+                    meta.className = 'meta';
+                    const start = item.start_time ? formatStreamTime(item.start_time) : '';
+                    const end = item.end_time ? formatStreamTime(item.end_time) : '';
+                    const project = item.project || 'Global';
+                    const timeBits = [start ? `Start ${start}` : '', end ? `End ${end}` : ''].filter(Boolean).join(' • ');
+                    meta.textContent = [project, timeBits].filter(Boolean).join(' • ');
+                    if (item.goal) {
+                        const goal = document.createElement('div');
+                        goal.className = 'session-goal';
+                        goal.textContent = item.goal;
+                        card.appendChild(goal);
+                    }
+                    const actions = document.createElement('div');
+                    actions.className = 'session-actions';
+                    const viewBtn = document.createElement('button');
+                    viewBtn.className = 'secondary';
+                    viewBtn.textContent = 'View';
+                    viewBtn.addEventListener('click', () => loadSessionDetail(id));
+                    const endBtn = document.createElement('button');
+                    endBtn.className = 'secondary';
+                    endBtn.textContent = 'End';
+                    endBtn.disabled = ended;
+                    if (!ended) {
+                        endBtn.addEventListener('click', () => endSessionById(id));
+                    }
+                    actions.appendChild(viewBtn);
+                    actions.appendChild(endBtn);
+                    card.appendChild(title);
+                    card.appendChild(meta);
+                    card.appendChild(actions);
+                    list.appendChild(card);
+                });
+            }
+
+            async function startSession() {
+                const project = getCurrentProjectValue() || '';
+                const goalInput = document.getElementById('sessionGoal');
+                const payload = {
+                    project: project || null,
+                    goal: goalInput ? goalInput.value.trim() : '',
+                };
+                const response = await fetch('/api/sessions/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify(payload),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to start session.');
+                    return;
+                }
+                if (goalInput) goalInput.value = '';
+                refreshSessions();
+            }
+
+            async function endLatestSession() {
+                const project = getCurrentProjectValue() || '';
+                const response = await fetch('/api/sessions/end', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({ project: project || null }),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('No active session to end.');
+                    return;
+                }
+                refreshSessions();
+            }
+
+            async function endSessionById(id) {
+                if (!id) return;
+                const response = await fetch('/api/sessions/end', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({ session_id: id }),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to end session.');
+                    return;
+                }
+                refreshSessions();
+            }
+
+            async function loadSessionDetail(id) {
+                if (!id) return;
+                const sessionResponse = await fetch(`/api/sessions/${id}`, { headers: getAuthHeaders() });
+                if (await handleAuthError(sessionResponse)) return;
+                if (!sessionResponse.ok) {
+                    alert('Failed to load session.');
+                    return;
+                }
+                const session = await sessionResponse.json();
+                const obsResponse = await fetch(`/api/sessions/${id}/observations?limit=50`, { headers: getAuthHeaders() });
+                if (await handleAuthError(obsResponse)) return;
+                const observations = obsResponse.ok ? await obsResponse.json() : [];
+                const detail = document.getElementById('detail');
+                const start = session.start_time ? formatStreamTime(session.start_time) : '';
+                const end = session.end_time ? formatStreamTime(session.end_time) : '';
+                const project = session.project || 'Global';
+                const goal = session.goal ? `<div class="meta">Goal: ${escapeHtml(session.goal)}</div>` : '';
+                const rows = (observations || []).map(obs => {
+                    const summary = escapeHtml(obs.summary || obs.content || '(no summary)');
+                    const meta = `${escapeHtml(obs.type || 'note')} • ${escapeHtml(obs.id || '')}`;
+                    return `<div class="card" onclick="loadDetail('${obs.id}')"><div>${summary}</div><div class="meta">${meta}</div></div>`;
+                }).join('');
+                const listHtml = rows || '<div class="subtitle">No observations in this session.</div>';
+                detail.innerHTML = `
+                    <div><strong>Session ${escapeHtml(id)}</strong></div>
+                    <div class="meta">${escapeHtml(project)} • ${start ? `Start ${start}` : ''}${end ? ` • End ${end}` : ''}</div>
+                    ${goal}
+                    <div class="accent">Observations</div>
+                    <div class="button-row">
+                        <label class="pulse-toggle">
+                            <input type="checkbox" id="sessionSummaryStore" checked>
+                            Store summary
+                        </label>
+                        <button class="secondary" onclick="summarizeSession('${id}')">Summarize session</button>
+                        <button class="secondary" onclick="exportSession('${id}')">Export session</button>
+                    </div>
+                    <div class="results">${listHtml}</div>
+                `;
+            }
+
+            async function exportSession(id) {
+                if (!id) return;
+                const params = new URLSearchParams({ session_id: id });
+                const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to export session.');
+                    return;
+                }
+                const data = await response.json();
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `ai-mem-session-${id}.json`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+            }
+
+            async function summarizeSession(id) {
+                if (!id) return;
+                const storeToggle = document.getElementById('sessionSummaryStore');
+                const store = storeToggle ? storeToggle.checked : false;
+                const response = await fetch('/api/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({ session_id: id, count: 50, store }),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to summarize session.');
+                    return;
+                }
+                const data = await response.json();
+                if (data.status === 'empty') {
+                    alert('No observations to summarize.');
+                    return;
+                }
+                const detail = document.getElementById('detail');
+                detail.innerHTML = `
+                    <div><strong>Session summary</strong></div>
+                    <pre>${escapeHtml(data.summary || '')}</pre>
+                    <div class="button-row">
+                        <button class="secondary" onclick="loadSessionDetail('${id}')">Back to session</button>
+                    </div>
+                `;
             }
 
             function getCurrentProjectValue() {
@@ -1154,6 +2047,152 @@ def read_root():
                     mode: `ai-mem-auto-refresh-mode-${key}`,
                     useGlobal: `ai-mem-auto-refresh-use-global-${key}`,
                 };
+            }
+
+            const DEFAULT_CONTEXT_CONFIG = {
+                total: 12,
+                full: 4,
+                fullField: 'content',
+                showTokens: true,
+                wrap: true,
+                tags: '',
+                types: '',
+            };
+            let contextDefaults = { ...DEFAULT_CONTEXT_CONFIG };
+
+            function getContextKeys(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return {
+                    config: `ai-mem-context-${key}`,
+                    useGlobal: `ai-mem-context-use-global-${key}`,
+                };
+            }
+
+            function parseContextConfig(value) {
+                if (!value) return {};
+                try {
+                    const parsed = JSON.parse(value);
+                    if (parsed && typeof parsed === 'object') return parsed;
+                } catch (err) {
+                    console.warn('Failed to parse context config', err);
+                }
+                return {};
+            }
+
+            async function loadContextDefaults() {
+                try {
+                    const response = await fetch('/api/context/config', { headers: getAuthHeaders() });
+                    if (await handleAuthError(response)) return;
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    contextDefaults = {
+                        total: data.total_observation_count ?? contextDefaults.total,
+                        full: data.full_observation_count ?? contextDefaults.full,
+                        fullField: data.full_observation_field ?? contextDefaults.fullField,
+                        showTokens: data.show_token_estimates ?? contextDefaults.showTokens,
+                        wrap: data.wrap_context_tag ?? contextDefaults.wrap,
+                        tags: (data.tag_filters || []).join(','),
+                        types: (data.observation_types || []).join(','),
+                    };
+                } catch (err) {
+                    console.warn('Failed to load context defaults', err);
+                }
+            }
+
+            function getContextConfig(projectValue) {
+                const keys = getContextKeys(projectValue);
+                const projectStored = localStorage.getItem(keys.config);
+                const globalStored = localStorage.getItem('ai-mem-context') || '';
+                const useGlobalStored = localStorage.getItem(keys.useGlobal);
+                const useGlobal = useGlobalStored === null
+                    ? projectStored === null
+                    : useGlobalStored === 'true';
+                const storedText = useGlobal ? globalStored : (projectStored === null ? globalStored : projectStored);
+                const stored = parseContextConfig(storedText);
+                return { ...contextDefaults, ...stored, useGlobal };
+            }
+
+            function readContextForm() {
+                const totalInput = document.getElementById('contextTotal');
+                const fullInput = document.getElementById('contextFull');
+                const fieldInput = document.getElementById('contextField');
+                const tagsInput = document.getElementById('contextTags');
+                const typesInput = document.getElementById('contextTypes');
+                const tokensToggle = document.getElementById('contextTokens');
+                const wrapToggle = document.getElementById('contextWrap');
+                const globalToggle = document.getElementById('contextGlobal');
+
+                const total = parseInt(totalInput?.value || '', 10);
+                const full = parseInt(fullInput?.value || '', 10);
+                const fullField = fieldInput?.value || contextDefaults.fullField;
+                const tags = (tagsInput?.value || '').trim();
+                const types = (typesInput?.value || '').trim();
+                const showTokens = tokensToggle ? tokensToggle.checked : contextDefaults.showTokens;
+                const wrap = wrapToggle ? wrapToggle.checked : contextDefaults.wrap;
+                const useGlobal = globalToggle ? globalToggle.checked : false;
+
+                return {
+                    total: Number.isFinite(total) ? total : contextDefaults.total,
+                    full: Number.isFinite(full) ? full : contextDefaults.full,
+                    fullField,
+                    tags,
+                    types,
+                    showTokens,
+                    wrap,
+                    useGlobal,
+                };
+            }
+
+            function applyContextConfig(config) {
+                const totalInput = document.getElementById('contextTotal');
+                const fullInput = document.getElementById('contextFull');
+                const fieldInput = document.getElementById('contextField');
+                const tagsInput = document.getElementById('contextTags');
+                const typesInput = document.getElementById('contextTypes');
+                const tokensToggle = document.getElementById('contextTokens');
+                const wrapToggle = document.getElementById('contextWrap');
+                const globalToggle = document.getElementById('contextGlobal');
+                if (totalInput) totalInput.value = String(config.total ?? contextDefaults.total);
+                if (fullInput) fullInput.value = String(config.full ?? contextDefaults.full);
+                if (fieldInput) fieldInput.value = config.fullField || contextDefaults.fullField;
+                if (tagsInput) tagsInput.value = config.tags || '';
+                if (typesInput) typesInput.value = config.types || '';
+                if (tokensToggle) tokensToggle.checked = !!config.showTokens;
+                if (wrapToggle) wrapToggle.checked = !!config.wrap;
+                if (globalToggle) globalToggle.checked = !!config.useGlobal;
+            }
+
+            function persistContextConfig(config, projectValue) {
+                const keys = getContextKeys(projectValue);
+                const payload = {
+                    total: config.total,
+                    full: config.full,
+                    fullField: config.fullField,
+                    showTokens: config.showTokens,
+                    wrap: config.wrap,
+                    tags: config.tags,
+                    types: config.types,
+                };
+                if (config.useGlobal) {
+                    localStorage.setItem('ai-mem-context', JSON.stringify(payload));
+                    localStorage.removeItem(keys.config);
+                } else {
+                    localStorage.setItem(keys.config, JSON.stringify(payload));
+                }
+                localStorage.setItem(keys.useGlobal, String(!!config.useGlobal));
+            }
+
+            async function loadContextConfig() {
+                await loadContextDefaults();
+                const projectValue = getCurrentProjectValue();
+                const config = getContextConfig(projectValue);
+                applyContextConfig(config);
+            }
+
+            function updateContextConfig() {
+                const projectValue = getCurrentProjectValue();
+                const config = readContextForm();
+                persistContextConfig(config, projectValue);
             }
 
             function clearTimelineAnchorStorage(projectValue) {
@@ -1371,18 +2410,27 @@ def read_root():
                 const dots = [];
                 const query = (document.getElementById('query').value || '').trim();
                 const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const type = document.getElementById('type').value;
+                const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
-                if (project) dots.push({ label: 'project', value: project });
+                if (sessionId) {
+                    dots.push({ label: 'session', value: sessionId });
+                } else if (project) {
+                    dots.push({ label: 'project', value: project });
+                }
                 if (type) dots.push({ label: 'type', value: type });
+                if (tags) dots.push({ label: 'tag', value: tags });
                 if (dateStart || dateEnd) {
                     dots.push({ label: 'date', value: `${dateStart || '…'} → ${dateEnd || '…'}` });
                 }
                 if (query) dots.push({ label: 'query', value: query });
                 const iconMap = {
                     project: 'P',
+                    session: 'S',
                     type: 'T',
+                    tag: '#',
                     date: 'D',
                     query: 'Q',
                 };
@@ -1565,13 +2613,17 @@ def read_root():
                 const previousProject = getCurrentProjectValue();
                 document.getElementById('query').value = '';
                 document.getElementById('project').value = '';
+                document.getElementById('sessionId').value = '';
                 document.getElementById('type').value = '';
+                document.getElementById('tagsFilter').value = '';
                 document.getElementById('dateStart').value = '';
                 document.getElementById('dateEnd').value = '';
                 timelineAnchorId = '';
                 timelineQuery = '';
                 selectedProject = '';
+                selectedSessionId = '';
                 selectedType = '';
+                selectedTags = '';
                 selectedDateStart = '';
                 selectedDateEnd = '';
                 listLimit = '10';
@@ -1581,7 +2633,9 @@ def read_root():
                 document.getElementById('depthBefore').value = timelineDepthBefore;
                 document.getElementById('depthAfter').value = timelineDepthAfter;
                 localStorage.removeItem('ai-mem-selected-project');
+                localStorage.removeItem('ai-mem-selected-session-id');
                 localStorage.removeItem('ai-mem-selected-type');
+                localStorage.removeItem('ai-mem-selected-tags');
                 localStorage.removeItem('ai-mem-date-start');
                 localStorage.removeItem('ai-mem-date-end');
                 clearQueryStorage(previousProject);
@@ -1603,13 +2657,18 @@ def read_root():
                 updateFiltersPill();
                 loadStats();
                 search();
+                restartStreamIfActive();
             }
 
             function persistFilters() {
+                selectedSessionId = (document.getElementById('sessionId')?.value || '').trim();
                 selectedType = document.getElementById('type').value || '';
+                selectedTags = (document.getElementById('tagsFilter').value || '').trim();
                 selectedDateStart = document.getElementById('dateStart').value || '';
                 selectedDateEnd = document.getElementById('dateEnd').value || '';
+                localStorage.setItem('ai-mem-selected-session-id', selectedSessionId);
                 localStorage.setItem('ai-mem-selected-type', selectedType);
+                localStorage.setItem('ai-mem-selected-tags', selectedTags);
                 localStorage.setItem('ai-mem-date-start', selectedDateStart);
                 localStorage.setItem('ai-mem-date-end', selectedDateEnd);
             }
@@ -1896,14 +2955,24 @@ def read_root():
             }
 
             function loadSelectedFilters() {
+                selectedSessionId = localStorage.getItem('ai-mem-selected-session-id') || '';
                 selectedType = localStorage.getItem('ai-mem-selected-type') || '';
+                selectedTags = localStorage.getItem('ai-mem-selected-tags') || '';
                 selectedDateStart = localStorage.getItem('ai-mem-date-start') || '';
                 selectedDateEnd = localStorage.getItem('ai-mem-date-end') || '';
+                const sessionInput = document.getElementById('sessionId');
+                if (sessionInput) {
+                    sessionInput.value = selectedSessionId;
+                }
                 if (selectedType) {
                     document.getElementById('type').value = selectedType;
                 }
+                if (selectedTags) {
+                    document.getElementById('tagsFilter').value = selectedTags;
+                }
                 document.getElementById('dateStart').value = selectedDateStart;
                 document.getElementById('dateEnd').value = selectedDateEnd;
+                restartStreamIfActive();
             }
 
             function loadQuery() {
@@ -2101,6 +3170,8 @@ def read_root():
                 persistLastMode('timeline');
                 const params = new URLSearchParams();
                 const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const useInput = options.useInput !== false;
                 const queryInput = document.getElementById('query');
                 const query = useInput && queryInput ? queryInput.value : '';
@@ -2113,8 +3184,13 @@ def read_root():
                 timelineDepthAfter = depthAfter || timelineDepthAfter;
                 localStorage.setItem('ai-mem-timeline-depth-before', timelineDepthBefore);
                 localStorage.setItem('ai-mem-timeline-depth-after', timelineDepthAfter);
-                if (project) params.append('project', project);
+                if (sessionId) {
+                    params.append('session_id', sessionId);
+                } else if (project) {
+                    params.append('project', project);
+                }
                 if (type) params.append('obs_type', type);
+                if (tags) params.append('tags', tags);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
                 if (timelineAnchorId) {
@@ -2153,12 +3229,14 @@ def read_root():
                 }
                 const detail = document.getElementById('detail');
                 const tags = (mem.tags || []).map(tag => `<span class="pill">${tag}</span>`).join('');
+                const sessionInfo = mem.session_id ? ` • session ${mem.session_id}` : '';
                 detail.innerHTML = `
                     <div><strong>${mem.summary || '(no summary)'}</strong></div>
-                    <div class="meta">${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}</div>
+                    <div class="meta">${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}${sessionInfo}</div>
                     <div>${tags || '<span class="subtitle">No tags</span>'}</div>
                     <div class="button-row">
                         <button onclick="copyId()">Copy ID</button>
+                        <button class="secondary" onclick="copyCitation()">Copy URL</button>
                         <button class="secondary" onclick="deleteObservation()">Delete</button>
                     </div>
                     <div class="accent">Content</div>
@@ -2181,6 +3259,16 @@ def read_root():
                     search();
                 } else {
                     alert('Failed to delete observation');
+                }
+            }
+
+            async function copyCitation() {
+                if (!currentObservationId) return;
+                const url = `${window.location.origin}/api/observation/${currentObservationId}`;
+                try {
+                    await navigator.clipboard.writeText(url);
+                } catch (error) {
+                    alert('Copy failed');
                 }
             }
 
@@ -2207,15 +3295,20 @@ def read_root():
 
             async function exportData() {
                 const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const params = new URLSearchParams();
-                if (project) params.append('project', project);
+                if (sessionId) {
+                    params.append('session_id', sessionId);
+                } else if (project) {
+                    params.append('project', project);
+                }
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
                 const data = await response.json();
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
-                const suffix = safeSlug(project, 'all');
+                const suffix = sessionId ? safeSlug(sessionId, 'session') : safeSlug(project, 'all');
                 link.href = url;
                 link.download = `ai-mem-export-${suffix}.json`;
                 document.body.appendChild(link);
@@ -2226,6 +3319,7 @@ def read_root():
 
             async function exportStats() {
                 const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const type = document.getElementById('type').value;
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
@@ -2255,8 +3349,11 @@ def read_root():
                 const blob = new Blob([csv], { type: 'text/csv' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
+                const scopeSlug = sessionId
+                    ? `session-${safeSlug(sessionId, 'session')}`
+                    : safeSlug(project, 'all');
                 const suffixParts = [
-                    safeSlug(project, 'all'),
+                    scopeSlug,
                     type ? safeSlug(type, 'type') : '',
                     dateStart ? safeSlug(dateStart, '') : '',
                     dateEnd ? safeSlug(dateEnd, '') : '',
@@ -2271,6 +3368,7 @@ def read_root():
 
             async function exportStatsJson() {
                 const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const type = document.getElementById('type').value;
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
@@ -2281,8 +3379,11 @@ def read_root():
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
+                const scopeSlug = sessionId
+                    ? `session-${safeSlug(sessionId, 'session')}`
+                    : safeSlug(project, 'all');
                 const suffixParts = [
-                    safeSlug(project, 'all'),
+                    scopeSlug,
                     type ? safeSlug(type, 'type') : '',
                     dateStart ? safeSlug(dateStart, '') : '',
                     dateEnd ? safeSlug(dateEnd, '') : '',
@@ -2354,6 +3455,7 @@ def read_root():
                     localStorage.removeItem('ai-mem-token');
                     alert('Token cleared.');
                 }
+                restartStreamIfActive();
             }
 
             function loadToken() {
@@ -2371,8 +3473,10 @@ def read_root():
                     loadPulseToggle();
                     loadTimelineAnchor();
                     loadQuery();
+                    await loadContextConfig();
                     loadLastMode();
                     await loadStats();
+                    refreshSessions();
                     if (lastMode === 'timeline' && timelineQuery) {
                         const queryInput = document.getElementById('query');
                         if (queryInput) {
@@ -2386,11 +3490,25 @@ def read_root():
                     } else {
                         await search();
                     }
+                    restartStreamIfActive();
                 });
                 document.getElementById('type').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
                     refreshResultsForFilters();
+                    restartStreamIfActive();
+                });
+                document.getElementById('sessionId').addEventListener('change', () => {
+                    persistFilters();
+                    loadStats();
+                    refreshResultsForFilters();
+                    restartStreamIfActive();
+                });
+                document.getElementById('tagsFilter').addEventListener('change', () => {
+                    persistFilters();
+                    loadStats();
+                    refreshResultsForFilters();
+                    restartStreamIfActive();
                 });
                 document.getElementById('dateStart').addEventListener('change', () => {
                     persistFilters();
@@ -2408,6 +3526,40 @@ def read_root():
                 document.getElementById('pulseGlobal').addEventListener('change', updatePulseGlobal);
                 document.getElementById('queryGlobal').addEventListener('change', updateQueryGlobal);
                 document.getElementById('autoGlobal').addEventListener('change', updateAutoGlobal);
+                document.getElementById('contextTotal').addEventListener('change', updateContextConfig);
+                document.getElementById('contextFull').addEventListener('change', updateContextConfig);
+                document.getElementById('contextField').addEventListener('change', updateContextConfig);
+                document.getElementById('contextTags').addEventListener('input', updateContextConfig);
+                document.getElementById('contextTypes').addEventListener('input', updateContextConfig);
+                document.getElementById('contextTokens').addEventListener('change', updateContextConfig);
+                document.getElementById('contextWrap').addEventListener('change', updateContextConfig);
+                document.getElementById('contextGlobal').addEventListener('change', updateContextConfig);
+                document.getElementById('streamToggle').addEventListener('change', toggleStream);
+                document.getElementById('streamQuery').addEventListener('input', () => {
+                    const value = document.getElementById('streamQuery').value || '';
+                    localStorage.setItem('ai-mem-stream-query', value);
+                    restartStreamIfActive();
+                });
+                document.getElementById('sessionShowAll').addEventListener('change', () => {
+                    const toggle = document.getElementById('sessionShowAll');
+                    localStorage.setItem('ai-mem-sessions-show-all', String(toggle.checked));
+                    refreshSessions();
+                });
+                document.getElementById('sessionGoalFilter').addEventListener('input', () => {
+                    const value = document.getElementById('sessionGoalFilter').value || '';
+                    localStorage.setItem('ai-mem-sessions-goal', value);
+                    refreshSessions();
+                });
+                document.getElementById('sessionDateStart').addEventListener('change', () => {
+                    const value = document.getElementById('sessionDateStart').value || '';
+                    localStorage.setItem('ai-mem-sessions-date-start', value);
+                    refreshSessions();
+                });
+                document.getElementById('sessionDateEnd').addEventListener('change', () => {
+                    const value = document.getElementById('sessionDateEnd').value || '';
+                    localStorage.setItem('ai-mem-sessions-date-end', value);
+                    refreshSessions();
+                });
                 document.querySelectorAll('input[name="refreshMode"]').forEach(input => {
                     input.addEventListener('change', updateAutoRefresh);
                 });
@@ -2461,6 +3613,9 @@ def read_root():
             }
 
             loadToken();
+            loadStreamQuery();
+            loadStreamToggle();
+            loadSessionFilters();
             loadPulseToggle();
             loadAutoRefresh();
             loadTimelineAnchor();
@@ -2470,6 +3625,7 @@ def read_root():
             loadLastMode();
             loadSelectedFilters();
             loadQuery();
+            loadContextConfig().catch(err => console.warn('Context config load failed', err));
             loadStatsCollapse();
             bindProjectChange();
             loadProjects().then(async () => {
@@ -2503,11 +3659,14 @@ def add_memory(mem: MemoryInput, request: Request):
             content=mem.content,
             obs_type=mem.obs_type,
             project=mem.project,
+            session_id=mem.session_id,
             tags=mem.tags,
             metadata=mem.metadata,
             title=mem.title,
             summarize=mem.summarize,
         )
+        if not obs:
+            return {"status": "skipped", "reason": "private"}
         return obs.model_dump()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -2520,8 +3679,10 @@ def search_memories(
     limit: int = 10,
     project: Optional[str] = None,
     obs_type: Optional[str] = None,
+    session_id: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    tags: Optional[str] = None,
 ):
     _check_token(request)
     try:
@@ -2530,8 +3691,10 @@ def search_memories(
             limit=limit,
             project=project,
             obs_type=obs_type,
+            session_id=session_id,
             date_start=date_start,
             date_end=date_end,
+            tag_filters=_parse_list_param(tags),
         )
         return [item.model_dump() for item in results]
     except Exception as exc:
@@ -2547,8 +3710,10 @@ def get_timeline(
     depth_after: int = 3,
     project: Optional[str] = None,
     obs_type: Optional[str] = None,
+    session_id: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    tags: Optional[str] = None,
 ):
     _check_token(request)
     try:
@@ -2559,12 +3724,162 @@ def get_timeline(
             depth_after=depth_after,
             project=project,
             obs_type=obs_type,
+            session_id=session_id,
             date_start=date_start,
             date_end=date_end,
+            tag_filters=_parse_list_param(tags),
         )
         return [item.model_dump() for item in results]
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/api/context")
+def context_alias(
+    request: Request,
+    project: Optional[str] = None,
+    session_id: Optional[str] = None,
+    query: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    obs_types: Optional[str] = None,
+    tags: Optional[str] = None,
+    total: Optional[int] = None,
+    full: Optional[int] = None,
+    full_field: Optional[str] = None,
+    show_tokens: Optional[bool] = None,
+    wrap: Optional[bool] = None,
+):
+    return inject_context(
+        request=request,
+        project=project,
+        session_id=session_id,
+        query=query,
+        obs_type=obs_type,
+        obs_types=obs_types,
+        tags=tags,
+        total=total,
+        full=full,
+        full_field=full_field,
+        show_tokens=show_tokens,
+        wrap=wrap,
+    )
+
+
+@app.post("/api/context")
+def context_alias_post(payload: ContextRequest, request: Request):
+    return inject_context_post(payload, request)
+
+
+@app.get("/api/context/config")
+def context_config(request: Request):
+    _check_token(request)
+    return get_manager().config.context.model_dump()
+
+
+@app.get("/api/context/preview")
+def preview_context(
+    request: Request,
+    project: Optional[str] = None,
+    session_id: Optional[str] = None,
+    query: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    obs_types: Optional[str] = None,
+    tags: Optional[str] = None,
+    total: Optional[int] = None,
+    full: Optional[int] = None,
+    full_field: Optional[str] = None,
+    show_tokens: Optional[bool] = None,
+    wrap: Optional[bool] = None,
+):
+    _check_token(request)
+    context_text, _ = build_context(
+        get_manager(),
+        project=project,
+        session_id=session_id,
+        query=query,
+        obs_type=obs_type,
+        obs_types=_parse_list_param(obs_types),
+        tag_filters=_parse_list_param(tags),
+        total_count=total,
+        full_count=full,
+        full_field=full_field,
+        show_tokens=show_tokens,
+        wrap=False if wrap is None else wrap,
+    )
+    return Response(context_text, media_type="text/plain")
+
+
+@app.post("/api/context/preview")
+def preview_context_post(payload: ContextRequest, request: Request):
+    _check_token(request)
+    context_text, meta = build_context(
+        get_manager(),
+        project=payload.project,
+        session_id=payload.session_id,
+        query=payload.query,
+        obs_type=payload.obs_type,
+        obs_types=payload.obs_types,
+        tag_filters=payload.tags,
+        total_count=payload.total,
+        full_count=payload.full,
+        full_field=payload.full_field,
+        show_tokens=payload.show_tokens,
+        wrap=False if payload.wrap is None else payload.wrap,
+    )
+    return {"context": context_text, "metadata": meta}
+
+
+@app.get("/api/context/inject")
+def inject_context(
+    request: Request,
+    project: Optional[str] = None,
+    session_id: Optional[str] = None,
+    query: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    obs_types: Optional[str] = None,
+    tags: Optional[str] = None,
+    total: Optional[int] = None,
+    full: Optional[int] = None,
+    full_field: Optional[str] = None,
+    show_tokens: Optional[bool] = None,
+    wrap: Optional[bool] = None,
+):
+    _check_token(request)
+    context_text, _ = build_context(
+        get_manager(),
+        project=project,
+        session_id=session_id,
+        query=query,
+        obs_type=obs_type,
+        obs_types=_parse_list_param(obs_types),
+        tag_filters=_parse_list_param(tags),
+        total_count=total,
+        full_count=full,
+        full_field=full_field,
+        show_tokens=show_tokens,
+        wrap=wrap,
+    )
+    return Response(context_text, media_type="text/plain")
+
+
+@app.post("/api/context/inject")
+def inject_context_post(payload: ContextRequest, request: Request):
+    _check_token(request)
+    context_text, meta = build_context(
+        get_manager(),
+        project=payload.project,
+        session_id=payload.session_id,
+        query=payload.query,
+        obs_type=payload.obs_type,
+        obs_types=payload.obs_types,
+        tag_filters=payload.tags,
+        total_count=payload.total,
+        full_count=payload.full,
+        full_field=payload.full_field,
+        show_tokens=payload.show_tokens,
+        wrap=payload.wrap,
+    )
+    return {"context": context_text, "metadata": meta}
 
 
 @app.post("/api/observations")
@@ -2590,10 +3905,82 @@ def get_observation(obs_id: str, request: Request):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+@app.get("/api/observation/{obs_id}")
+def get_observation_alias(obs_id: str, request: Request):
+    return get_observation(obs_id, request)
+
+
 @app.get("/api/projects")
 def list_projects(request: Request):
     _check_token(request)
     return get_manager().list_projects()
+
+
+@app.get("/api/sessions")
+def list_sessions(
+    request: Request,
+    project: Optional[str] = None,
+    active_only: bool = False,
+    goal: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    limit: Optional[int] = None,
+):
+    _check_token(request)
+    return get_manager().list_sessions(
+        project=project,
+        active_only=active_only,
+        goal_query=goal,
+        date_start=date_start,
+        date_end=date_end,
+        limit=limit,
+    )
+
+
+@app.get("/api/sessions/{session_id}")
+def get_session(session_id: str, request: Request):
+    _check_token(request)
+    session = get_manager().get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@app.get("/api/sessions/{session_id}/observations")
+def get_session_observations(
+    session_id: str,
+    request: Request,
+    limit: Optional[int] = None,
+):
+    _check_token(request)
+    session = get_manager().get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return get_manager().export_observations(session_id=session_id, limit=limit)
+
+
+@app.post("/api/sessions/start")
+def start_session(payload: SessionStartRequest, request: Request):
+    _check_token(request)
+    project = payload.project or os.getcwd()
+    session = get_manager().start_session(
+        project=project,
+        goal=payload.goal or "",
+        session_id=payload.session_id,
+    )
+    return session.model_dump()
+
+
+@app.post("/api/sessions/end")
+def end_session(payload: SessionEndRequest, request: Request):
+    _check_token(request)
+    if payload.session_id:
+        session = get_manager().end_session(payload.session_id)
+    else:
+        session = get_manager().end_latest_session(payload.project)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session.model_dump()
 
 
 @app.get("/api/stats")
@@ -2601,8 +3988,10 @@ def get_stats(
     request: Request,
     project: Optional[str] = None,
     obs_type: Optional[str] = None,
+    session_id: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    tags: Optional[str] = None,
     tag_limit: Optional[int] = None,
     day_limit: Optional[int] = None,
     type_tag_limit: Optional[int] = None,
@@ -2611,8 +4000,10 @@ def get_stats(
     return get_manager().get_stats(
         project=project,
         obs_type=obs_type,
+        session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        tag_filters=_parse_list_param(tags),
         tag_limit=tag_limit if tag_limit is not None else 10,
         day_limit=day_limit if day_limit is not None else 14,
         type_tag_limit=type_tag_limit if type_tag_limit is not None else 3,
@@ -2623,10 +4014,11 @@ def get_stats(
 def list_observations(
     request: Request,
     project: Optional[str] = None,
+    session_id: Optional[str] = None,
     limit: Optional[int] = None,
 ):
     _check_token(request)
-    return get_manager().export_observations(project=project, limit=limit)
+    return get_manager().export_observations(project=project, session_id=session_id, limit=limit)
 
 
 @app.delete("/api/observations/{obs_id}")
@@ -2648,10 +4040,11 @@ def delete_project(payload: ProjectDelete, request: Request):
 def export_observations(
     request: Request,
     project: Optional[str] = None,
+    session_id: Optional[str] = None,
     limit: Optional[int] = None,
 ):
     _check_token(request)
-    return get_manager().export_observations(project=project, limit=limit)
+    return get_manager().export_observations(project=project, session_id=session_id, limit=limit)
 
 
 @app.post("/api/import")
@@ -2664,10 +4057,15 @@ def import_observations(payload: ImportPayload, request: Request):
         obs_type = item.get("type") or "note"
         if not content:
             continue
-        manager.add_observation(
+        item_project = item.get("project")
+        session_id = item.get("session_id")
+        if payload.project and item_project and payload.project != item_project:
+            session_id = None
+        result = manager.add_observation(
             content=content,
             obs_type=obs_type,
-            project=payload.project or item.get("project"),
+            project=payload.project or item_project,
+            session_id=session_id,
             tags=item.get("tags") or [],
             metadata=item.get("metadata") or {},
             title=item.get("title"),
@@ -2677,14 +4075,126 @@ def import_observations(payload: ImportPayload, request: Request):
             created_at=item.get("created_at"),
             importance_score=item.get("importance_score", 0.5),
         )
-        imported += 1
+        if result:
+            imported += 1
     return {"success": True, "imported": imported}
+
+
+@app.post("/api/summarize")
+def summarize_project(payload: SummarizeRequest, request: Request):
+    _check_token(request)
+    result = get_manager().summarize_project(
+        project=payload.project,
+        session_id=payload.session_id,
+        limit=payload.count,
+        obs_type=payload.obs_type,
+        store=payload.store,
+        tags=payload.tags or None,
+    )
+    if not result:
+        return {"status": "empty"}
+    obs = result.get("observation")
+    return {
+        "status": "ok",
+        "summary": result.get("summary", ""),
+        "metadata": result.get("metadata"),
+        "observation": obs.model_dump() if obs else None,
+    }
 
 
 @app.get("/api/health")
 def health(request: Request):
     _check_token(request)
     return {"status": "ok"}
+
+
+@app.get("/api/readiness")
+def readiness(request: Request):
+    _check_token(request)
+    return {"status": "ok"}
+
+
+@app.get("/api/version")
+def version(request: Request):
+    _check_token(request)
+    return {"version": __version__}
+
+
+@app.get("/api/stream")
+async def stream_memories(
+    request: Request,
+    project: Optional[str] = None,
+    session_id: Optional[str] = None,
+    query: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    tags: Optional[str] = None,
+    token: Optional[str] = None,
+):
+    _check_token(request, query_token=token)
+    manager = get_manager()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+    tag_filters = _parse_list_param(tags) or []
+    query_text = (query or "").strip().lower()
+
+    def _matches(obs: Dict[str, Any]) -> bool:
+        if session_id and obs.get("session_id") != session_id:
+            return False
+        if project and obs.get("project") != project:
+            return False
+        if obs_type and obs.get("type") != obs_type:
+            return False
+        if tag_filters:
+            obs_tags = obs.get("tags") or []
+            if not any(tag in obs_tags for tag in tag_filters):
+                return False
+        if query_text:
+            haystack_parts = [
+                obs.get("summary") or "",
+                obs.get("content") or "",
+                obs.get("title") or "",
+                " ".join(obs.get("tags") or []),
+            ]
+            haystack = " ".join(haystack_parts).lower()
+            if query_text not in haystack:
+                return False
+        return True
+
+    def _listener(obs_obj: Any) -> None:
+        obs = obs_obj.model_dump() if hasattr(obs_obj, "model_dump") else {}
+        if not obs or not _matches(obs):
+            return
+        summary_text = obs.get("summary") or obs.get("content") or ""
+        token_estimate = estimate_tokens(summary_text)
+        payload = {
+            "id": obs.get("id"),
+            "summary": summary_text,
+            "project": obs.get("project") or "",
+            "type": obs.get("type") or "",
+            "created_at": obs.get("created_at"),
+            "session_id": obs.get("session_id"),
+            "tags": obs.get("tags") or [],
+            "token_estimate": token_estimate,
+        }
+        loop.call_soon_threadsafe(queue.put_nowait, payload)
+
+    remove_listener = manager.add_listener(_listener)
+
+    async def _event_stream():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                yield f"data: {json.dumps(item, ensure_ascii=True)}\n\n"
+        finally:
+            remove_listener()
+
+    return StreamingResponse(_event_stream(), media_type="text/event-stream")
 
 
 def start_server(host: str = "0.0.0.0", port: int = 8000):
