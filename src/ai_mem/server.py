@@ -72,6 +72,10 @@ class ObservationIds(BaseModel):
     ids: List[str]
 
 
+class ObservationUpdate(BaseModel):
+    tags: Optional[List[str]] = None
+
+
 class ProjectDelete(BaseModel):
     project: str
 
@@ -552,6 +556,16 @@ def read_root():
                 display: flex;
                 flex-wrap: wrap;
                 gap: 8px;
+            }
+            .tag-editor {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: center;
+            }
+            .tag-editor input {
+                flex: 1;
+                min-width: 180px;
             }
             .pill {
                 display: inline-block;
@@ -3293,6 +3307,7 @@ def read_root():
                 }
                 const detail = document.getElementById('detail');
                 const tags = (mem.tags || []).map(tag => `<span class="pill">${tag}</span>`).join('');
+                const tagLine = tags || '<span class="subtitle">No tags</span>';
                 const sessionInfo = mem.session_id ? ` • session ${mem.session_id}` : '';
                 const sessionButton = mem.session_id
                     ? `<button class="secondary" onclick="loadSessionDetail('${mem.session_id}')">View session</button>`
@@ -3300,7 +3315,12 @@ def read_root():
                 detail.innerHTML = `
                     <div><strong>${mem.summary || '(no summary)'}</strong></div>
                     <div class="meta">${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}${sessionInfo}</div>
-                    <div>${tags || '<span class="subtitle">No tags</span>'}</div>
+                    <div class="accent">Tags</div>
+                    <div>${tagLine}</div>
+                    <div class="tag-editor">
+                        <input type="text" id="tagsEditor" placeholder="comma,separated tags">
+                        <button class="secondary" onclick="saveTags()">Save tags</button>
+                    </div>
                     <div class="button-row">
                         <button onclick="copyId()">Copy ID</button>
                         <button class="secondary" onclick="copyCitation()">Copy URL</button>
@@ -3310,6 +3330,36 @@ def read_root():
                     <div class="accent">Content</div>
                     <pre>${mem.content || ''}</pre>
                 `;
+                const tagInput = document.getElementById('tagsEditor');
+                if (tagInput) {
+                    tagInput.value = (mem.tags || []).join(', ');
+                }
+            }
+
+            async function saveTags() {
+                if (!currentObservationId) return;
+                const tagsInput = document.getElementById('tagsEditor');
+                const tags = (tagsInput?.value || '')
+                    .split(',')
+                    .map(item => item.trim())
+                    .filter(item => item);
+                const response = await fetch(`/api/observations/${currentObservationId}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify({ tags }),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to update tags');
+                    return;
+                }
+                await loadDetail(currentObservationId);
+                await loadStats();
+                if (lastMode === 'timeline') {
+                    timeline({ useInput: false });
+                } else {
+                    search();
+                }
             }
 
             async function deleteObservation() {
@@ -3971,6 +4021,17 @@ def get_observation(obs_id: str, request: Request):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.patch("/api/observations/{obs_id}")
+def update_observation(obs_id: str, payload: ObservationUpdate, request: Request):
+    _check_token(request)
+    if payload.tags is None:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    updated = get_manager().update_observation_tags(obs_id, payload.tags)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    return {"success": True}
 
 
 @app.get("/api/observation/{obs_id}")

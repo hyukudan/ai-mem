@@ -531,6 +531,15 @@ class DatabaseManager:
         self.conn.commit()
         return cursor.rowcount
 
+    def update_observation_tags(self, obs_id: str, tags: List[str]) -> int:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE observations SET tags = ? WHERE id = ?",
+            (json.dumps(tags), obs_id),
+        )
+        self.conn.commit()
+        return cursor.rowcount
+
     def delete_project(self, project: str) -> int:
         cursor = self.conn.cursor()
         cursor.execute("DELETE FROM observations WHERE project = ?", (project,))

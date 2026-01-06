@@ -689,6 +689,13 @@ class MemoryManager:
             self.vector_store.delete_where({"observation_id": obs_id})
         return bool(deleted)
 
+    def update_observation_tags(self, obs_id: str, tags: Optional[List[str]]) -> bool:
+        if tags is None:
+            return False
+        normalized = _normalize_tags(tags)
+        updated = self.db.update_observation_tags(obs_id, normalized)
+        return bool(updated)
+
     def delete_project(self, project: str) -> int:
         deleted = self.db.delete_project(project)
         if deleted:

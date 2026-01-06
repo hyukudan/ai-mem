@@ -306,6 +306,7 @@ Viewer features:
 - Stream view for new observations.
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.
+- Observation detail view lets you edit tags.
 - Search and timeline results show a rough token estimate per summary.
 - Session list previews the latest session summary when available.
 - Session detail view shows totals, top types, and top tags.
@@ -433,6 +434,7 @@ Key endpoints:
 - GET /api/observations: list observations (project, session_id, limit)
 - GET /api/observations/{id}: single observation
 - GET /api/observation/{id}: alias
+- PATCH /api/observations/{id}: update tags (tags)
 - DELETE /api/observations/{id}
 - GET /api/projects
 - GET /api/sessions (project, active_only, goal, date_start, date_end, limit)

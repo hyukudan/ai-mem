@@ -74,6 +74,27 @@ class DatabaseTests(unittest.TestCase):
             stats = db.get_stats(project="proj", tag_filters=["alpha"])
             self.assertEqual(stats["total"], 1)
 
+    def test_update_observation_tags(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            session = Session(project="proj")
+            db.add_session(session)
+
+            obs = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Tagged note",
+                summary="Tagged note",
+                tags=["alpha"],
+            )
+            db.add_observation(obs)
+
+            updated = db.update_observation_tags(obs.id, ["alpha", "beta"])
+            self.assertEqual(updated, 1)
+            stored = db.get_observation(obs.id)
+            self.assertEqual(stored["tags"], ["alpha", "beta"])
+
     def test_stats(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
