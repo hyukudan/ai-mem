@@ -1314,6 +1314,10 @@ def read_root():
                                 <select id="contextPresets">
                                     <option value="">Select preset</option>
                                 </select>
+                                <label class="pulse-toggle">
+                                    <input type="checkbox" id="contextPresetsGlobal">
+                                    Use global presets
+                                </label>
                                 <div class="row">
                                     <input type="text" id="contextPresetName" placeholder="preset name">
                                     <button class="chip" onclick="saveContextPreset()">Save</button>
@@ -1543,6 +1547,7 @@ def read_root():
             let savedFilters = [];
             let contextPresets = [];
             let savedFiltersUseGlobal = true;
+            let contextPresetsUseGlobal = false;
             const SECTION_BODY_MAP = {
                 savedFiltersCard: '.saved-body',
                 tagCard: '.tag-body',
@@ -2527,9 +2532,13 @@ def read_root():
                 };
             }
 
-            function getContextPresetKey(projectValue) {
+            function getContextPresetKeys(projectValue) {
                 const key = encodeURIComponent(projectValue || 'all');
-                return `ai-mem-context-presets-${key}`;
+                return {
+                    project: `ai-mem-context-presets-${key}`,
+                    global: 'ai-mem-context-presets-global',
+                    useGlobal: `ai-mem-context-presets-use-global-${key}`,
+                };
             }
 
             function parseContextConfig(value) {
@@ -2662,26 +2671,39 @@ def read_root():
 
             function loadContextPresets() {
                 const projectValue = getCurrentProjectValue();
-                const key = getContextPresetKey(projectValue);
-                const stored = localStorage.getItem(key);
-                if (!stored) {
-                    contextPresets = [];
-                    renderContextPresets();
-                    return;
-                }
+                const keys = getContextPresetKeys(projectValue);
+                const projectStored = localStorage.getItem(keys.project);
+                const globalStored = localStorage.getItem(keys.global) || '';
+                const useGlobalStored = localStorage.getItem(keys.useGlobal);
+                const useGlobal = useGlobalStored === null
+                    ? projectStored === null
+                    : useGlobalStored === 'true';
+                contextPresetsUseGlobal = useGlobal;
+                const storedText = useGlobal ? globalStored : (projectStored === null ? globalStored : projectStored);
                 try {
-                    const parsed = JSON.parse(stored);
+                    const parsed = JSON.parse(storedText || '[]');
                     contextPresets = Array.isArray(parsed) ? parsed : [];
                 } catch (error) {
                     contextPresets = [];
+                }
+                const toggle = document.getElementById('contextPresetsGlobal');
+                if (toggle) {
+                    toggle.checked = useGlobal;
                 }
                 renderContextPresets();
             }
 
             function persistContextPresets() {
                 const projectValue = getCurrentProjectValue();
-                const key = getContextPresetKey(projectValue);
-                localStorage.setItem(key, JSON.stringify(contextPresets));
+                const keys = getContextPresetKeys(projectValue);
+                const useGlobal = getContextPresetsUseGlobal();
+                const payload = JSON.stringify(contextPresets);
+                if (useGlobal) {
+                    localStorage.setItem(keys.global, payload);
+                } else {
+                    localStorage.setItem(keys.project, payload);
+                }
+                localStorage.setItem(keys.useGlobal, String(!!useGlobal));
                 renderContextPresets();
             }
 
@@ -2695,6 +2717,11 @@ def read_root():
                     option.textContent = preset.name || '';
                     select.appendChild(option);
                 });
+            }
+
+            function getContextPresetsUseGlobal() {
+                const toggle = document.getElementById('contextPresetsGlobal');
+                return toggle ? toggle.checked : contextPresetsUseGlobal;
             }
 
             function saveContextPreset() {
@@ -4678,6 +4705,15 @@ def read_root():
                 document.getElementById('contextTokens').addEventListener('change', updateContextConfig);
                 document.getElementById('contextWrap').addEventListener('change', updateContextConfig);
                 document.getElementById('contextGlobal').addEventListener('change', updateContextConfig);
+                const contextPresetsGlobal = document.getElementById('contextPresetsGlobal');
+                if (contextPresetsGlobal) {
+                    contextPresetsGlobal.addEventListener('change', () => {
+                        const projectValue = getCurrentProjectValue();
+                        const keys = getContextPresetKeys(projectValue);
+                        localStorage.setItem(keys.useGlobal, String(contextPresetsGlobal.checked));
+                        loadContextPresets();
+                    });
+                }
                 const savedFiltersGlobal = document.getElementById('savedFiltersGlobal');
                 if (savedFiltersGlobal) {
                     savedFiltersGlobal.addEventListener('change', () => {
