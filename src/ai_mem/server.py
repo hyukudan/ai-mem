@@ -1704,7 +1704,7 @@ def read_root():
                 label.textContent = `Mode: ${modeText} • ${interval}s`;
                 const globalToggle = document.getElementById('autoGlobal');
                 const scope = globalToggle && globalToggle.checked ? 'global' : 'project';
-                label.title = `Auto-refresh scope: ${scope}`;
+                label.title = `Auto-refresh: ${modeText} • ${interval}s • ${scope}`;
                 label.style.display = 'inline-flex';
             }
 
