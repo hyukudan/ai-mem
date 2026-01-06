@@ -164,6 +164,7 @@ Viewer tips:
 - Auto-refresh settings (on/off, interval, mode) are stored per project.
 - "Use global auto-refresh" lets you share auto-refresh settings across projects.
 - The sidebar auto-refresh label shows mode/interval/scope (tooltip) and highlights global scope.
+- The results header auto-refresh badge shows a dot when scope is global.
 
 ## 🛠️ Architecture
 
