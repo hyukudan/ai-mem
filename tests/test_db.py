@@ -74,6 +74,48 @@ class DatabaseTests(unittest.TestCase):
             stats = db.get_stats(project="proj", tag_filters=["alpha"])
             self.assertEqual(stats["total"], 1)
 
+    def test_list_observations_filters(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            session = Session(project="proj")
+            db.add_session(session)
+
+            obs_a = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Alpha",
+                summary="Alpha",
+                tags=["alpha"],
+                created_at=100.0,
+            )
+            obs_b = Observation(
+                session_id=session.id,
+                project="proj",
+                type="bugfix",
+                content="Beta",
+                summary="Beta",
+                tags=["beta"],
+                created_at=200.0,
+            )
+            obs_c = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Gamma",
+                summary="Gamma",
+                tags=["alpha", "beta"],
+                created_at=300.0,
+            )
+            for obs in (obs_a, obs_b, obs_c):
+                db.add_observation(obs)
+
+            filtered = db.list_observations(project="proj", obs_type="note", tag_filters=["alpha"])
+            self.assertEqual([item["id"] for item in filtered], [obs_c.id, obs_a.id])
+
+            windowed = db.list_observations(project="proj", date_start=150.0, date_end=250.0)
+            self.assertEqual([item["id"] for item in windowed], [obs_b.id])
+
     def test_update_observation_tags(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")

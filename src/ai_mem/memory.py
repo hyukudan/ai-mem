@@ -681,9 +681,23 @@ class MemoryManager:
         self,
         project: Optional[str] = None,
         session_id: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, object]]:
-        return self.db.list_observations(project=project, session_id=session_id, limit=limit)
+        start_ts = _parse_date(date_start)
+        end_ts = _parse_date(date_end)
+        return self.db.list_observations(
+            project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=start_ts,
+            date_end=end_ts,
+            tag_filters=_normalize_tags(tag_filters),
+            limit=limit,
+        )
 
     def summarize_project(
         self,

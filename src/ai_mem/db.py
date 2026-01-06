@@ -272,6 +272,10 @@ class DatabaseManager:
         self,
         project: Optional[str] = None,
         session_id: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
+        tag_filters: Optional[List[str]] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         cursor = self.conn.cursor()
@@ -284,6 +288,18 @@ class DatabaseManager:
         if session_id:
             conditions.append("session_id = ?")
             params.append(session_id)
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if date_start is not None:
+            conditions.append("created_at >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("created_at <= ?")
+            params.append(date_end)
+        tag_clause = self._tag_clause(tag_filters, params)
+        if tag_clause:
+            conditions.append(tag_clause)
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC"

@@ -947,13 +947,25 @@ def export(
     path: str = typer.Argument(..., help="Path to write exported data"),
     project: Optional[str] = typer.Option(None, help="Project path filter"),
     session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     limit: Optional[int] = typer.Option(None, help="Limit number of observations"),
     output: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json, jsonl, csv"),
 ):
     """Export observations to a file."""
     manager = get_memory_manager()
     fmt = _infer_format(path, output, "json")
-    data = manager.export_observations(project=project, session_id=session_id, limit=limit)
+    data = manager.export_observations(
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
+        tag_filters=tag,
+        limit=limit,
+    )
     if fmt == "json":
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(data, handle, indent=2)

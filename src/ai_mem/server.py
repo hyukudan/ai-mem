@@ -4080,12 +4080,20 @@ def read_root():
             async function exportData(format = 'json') {
                 const project = document.getElementById('project').value;
                 const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                const type = document.getElementById('type').value;
+                const tags = (document.getElementById('tagsFilter').value || '').trim();
+                const dateStart = document.getElementById('dateStart').value;
+                const dateEnd = document.getElementById('dateEnd').value;
                 const params = new URLSearchParams();
                 if (sessionId) {
                     params.append('session_id', sessionId);
                 } else if (project) {
                     params.append('project', project);
                 }
+                if (type) params.append('obs_type', type);
+                if (tags) params.append('tags', tags);
+                if (dateStart) params.append('date_start', dateStart);
+                if (dateEnd) params.append('date_end', dateEnd);
                 params.append('format', format);
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
@@ -4918,10 +4926,22 @@ def list_observations(
     request: Request,
     project: Optional[str] = None,
     session_id: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    tags: Optional[str] = None,
     limit: Optional[int] = None,
 ):
     _check_token(request)
-    return get_manager().export_observations(project=project, session_id=session_id, limit=limit)
+    return get_manager().export_observations(
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
+        tag_filters=_parse_list_param(tags),
+        limit=limit,
+    )
 
 
 @app.delete("/api/observations/{obs_id}")
@@ -4944,11 +4964,23 @@ def export_observations(
     request: Request,
     project: Optional[str] = None,
     session_id: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    tags: Optional[str] = None,
     limit: Optional[int] = None,
     format: Optional[str] = None,
 ):
     _check_token(request)
-    data = get_manager().export_observations(project=project, session_id=session_id, limit=limit)
+    data = get_manager().export_observations(
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
+        tag_filters=_parse_list_param(tags),
+        limit=limit,
+    )
     fmt = (format or "json").lower()
     if fmt == "json":
         return data

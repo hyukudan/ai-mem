@@ -254,6 +254,7 @@ ai-mem export memories.jsonl --format jsonl
 ai-mem import memories.jsonl
 ai-mem export memories.csv --format csv
 ai-mem import memories.csv
+ai-mem export memories.json --tag bug --date-start 2024-01-01
 
 # Watch a command
 ai-mem watch --command "pytest -q"
@@ -451,7 +452,7 @@ Key endpoints:
 - POST /api/memories: add a memory (project, session_id, obs_type, tags, metadata, title, summarize)
 - GET /api/search: search (project, session_id, obs_type, tags, date_start, date_end)
 - GET /api/timeline: timeline (project, session_id, obs_type, tags, date_start, date_end, depth_before, depth_after)
-- GET /api/observations: list observations (project, session_id, limit)
+- GET /api/observations: list observations (project, session_id, obs_type, tags, date_start, date_end, limit)
 - GET /api/observations/{id}: single observation
 - GET /api/observation/{id}: alias
 - PATCH /api/observations/{id}: update tags (tags)
@@ -474,7 +475,7 @@ Key endpoints:
 - POST /api/context/preview
 - POST /api/context/inject
 - GET /api/stream (project, session_id, obs_type, tags, query, token)
-- GET /api/export (project, session_id, limit, format=json|jsonl|csv)
+- GET /api/export (project, session_id, obs_type, tags, date_start, date_end, limit, format=json|jsonl|csv)
 - POST /api/import (preserves session_id unless project override changes scope)
 - POST /api/summarize (project, session_id, count, obs_type, store, tags)
 - GET /api/health
