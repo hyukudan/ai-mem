@@ -113,6 +113,7 @@ def build_context(
 
     project_name = project or (f"session:{session_id}" if session_id else "all-projects")
     observations: List[Dict[str, Any]] = []
+    scoreboard: Dict[str, Dict[str, Optional[float]]] = {}
 
     if query:
         index_items = manager.search(
@@ -126,10 +127,21 @@ def build_context(
         if index_items:
             ids = [item.id for item in index_items]
             details = {item["id"]: item for item in manager.get_observations(ids)}
+            scoreboard = {
+                item.id: {
+                    "fts_score": item.fts_score,
+                    "vector_score": item.vector_score,
+                    "recency_factor": item.recency_factor,
+                }
+                for item in index_items
+                if item.id
+            }
             for item in index_items:
                 detail = details.get(item.id)
                 if not detail:
                     continue
+                if scoreboard.get(item.id):
+                    detail["_scoreboard"] = scoreboard[item.id]
                 observations.append(detail)
     else:
         observations = manager.db.list_observations(
@@ -195,5 +207,6 @@ def build_context(
         "economics": economics,
         "full_field": full_field,
         "obs_types": obs_type_filters,
+        "scoreboard": scoreboard if query else {},
     }
     return context_text, metadata

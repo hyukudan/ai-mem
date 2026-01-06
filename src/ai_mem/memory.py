@@ -1,10 +1,12 @@
 import hashlib
+import json
+import math
 import os
 import re
 import threading
 import time
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .chunking import chunk_text
 from .config import AppConfig, load_config, resolve_storage_paths
@@ -259,6 +261,10 @@ class MemoryManager:
         self.current_session: Optional[Session] = None
         self._listeners: List[Callable[[Observation], None]] = []
         self._listener_lock = threading.Lock()
+        self._search_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        self._last_search_cache_hit: Optional[bool] = None
+        self._search_cache_hits: int = 0
+        self._search_cache_misses: int = 0
 
     def add_listener(self, listener: Callable[[Observation], None]) -> Callable[[], None]:
         with self._listener_lock:
@@ -279,6 +285,110 @@ class MemoryManager:
                 listener(obs)
             except Exception:
                 continue
+
+    @property
+    def search_cache_hit(self) -> Optional[bool]:
+        return self._last_search_cache_hit
+
+    def _is_search_cache_enabled(self) -> bool:
+        return (
+            self.config.search.cache_ttl_seconds > 0
+            and self.config.search.cache_max_entries > 0
+        )
+
+    def _prune_search_cache(self) -> None:
+        if not self._is_search_cache_enabled():
+            return
+        now = time.time()
+        expired = [
+            key
+            for key, (ts, _) in self._search_cache.items()
+            if now - ts > self.config.search.cache_ttl_seconds
+        ]
+        for key in expired:
+            self._search_cache.pop(key, None)
+        while len(self._search_cache) > self.config.search.cache_max_entries:
+            oldest_key = min(self._search_cache.items(), key=lambda item: item[1][0])[0]
+            self._search_cache.pop(oldest_key, None)
+
+    def _build_search_cache_key(
+        self,
+        query: str,
+        limit: int,
+        project: Optional[str],
+        obs_type: Optional[str],
+        session_id: Optional[str],
+        date_start: Optional[str],
+        date_end: Optional[str],
+        tags: List[str],
+    ) -> str:
+        key_data = {
+            "query": query.strip(),
+            "limit": limit,
+            "project": project or "",
+            "obs_type": obs_type or "",
+            "session_id": session_id or "",
+            "date_start": date_start or "",
+            "date_end": date_end or "",
+            "tags": sorted(tags),
+        }
+        return json.dumps(key_data, sort_keys=True)
+
+    def _get_search_cache(self, key: str) -> Optional[List[ObservationIndex]]:
+        if not self._is_search_cache_enabled():
+            return None
+        entry = self._search_cache.get(key)
+        if not entry:
+            return None
+        timestamp, data = entry
+        if time.time() - timestamp > self.config.search.cache_ttl_seconds:
+            self._search_cache.pop(key, None)
+            return None
+        self._record_cache_hit()
+        return [ObservationIndex.model_validate(item) for item in data]
+
+    def _set_search_cache(self, key: str, results: List[ObservationIndex]) -> None:
+        if not key or not self._is_search_cache_enabled():
+            return
+        payload = [item.model_dump() for item in results]
+        self._search_cache[key] = (time.time(), payload)
+
+    def _combine_scores(self, fts_score: float, vector_score: float) -> float:
+        total_weight = self.config.search.fts_weight + self.config.search.vector_weight
+        if total_weight <= 0:
+            return max(fts_score, vector_score)
+        fts_component = (fts_score or 0.0) * self.config.search.fts_weight
+        vector_component = (vector_score or 0.0) * self.config.search.vector_weight
+        return (fts_component + vector_component) / total_weight
+
+    def _compute_recency_factor(self, created_at: Optional[float]) -> float:
+        half_life_hours = self.config.search.recency_half_life_hours
+        if half_life_hours <= 0 or not created_at:
+            return 1.0
+        age = max(0.0, time.time() - created_at)
+        half_life_seconds = half_life_hours * 3600
+        decay = math.exp(-age / half_life_seconds) if half_life_seconds > 0 else 0.0
+        return 1.0 + self.config.search.recency_weight * decay
+
+    def _record_cache_hit(self) -> None:
+        self._search_cache_hits += 1
+
+    def _record_cache_miss(self) -> None:
+        self._search_cache_misses += 1
+
+    def search_cache_summary(self) -> Dict[str, Any]:
+        return {
+            "enabled": self._is_search_cache_enabled(),
+            "ttl_seconds": self.config.search.cache_ttl_seconds,
+            "max_entries": self.config.search.cache_max_entries,
+            "entries": len(self._search_cache),
+            "hits": self._search_cache_hits,
+            "misses": self._search_cache_misses,
+            "fts_weight": self.config.search.fts_weight,
+            "vector_weight": self.config.search.vector_weight,
+            "recency_half_life_hours": self.config.search.recency_half_life_hours,
+            "recency_weight": self.config.search.recency_weight,
+        }
 
     def start_session(
         self,
@@ -528,7 +638,8 @@ class MemoryManager:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
         tags = _normalize_tags(tag_filters)
-        if not query.strip():
+        query_str = (query or "").strip()
+        if not query_str:
             return self.db.get_recent_observations(
                 project,
                 limit,
@@ -539,8 +650,28 @@ class MemoryManager:
                 date_end=end_ts,
             )
 
+        cache_key = None
+        cache_enabled = self._is_search_cache_enabled()
+        self._last_search_cache_hit = False
+        if cache_enabled:
+            cache_key = self._build_search_cache_key(
+                query_str,
+                limit,
+                project,
+                obs_type,
+                session_id,
+                date_start,
+                date_end,
+                tags,
+            )
+            self._prune_search_cache()
+            cached = self._get_search_cache(cache_key)
+            if cached is not None:
+                self._last_search_cache_hit = True
+                return cached
+
         fts_results = self.db.search_observations_fts(
-            query,
+            query_str,
             project=project,
             obs_type=obs_type,
             session_id=session_id,
@@ -550,7 +681,7 @@ class MemoryManager:
             limit=self.config.search.fts_top_k,
         )
         vector_hits = self._vector_search(
-            query,
+            query_str,
             project=project,
             session_id=session_id,
             date_start=start_ts,
@@ -559,29 +690,48 @@ class MemoryManager:
             tag_filters=tags,
         )
 
-        merged: Dict[str, ObservationIndex] = {}
+        obs_map: Dict[str, ObservationIndex] = {}
         for item in fts_results:
-            merged[item.id] = item
+            item.fts_score = item.score
+            item.vector_score = None
+            obs_map[item.id] = item
 
         for obs_id, score in vector_hits.items():
-            if obs_id in merged:
-                merged[obs_id].score = max(merged[obs_id].score, score)
+            if obs_id in obs_map:
+                existing = obs_map[obs_id]
+                existing.vector_score = max(existing.vector_score or 0.0, score)
             else:
                 obs = self.db.get_observation(obs_id)
                 if obs:
-                    merged[obs_id] = ObservationIndex(
+                    obs_map[obs_id] = ObservationIndex(
                         id=obs["id"],
                         summary=obs["summary"] or "",
                         project=obs["project"],
                         type=obs["type"],
                         created_at=obs["created_at"],
-                        score=score,
+                        fts_score=None,
+                        vector_score=score,
                     )
 
-        results = sorted(merged.values(), key=lambda item: item.score, reverse=True)
+        combined_results: List[ObservationIndex] = []
+        for item in obs_map.values():
+            fts_score = item.fts_score or 0.0
+            vector_score = item.vector_score or 0.0
+            combined = self._combine_scores(fts_score, vector_score)
+            recency_factor = self._compute_recency_factor(item.created_at)
+            item.recency_factor = recency_factor
+            item.score = combined * recency_factor
+            combined_results.append(item)
+
+        sorted_results = sorted(combined_results, key=lambda item: item.score, reverse=True)
+        filtered = sorted_results
         if obs_type:
-            results = [item for item in results if item.type == obs_type]
-        return results[:limit]
+            filtered = [item for item in filtered if item.type == obs_type]
+        final_results = filtered[:limit]
+        if cache_key:
+            self._record_cache_miss()
+            self._set_search_cache(cache_key, final_results)
+        return final_results
 
     def _vector_search(
         self,
@@ -653,12 +803,13 @@ class MemoryManager:
         tag_filters: Optional[List[str]] = None,
     ) -> List[ObservationIndex]:
         tags = _normalize_tags(tag_filters)
+        scoreboard_map: Dict[str, Dict[str, Optional[float]]] = {}
         if date_start is None and since is not None:
             date_start = since
         if not anchor_id and query:
-            results = self.search(
+            search_results = self.search(
                 query,
-                limit=1,
+                limit=max(1, depth_before + depth_after + 5),
                 project=project,
                 obs_type=obs_type,
                 session_id=session_id,
@@ -667,9 +818,16 @@ class MemoryManager:
                 since=since,
                 tag_filters=tags,
             )
-            if results:
-                anchor_id = results[0].id
-
+            if search_results:
+                anchor_id = search_results[0].id
+                scoreboard_map = {
+                    item.id: {
+                        "fts_score": item.fts_score,
+                        "vector_score": item.vector_score,
+                        "recency_factor": item.recency_factor,
+                    }
+                    for item in search_results
+                }
         if not anchor_id:
             return []
 
@@ -704,14 +862,30 @@ class MemoryManager:
             date_start=start_ts,
             date_end=end_ts,
         )
-        anchor_index = ObservationIndex(
-            id=anchor["id"],
-            summary=anchor["summary"] or "",
-            project=anchor["project"],
-            type=anchor["type"],
-            created_at=anchor["created_at"],
-            score=0.0,
-        )
+        def _build_index(entry: Dict[str, Any]) -> ObservationIndex:
+            score_data = scoreboard_map.get(entry["id"], {})
+            return ObservationIndex(
+                id=entry["id"],
+                summary=entry.get("summary") or "",
+                project=entry.get("project"),
+                type=entry.get("type"),
+                created_at=entry.get("created_at"),
+                score=0.0,
+                fts_score=score_data.get("fts_score"),
+                vector_score=score_data.get("vector_score"),
+                recency_factor=score_data.get("recency_factor"),
+            )
+
+        def _apply_score(index: ObservationIndex) -> ObservationIndex:
+            score_data = scoreboard_map.get(index.id, {})
+            index.fts_score = score_data.get("fts_score")
+            index.vector_score = score_data.get("vector_score")
+            index.recency_factor = score_data.get("recency_factor")
+            return index
+
+        before = [_apply_score(item) for item in before]
+        after = [_apply_score(item) for item in after]
+        anchor_index = _apply_score(_build_index(anchor))
         timeline = list(reversed(before)) + [anchor_index] + after
         return timeline
 

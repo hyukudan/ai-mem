@@ -34,6 +34,12 @@ class SearchConfig(BaseModel):
     chunk_overlap: int = 100
     vector_top_k: int = 20
     fts_top_k: int = 20
+    cache_ttl_seconds: int = 30
+    cache_max_entries: int = 256
+    fts_weight: float = 0.5
+    vector_weight: float = 0.5
+    recency_half_life_hours: float = 48.0
+    recency_weight: float = 0.1
 
 
 class VectorConfig(BaseModel):
@@ -144,6 +150,15 @@ def _env_int(name: str) -> Optional[int]:
     except ValueError:
         return None
 
+def _env_float(name: str) -> Optional[float]:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
 
 def _env_bool(name: str) -> Optional[bool]:
     value = os.environ.get(name)
@@ -198,6 +213,25 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
 
     if vector_provider:
         config.vector.provider = vector_provider
+    cache_ttl = _env_int("AI_MEM_SEARCH_CACHE_TTL")
+    cache_entries = _env_int("AI_MEM_SEARCH_CACHE_ENTRIES")
+    fts_weight = _env_float("AI_MEM_SEARCH_FTS_WEIGHT")
+    vector_weight = _env_float("AI_MEM_SEARCH_VECTOR_WEIGHT")
+    recency_half_life = _env_float("AI_MEM_SEARCH_RECENCY_HALFLIFE_HOURS")
+    recency_weight = _env_float("AI_MEM_SEARCH_RECENCY_WEIGHT")
+
+    if cache_ttl is not None:
+        config.search.cache_ttl_seconds = cache_ttl
+    if cache_entries is not None:
+        config.search.cache_max_entries = cache_entries
+    if fts_weight is not None:
+        config.search.fts_weight = fts_weight
+    if vector_weight is not None:
+        config.search.vector_weight = vector_weight
+    if recency_half_life is not None:
+        config.search.recency_half_life_hours = recency_half_life
+    if recency_weight is not None:
+        config.search.recency_weight = recency_weight
     if vector_collection:
         config.vector.chroma_collection = vector_collection
     if pgvector_dsn:

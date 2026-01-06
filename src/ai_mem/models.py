@@ -50,6 +50,9 @@ class ObservationIndex(BaseModel):
     type: Optional[str] = None
     created_at: float
     score: float = 0.0
+    fts_score: Optional[float] = None
+    vector_score: Optional[float] = None
+    recency_factor: Optional[float] = None
 
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

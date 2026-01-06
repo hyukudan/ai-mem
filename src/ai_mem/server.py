@@ -456,6 +456,28 @@ def read_root():
             .filters-pill .filter-icon.query { background: #9a6ea6; }
             .filters-pill .filter-icon.tag { background: #2a8a6a; }
             .filters-pill .filter-icon.session { background: #5c7c3a; }
+            .cache-indicator {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                padding: 6px 12px;
+                border-radius: 14px;
+                border: 1px solid #e1dbd2;
+                background: #fff7ec;
+                font-size: 12px;
+                font-weight: 600;
+                color: #3a3731;
+            }
+            .cache-indicator.hit {
+                border-color: #1f6f59;
+                background: #e6f3ee;
+                color: #1f6f59;
+            }
+            .cache-indicator.miss {
+                border-color: #b23b21;
+                background: #fbe9e4;
+                color: #b23b21;
+            }
             .filters-pill .live-dot {
                 width: 6px;
                 height: 6px;
@@ -568,6 +590,30 @@ def read_root():
                 color: var(--muted);
                 font-size: 0.8em;
                 margin-top: 8px;
+            }
+            .score-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-top: 6px;
+            }
+            .score-chip {
+                font-size: 11px;
+                padding: 4px 10px;
+                border-radius: 999px;
+                border: 1px solid #e1dbd2;
+                background: #faf7f2;
+                color: var(--muted);
+            }
+            .score-chip.vector {
+                border-color: #1f6f59;
+                background: #e6f3ee;
+                color: #1f6f59;
+            }
+            .score-chip.recency {
+                border-color: #2a8a6a;
+                background: #e8f8f4;
+                color: #2a8a6a;
             }
             .detail {
                 background: var(--panel);
@@ -864,6 +910,41 @@ def read_root():
             .stream-row {
                 display: grid;
                 gap: 6px;
+            }
+            .stream-progress {
+                border-radius: 12px;
+                overflow: hidden;
+                background: #f5f2ea;
+                height: 6px;
+                position: relative;
+                margin-top: 10px;
+            }
+            .stream-progress-bar {
+                height: 100%;
+                width: 0%;
+                background: linear-gradient(90deg, #1f6f59, #4aa37f);
+                transition: width 0.3s ease;
+            }
+            .stream-progress-label {
+                font-size: 11px;
+                color: var(--muted);
+                text-align: center;
+                margin-top: 4px;
+            }
+            .cache-health {
+                margin-top: 6px;
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--muted);
+            }
+            .cache-health.healthy {
+                color: #1f6f59;
+            }
+            .cache-health.warning {
+                color: #e36b2c;
+            }
+            .cache-health.poor {
+                color: #b23b21;
             }
             .context-title {
                 font-weight: 600;
@@ -1389,19 +1470,24 @@ def read_root():
                             <div id="stats"></div>
                         </div>
                     </div>
-                    <div class="stream-card" id="streamCard">
-                        <div class="stream-header">
-                            <div class="stream-title">Live stream</div>
-                            <label class="pulse-toggle">
-                                <input type="checkbox" id="streamToggle">
-                                Stream
-                            </label>
-                        </div>
-                        <div class="stream-status" id="streamStatus">Stream off</div>
-                        <div class="stream-row">
-                            <label for="streamQuery">Query filter</label>
-                            <input type="text" id="streamQuery" placeholder="optional">
-                        </div>
+            <div class="stream-card" id="streamCard">
+                <div class="stream-header">
+                    <div class="stream-title">Live stream</div>
+                    <label class="pulse-toggle">
+                        <input type="checkbox" id="streamToggle">
+                        Stream
+                    </label>
+                </div>
+                <div class="stream-status" id="streamStatus">Stream off</div>
+                <div class="stream-progress" id="streamProgress">
+                    <div class="stream-progress-bar" id="autoProgressBar"></div>
+                </div>
+                <div class="stream-progress-label" id="autoProgressLabel">Auto-refresh idle</div>
+                <div class="cache-health" id="cacheHealth">Cache health: unknown</div>
+                <div class="stream-row">
+                    <label for="streamQuery">Query filter</label>
+                    <input type="text" id="streamQuery" placeholder="optional">
+                </div>
                         <div class="stream-list" id="streamList">
                             <div class="subtitle">No events yet.</div>
                         </div>
@@ -1523,6 +1609,7 @@ def read_root():
             </aside>
             <main class="panel">
                 <div class="results-header" id="resultsHeader"></div>
+                <div class="cache-indicator" id="cacheIndicator" style="display:none;"></div>
                 <div class="filters-pill" id="filtersPill">Filters active</div>
                 <div class="results" id="results"></div>
             </main>
@@ -1553,10 +1640,14 @@ def read_root():
             let streamSource = null;
             let streamItems = [];
             const streamMaxItems = 20;
+            let latestCacheStats = null;
+            let autoRefreshCountdown = 0;
+            let autoRefreshProgressTimer = null;
             let savedFilters = [];
             let contextPresets = [];
             let savedFiltersUseGlobal = true;
             let contextPresetsUseGlobal = false;
+            const scoreMap = {};
             const SECTION_BODY_MAP = {
                 savedFiltersCard: '.saved-body',
                 tagCard: '.tag-body',
@@ -3065,6 +3156,28 @@ def read_root():
                 `;
             }
 
+            function updateCacheBadge(status) {
+                const badge = document.getElementById('cacheIndicator');
+                if (!badge) return;
+                if (!status) {
+                    badge.style.display = 'none';
+                    badge.textContent = '';
+                    badge.classList.remove('hit', 'miss');
+                    return;
+                }
+                const normalized = status.toLowerCase();
+                if (normalized !== 'hit' && normalized !== 'miss') {
+                    badge.style.display = 'none';
+                    badge.textContent = '';
+                    badge.classList.remove('hit', 'miss');
+                    return;
+                }
+                badge.textContent = normalized === 'hit' ? 'Cache hit' : 'Cache miss';
+                badge.classList.remove('hit', 'miss');
+                badge.classList.add(normalized);
+                badge.style.display = 'inline-flex';
+            }
+
             function getFilterDetails() {
                 const dots = [];
                 const query = (document.getElementById('query').value || '').trim();
@@ -3843,6 +3956,9 @@ def read_root():
                     return;
                 }
                 await loadStats();
+                if (document.getElementById('autoRefresh')?.checked) {
+                    resetAutoProgressCountdown();
+                }
                 const mode = localStorage.getItem('ai-mem-auto-refresh-mode') || 'all';
                 if (mode === 'stats') {
                     return;
@@ -3852,6 +3968,71 @@ def read_root():
                     return;
                 }
                 await search();
+            }
+
+            function resetAutoProgressCountdown() {
+                const intervalInput = document.getElementById('refreshInterval');
+                const interval = Math.max(5, parseInt(intervalInput ? intervalInput.value : '30', 10));
+                autoRefreshCountdown = interval;
+                updateAutoProgress();
+            }
+
+            function startAutoProgress(interval) {
+                stopAutoProgress();
+                autoRefreshCountdown = interval;
+                updateAutoProgress();
+                autoRefreshProgressTimer = setInterval(() => {
+                    autoRefreshCountdown = Math.max(0, autoRefreshCountdown - 1);
+                    updateAutoProgress();
+                    if (autoRefreshCountdown === 0) {
+                        resetAutoProgressCountdown();
+                    }
+                }, 1000);
+            }
+
+            function stopAutoProgress() {
+                if (autoRefreshProgressTimer) {
+                    clearInterval(autoRefreshProgressTimer);
+                    autoRefreshProgressTimer = null;
+                }
+                autoRefreshCountdown = 0;
+                updateAutoProgress(true);
+            }
+
+            function updateAutoProgress(reset = false) {
+                const bar = document.getElementById('autoProgressBar');
+                const label = document.getElementById('autoProgressLabel');
+                if (!bar || !label) return;
+                const enabled = document.getElementById('autoRefresh')?.checked;
+                if (!enabled || reset) {
+                    bar.style.width = '0%';
+                    label.textContent = 'Auto-refresh idle';
+                    bar.classList.remove('active');
+                    return;
+                }
+                const intervalInput = document.getElementById('refreshInterval');
+                const interval = Math.max(5, parseInt(intervalInput ? intervalInput.value : '30', 10));
+                const percent = interval ? Math.round(((interval - autoRefreshCountdown) / interval) * 100) : 0;
+                bar.style.width = `${percent}%`;
+                label.textContent = `Next refresh in ${autoRefreshCountdown}s`;
+                bar.classList.toggle('active', percent > 0);
+            }
+
+            function updateCacheHealthIndicator(stats) {
+                const indicator = document.getElementById('cacheHealth');
+                if (!indicator) return;
+                if (!stats || !stats.enabled) {
+                    indicator.textContent = 'Cache health: disabled';
+                    indicator.className = 'cache-health';
+                    return;
+                }
+                latestCacheStats = stats;
+                const hits = stats.hits || 0;
+                const misses = stats.misses || 0;
+                const total = hits + misses;
+                const hitRate = total ? Math.round((hits / total) * 100) : 0;
+                indicator.textContent = `Cache hit rate ${hitRate}% (${hits}/${total})`;
+                indicator.className = `cache-health ${hitRate >= 80 ? 'healthy' : hitRate >= 40 ? 'warning' : 'poor'}`;
             }
 
             function updateAutoRefresh() {
@@ -3889,11 +4070,14 @@ def read_root():
                     clearInterval(autoRefreshTimer);
                     autoRefreshTimer = null;
                 }
+                stopAutoProgress();
                 if (enabled) {
                     refreshAll();
                     autoRefreshTimer = setInterval(refreshAll, interval * 1000);
+                    startAutoProgress(interval);
                 }
                 updateSidebarLiveBadge();
+                updateAutoProgress();
             }
 
             function updateAutoModeLabel(modeValue, enabled) {
@@ -4284,6 +4468,37 @@ def read_root():
                         `).join('');
                     });
                 }
+                const cacheStats = data.search_cache;
+                if (cacheStats) {
+                    html += '<div class="stat-section">Search cache</div>';
+                    if (cacheStats.enabled) {
+                        const hits = cacheStats.hits || 0;
+                        const misses = cacheStats.misses || 0;
+                        const entries = cacheStats.entries || 0;
+                        const ttl = cacheStats.ttl_seconds ?? cacheStats.ttl || cacheStats.ttl_s || 0;
+                        html += `
+                            <div class="stat-row">
+                                <span>Hits</span>
+                                <strong>${hits}</strong>
+                            </div>
+                            <div class="stat-row">
+                                <span>Misses</span>
+                                <strong>${misses}</strong>
+                            </div>
+                            <div class="stat-row">
+                                <span>Cached entries</span>
+                                <strong>${entries}</strong>
+                            </div>
+                            <div class="stat-row">
+                                <span>TTL (s)</span>
+                                <strong>${ttl}</strong>
+                            </div>
+                        `;
+                    } else {
+                        html += '<div class="subtitle">Search cache disabled (set AI_MEM_SEARCH_CACHE_TTL/ENTRIES to enable)</div>';
+                    }
+                }
+                updateCacheHealthIndicator(cacheStats);
                 container.innerHTML = html;
                 bindStatsActions();
             }
@@ -4301,10 +4516,23 @@ def read_root():
                     const summaryText = mem.summary || '(no summary)';
                     const tokenEstimate = estimateTokens(mem.summary || '');
                     const tokenLabel = tokenEstimate ? ` • ~${tokenEstimate} tok` : '';
+                    const ftsScore = typeof mem.fts_score === 'number' ? Number(mem.fts_score).toFixed(3) : '—';
+                    const vectorScore = typeof mem.vector_score === 'number' ? Number(mem.vector_score).toFixed(3) : '—';
+                    const recencyFactor = typeof mem.recency_factor === 'number' ? Number(mem.recency_factor).toFixed(3) : '1.000';
+                    scoreMap[mem.id] = {
+                        fts_score: ftsScore,
+                        vector_score: vectorScore,
+                        recency_factor: recencyFactor,
+                    };
                     div.innerHTML = `
                         <div>${summaryText}</div>
                         <div class="meta">
                             ${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}${tokenLabel}
+                        </div>
+                        <div class="score-row">
+                            <span class="score-chip">FTS ${ftsScore}</span>
+                            <span class="score-chip vector">Vec ${vectorScore}</span>
+                            <span class="score-chip recency">Rec ${recencyFactor}</span>
                         </div>
                     `;
                     div.onclick = () => loadDetail(mem.id);
@@ -4318,6 +4546,7 @@ def read_root():
                 const response = await fetch(`/api/search?${buildQueryParams()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
                 const data = await response.json();
+                updateCacheBadge(response.headers.get('x-ai-mem-search-cache'));
                 renderResults(data);
                 updateResultsHeader();
                 updateFiltersPill();
@@ -4328,6 +4557,7 @@ def read_root():
                 lastMode = 'timeline';
                 persistLastMode('timeline');
                 const params = new URLSearchParams();
+                updateCacheBadge(null);
                 const project = document.getElementById('project').value;
                 const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const tags = (document.getElementById('tagsFilter').value || '').trim();
@@ -4398,9 +4628,21 @@ def read_root():
                 const sessionButton = mem.session_id
                     ? `<button class="secondary" onclick="loadSessionDetail('${mem.session_id}')">View session</button>`
                     : '';
+                const score = scoreMap[id];
+                const scoreDetail = score
+                    ? `
+                        <div class="score-row detail">
+                            <span class="score-chip">FTS ${score.fts_score}</span>
+                            <span class="score-chip vector">Vec ${score.vector_score}</span>
+                            <span class="score-chip recency">Rec ${score.recency_factor}</span>
+                        </div>
+                        <div class="subtitle">Score chips break down FTS/embedding relevance plus the recency multiplier.</div>
+                    `
+                    : '<div class="subtitle">Ranking data is available in the results list.</div>';
                 detail.innerHTML = `
                     <div><strong>${mem.summary || '(no summary)'}</strong></div>
                     <div class="meta">${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}${sessionInfo}</div>
+                    ${scoreDetail}
                     <div class="accent">Tags</div>
                     <div>${tagLine}</div>
                     <div class="tag-editor">
@@ -4984,6 +5226,7 @@ def add_memory(mem: MemoryInput, request: Request):
 @app.get("/api/search")
 def search_memories(
     request: Request,
+    response: Response,
     query: str,
     limit: int = 10,
     project: Optional[str] = None,
@@ -4999,7 +5242,8 @@ def search_memories(
     if date_start is None and since is not None:
         date_start = since
     try:
-        results = get_manager().search(
+        manager = get_manager()
+        results = manager.search(
             query,
             limit=limit,
             project=project,
@@ -5011,6 +5255,8 @@ def search_memories(
             tag_filters=_parse_list_param(tags),
         )
         payload = [item.model_dump() for item in results]
+        cache_hit = manager.search_cache_hit
+        response.headers["X-AI-MEM-Search-Cache"] = "hit" if cache_hit else "miss"
         if show_tokens:
             for row, item in zip(payload, results):
                 row["token_estimate"] = estimate_tokens(item.summary or "")
@@ -5338,7 +5584,8 @@ def get_stats(
     _check_token(request)
     if date_start is None and since is not None:
         date_start = since
-    return get_manager().get_stats(
+    manager = get_manager()
+    payload = manager.get_stats(
         project=project,
         obs_type=obs_type,
         session_id=session_id,
@@ -5350,6 +5597,8 @@ def get_stats(
         day_limit=day_limit if day_limit is not None else 14,
         type_tag_limit=type_tag_limit if type_tag_limit is not None else 3,
     )
+    payload["search_cache"] = manager.search_cache_summary()
+    return payload
 
 
 @app.get("/api/tags")

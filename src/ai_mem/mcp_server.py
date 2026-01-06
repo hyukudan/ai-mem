@@ -179,11 +179,24 @@ class MCPServer:
             since=since,
             tag_filters=tags,
         )
-        payload = [item.model_dump() for item in results]
-        if show_tokens:
-            for row, item in zip(payload, results):
+        payload = []
+        scoreboard = {}
+        for item in results:
+            row = item.model_dump()
+            scoreboard[item.id] = {
+                "fts_score": item.fts_score,
+                "vector_score": item.vector_score,
+                "recency_factor": item.recency_factor,
+            }
+            if show_tokens:
                 row["token_estimate"] = estimate_tokens(item.summary or "")
-        return self._wrap_text(json.dumps(payload, indent=2))
+            payload.append(row)
+        response = {
+            "results": payload,
+            "scoreboard": scoreboard,
+            "cache": self.manager.search_cache_summary(),
+        }
+        return self._wrap_text(json.dumps(response, indent=2))
 
     def _timeline(self, args: Dict[str, Any]) -> Dict[str, Any]:
         anchor = args.get("anchor") or args.get("anchor_id")
@@ -213,11 +226,19 @@ class MCPServer:
             since=since,
             tag_filters=tags,
         )
-        payload = [item.model_dump() for item in results]
-        if show_tokens:
-            for row, item in zip(payload, results):
+        payload = []
+        scoreboard = {}
+        for item in results:
+            row = item.model_dump()
+            if show_tokens:
                 row["token_estimate"] = estimate_tokens(item.summary or "")
-        return self._wrap_text(json.dumps(payload, indent=2))
+            payload.append(row)
+            scoreboard[item.id] = {
+                "fts_score": item.fts_score,
+                "vector_score": item.vector_score,
+                "recency_factor": item.recency_factor,
+            }
+        return self._wrap_text(json.dumps({"timeline": payload, "scoreboard": scoreboard}, indent=2))
 
     def _get_observations(self, args: Dict[str, Any]) -> Dict[str, Any]:
         ids = args.get("ids") or []
