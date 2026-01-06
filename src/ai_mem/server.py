@@ -1,4 +1,6 @@
 import asyncio
+import csv
+import io
 import json
 import os
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -4075,9 +4077,51 @@ def export_observations(
     project: Optional[str] = None,
     session_id: Optional[str] = None,
     limit: Optional[int] = None,
+    format: Optional[str] = None,
 ):
     _check_token(request)
-    return get_manager().export_observations(project=project, session_id=session_id, limit=limit)
+    data = get_manager().export_observations(project=project, session_id=session_id, limit=limit)
+    fmt = (format or "json").lower()
+    if fmt == "json":
+        return data
+    if fmt in {"jsonl", "ndjson"}:
+        lines = "\n".join(json.dumps(item, ensure_ascii=True) for item in data)
+        return Response(lines, media_type="application/x-ndjson")
+    if fmt == "csv":
+        output = io.StringIO()
+        fields = [
+            "id",
+            "session_id",
+            "project",
+            "type",
+            "title",
+            "summary",
+            "content",
+            "created_at",
+            "importance_score",
+            "tags",
+            "metadata",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fields)
+        writer.writeheader()
+        for item in data:
+            writer.writerow(
+                {
+                    "id": item.get("id"),
+                    "session_id": item.get("session_id"),
+                    "project": item.get("project"),
+                    "type": item.get("type"),
+                    "title": item.get("title"),
+                    "summary": item.get("summary"),
+                    "content": item.get("content"),
+                    "created_at": item.get("created_at"),
+                    "importance_score": item.get("importance_score"),
+                    "tags": json.dumps(item.get("tags") or [], ensure_ascii=True),
+                    "metadata": json.dumps(item.get("metadata") or {}, ensure_ascii=True),
+                }
+            )
+        return Response(output.getvalue(), media_type="text/csv")
+    raise HTTPException(status_code=400, detail=f"Unsupported format: {fmt}")
 
 
 @app.post("/api/import")

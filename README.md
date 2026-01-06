@@ -238,6 +238,10 @@ ai-mem stats --tag infra
 # Export / import
 ai-mem export memories.json
 ai-mem import memories.json
+ai-mem export memories.jsonl --format jsonl
+ai-mem import memories.jsonl
+ai-mem export memories.csv --format csv
+ai-mem import memories.csv
 
 # Watch a command
 ai-mem watch --command "pytest -q"
@@ -443,7 +447,7 @@ Key endpoints:
 - POST /api/context/preview
 - POST /api/context/inject
 - GET /api/stream (project, session_id, obs_type, tags, query, token)
-- GET /api/export (project, session_id, limit)
+- GET /api/export (project, session_id, limit, format=json|jsonl|csv)
 - POST /api/import (preserves session_id unless project override changes scope)
 - POST /api/summarize (project, session_id, count, obs_type, store, tags)
 - GET /api/health

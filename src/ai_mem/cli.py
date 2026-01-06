@@ -1,6 +1,8 @@
+import csv
 import json
 import os
 import time
+from pathlib import Path
 from typing import List, Optional
 
 import typer
@@ -13,6 +15,61 @@ from .memory import MemoryManager
 
 app = typer.Typer(help="AI Memory: Persistent memory for any LLM.")
 console = Console()
+
+
+def _infer_format(path: str, fmt: Optional[str], default: str) -> str:
+    if fmt:
+        return fmt.lower()
+    suffix = Path(path).suffix.lower()
+    if suffix in {".jsonl", ".ndjson"}:
+        return "jsonl"
+    if suffix == ".csv":
+        return "csv"
+    return default
+
+
+def _parse_tags_value(value: object) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    text = str(value).strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except json.JSONDecodeError:
+            pass
+    return [item.strip() for item in text.split(",") if item.strip()]
+
+
+def _parse_metadata_value(value: object) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    text = str(value).strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        return {}
+    return {}
+
+
+def _parse_float(value: object) -> Optional[float]:
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_memory_manager() -> MemoryManager:
@@ -744,58 +801,131 @@ def watch(
 
 @app.command()
 def export(
-    path: str = typer.Argument(..., help="Path to write exported JSON"),
+    path: str = typer.Argument(..., help="Path to write exported data"),
     project: Optional[str] = typer.Option(None, help="Project path filter"),
     session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
     limit: Optional[int] = typer.Option(None, help="Limit number of observations"),
+    output: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json, jsonl, csv"),
 ):
-    """Export observations to a JSON file."""
+    """Export observations to a file."""
     manager = get_memory_manager()
+    fmt = _infer_format(path, output, "json")
     data = manager.export_observations(project=project, session_id=session_id, limit=limit)
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(data, handle, indent=2)
+    if fmt == "json":
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2)
+    elif fmt in {"jsonl", "ndjson"}:
+        with open(path, "w", encoding="utf-8") as handle:
+            for item in data:
+                handle.write(json.dumps(item, ensure_ascii=True) + "\n")
+    elif fmt == "csv":
+        fields = [
+            "id",
+            "session_id",
+            "project",
+            "type",
+            "title",
+            "summary",
+            "content",
+            "created_at",
+            "importance_score",
+            "tags",
+            "metadata",
+        ]
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fields)
+            writer.writeheader()
+            for item in data:
+                writer.writerow(
+                    {
+                        "id": item.get("id"),
+                        "session_id": item.get("session_id"),
+                        "project": item.get("project"),
+                        "type": item.get("type"),
+                        "title": item.get("title"),
+                        "summary": item.get("summary"),
+                        "content": item.get("content"),
+                        "created_at": item.get("created_at"),
+                        "importance_score": item.get("importance_score"),
+                        "tags": json.dumps(item.get("tags") or [], ensure_ascii=True),
+                        "metadata": json.dumps(item.get("metadata") or {}, ensure_ascii=True),
+                    }
+                )
+    else:
+        console.print(f"[red]Unsupported format: {fmt}[/red]")
+        raise typer.Exit(1)
     console.print(f"[green]Exported {len(data)} observations to {path}[/green]")
 
 
 @app.command("import")
 def import_memories(
-    path: str = typer.Argument(..., help="Path to JSON file to import"),
+    path: str = typer.Argument(..., help="Path to import file"),
     project: Optional[str] = typer.Option(None, help="Override project for imported items"),
     dedupe: bool = typer.Option(True, help="Skip duplicates by content hash"),
+    input_format: Optional[str] = typer.Option(None, "--format", "-f", help="Input format: json, jsonl, csv"),
 ):
-    """Import observations from a JSON export."""
+    """Import observations from an export file."""
     manager = get_memory_manager()
-    with open(path, "r", encoding="utf-8") as handle:
-        payload = json.load(handle)
-    if not isinstance(payload, list):
-        console.print("[red]Import file must contain a list of observations.[/red]")
+    fmt = _infer_format(path, input_format, "json")
+    if fmt == "json":
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if not isinstance(payload, list):
+            console.print("[red]Import file must contain a list of observations.[/red]")
+            raise typer.Exit(1)
+        items = payload
+    elif fmt in {"jsonl", "ndjson"}:
+        items = []
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                try:
+                    item = json.loads(text)
+                except json.JSONDecodeError:
+                    console.print("[red]Invalid JSONL line detected.[/red]")
+                    raise typer.Exit(1)
+                items.append(item)
+    elif fmt == "csv":
+        items = []
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                items.append(row)
+    else:
+        console.print(f"[red]Unsupported format: {fmt}[/red]")
         raise typer.Exit(1)
 
     imported = 0
-    for item in payload:
+    for item in items:
         if not isinstance(item, dict):
             continue
         content = item.get("content")
-        obs_type = item.get("type") or "note"
+        obs_type = item.get("type") or item.get("obs_type") or "note"
         if not content:
             continue
-        item_project = item.get("project")
-        session_id = item.get("session_id")
+        item_project = item.get("project") or None
+        session_id = item.get("session_id") or None
         if project and item_project and project != item_project:
             session_id = None
+        tags = _parse_tags_value(item.get("tags"))
+        metadata = _parse_metadata_value(item.get("metadata"))
+        created_at = _parse_float(item.get("created_at"))
+        importance_score = _parse_float(item.get("importance_score"))
         result = manager.add_observation(
             content=content,
             obs_type=obs_type,
             project=project or item_project,
             session_id=session_id,
-            tags=item.get("tags") or [],
-            metadata=item.get("metadata") or {},
-            title=item.get("title"),
+            tags=tags,
+            metadata=metadata,
+            title=item.get("title") or None,
             summarize=False,
             dedupe=dedupe,
-            summary=item.get("summary"),
-            created_at=item.get("created_at"),
-            importance_score=item.get("importance_score", 0.5),
+            summary=item.get("summary") or None,
+            created_at=created_at,
+            importance_score=importance_score if importance_score is not None else 0.5,
         )
         if result:
             imported += 1
