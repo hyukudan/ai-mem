@@ -4993,6 +4993,7 @@ def search_memories(
     date_end: Optional[str] = None,
     since: Optional[str] = None,
     tags: Optional[str] = None,
+    show_tokens: Optional[bool] = None,
 ):
     _check_token(request)
     if date_start is None and since is not None:
@@ -5009,7 +5010,11 @@ def search_memories(
             since=since,
             tag_filters=_parse_list_param(tags),
         )
-        return [item.model_dump() for item in results]
+        payload = [item.model_dump() for item in results]
+        if show_tokens:
+            for row, item in zip(payload, results):
+                row["token_estimate"] = estimate_tokens(item.summary or "")
+        return payload
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
@@ -5028,6 +5033,7 @@ def get_timeline(
     date_end: Optional[str] = None,
     since: Optional[str] = None,
     tags: Optional[str] = None,
+    show_tokens: Optional[bool] = None,
 ):
     _check_token(request)
     if date_start is None and since is not None:
@@ -5046,7 +5052,11 @@ def get_timeline(
             since=since,
             tag_filters=_parse_list_param(tags),
         )
-        return [item.model_dump() for item in results]
+        payload = [item.model_dump() for item in results]
+        if show_tokens:
+            for row, item in zip(payload, results):
+                row["token_estimate"] = estimate_tokens(item.summary or "")
+        return payload
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

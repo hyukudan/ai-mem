@@ -228,11 +228,13 @@ ai-mem add "We decided to use Redis for session cache." --obs-type decision --ta
 # Search
 ai-mem search "Redis session cache" --limit 10
 ai-mem search "Redis session cache" --since 24h
+ai-mem search "Redis session cache" --show-tokens
 ai-mem mem-search "Redis session cache" --limit 10
 
 # Timeline
 ai-mem timeline --query "Redis" --depth-before 3 --depth-after 3
 ai-mem timeline --query "Redis" --since 7d
+ai-mem timeline --query "Redis" --show-tokens
 
 # Full observation details
 ai-mem get <observation_id>
@@ -464,8 +466,8 @@ When you run ai-mem server, see docs at:
 
 Key endpoints:
 - POST /api/memories: add a memory (project, session_id, obs_type, tags, metadata, title, summarize)
-- GET /api/search: search (project, session_id, obs_type, tags, date_start, date_end, since)
-- GET /api/timeline: timeline (project, session_id, obs_type, tags, date_start, date_end, since, depth_before, depth_after)
+- GET /api/search: search (project, session_id, obs_type, tags, date_start, date_end, since, show_tokens)
+- GET /api/timeline: timeline (project, session_id, obs_type, tags, date_start, date_end, since, depth_before, depth_after, show_tokens)
 - GET /api/observations: list observations (project, session_id, obs_type, tags, date_start, date_end, since, limit)
 - GET /api/observations/{id}: single observation
 - GET /api/observation/{id}: alias

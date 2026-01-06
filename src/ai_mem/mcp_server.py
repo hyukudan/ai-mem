@@ -2,7 +2,7 @@ import json
 import sys
 from typing import Any, Dict, List, Optional
 
-from .context import build_context
+from .context import build_context, estimate_tokens
 from .memory import MemoryManager
 
 
@@ -29,17 +29,17 @@ class MCPServer:
             },
             {
                 "name": "search",
-                "description": "Search memory index. Params: query, limit, project, session_id, obs_type, date_start, date_end, since, tags.",
+                "description": "Search memory index. Params: query, limit, project, session_id, obs_type, date_start, date_end, since, tags, show_tokens.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
                 "name": "mem-search",
-                "description": "Alias for search (natural language memory lookup). Params: query, limit, project, session_id, obs_type, date_start, date_end, since, tags.",
+                "description": "Alias for search (natural language memory lookup). Params: query, limit, project, session_id, obs_type, date_start, date_end, since, tags, show_tokens.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
                 "name": "timeline",
-                "description": "Timeline around an observation. Params: anchor or query, depth_before, depth_after, project, session_id, obs_type, date_start, date_end, since, tags.",
+                "description": "Timeline around an observation. Params: anchor or query, depth_before, depth_after, project, session_id, obs_type, date_start, date_end, since, tags, show_tokens.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
@@ -165,6 +165,7 @@ class MCPServer:
         date_end = args.get("date_end")
         since = args.get("since")
         tags = self._parse_tags(args.get("tags") or args.get("tag"))
+        show_tokens = self._parse_bool(args.get("show_tokens"))
         if session_id:
             project = None
         results = self.manager.search(
@@ -179,6 +180,9 @@ class MCPServer:
             tag_filters=tags,
         )
         payload = [item.model_dump() for item in results]
+        if show_tokens:
+            for row, item in zip(payload, results):
+                row["token_estimate"] = estimate_tokens(item.summary or "")
         return self._wrap_text(json.dumps(payload, indent=2))
 
     def _timeline(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -193,6 +197,7 @@ class MCPServer:
         date_end = args.get("date_end")
         since = args.get("since")
         tags = self._parse_tags(args.get("tags") or args.get("tag"))
+        show_tokens = self._parse_bool(args.get("show_tokens"))
         if session_id:
             project = None
         results = self.manager.timeline(
@@ -209,6 +214,9 @@ class MCPServer:
             tag_filters=tags,
         )
         payload = [item.model_dump() for item in results]
+        if show_tokens:
+            for row, item in zip(payload, results):
+                row["token_estimate"] = estimate_tokens(item.summary or "")
         return self._wrap_text(json.dumps(payload, indent=2))
 
     def _get_observations(self, args: Dict[str, Any]) -> Dict[str, Any]:

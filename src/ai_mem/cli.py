@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 from .config import load_config, update_config
-from .context import build_context
+from .context import build_context, estimate_tokens
 from .memory import MemoryManager
 
 app = typer.Typer(help="AI Memory: Persistent memory for any LLM.")
@@ -215,6 +215,7 @@ def search(
     since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+    show_tokens: bool = typer.Option(False, "--show-tokens/--hide-tokens", help="Show token estimates"),
 ):
     """Search memory index (compact results)."""
     manager = get_memory_manager()
@@ -236,16 +237,26 @@ def search(
         tag_filters=tag,
     )
     if output == "json":
-        print(json.dumps([item.model_dump() for item in results], indent=2))
+        payload = [item.model_dump() for item in results]
+        if show_tokens:
+            for row, item in zip(payload, results):
+                row["token_estimate"] = estimate_tokens(item.summary or "")
+        print(json.dumps(payload, indent=2))
         return
 
     table = Table(title=f"Search results for: {query}")
     table.add_column("ID", style="dim")
     table.add_column("Summary", style="cyan")
+    if show_tokens:
+        table.add_column("Tokens", style="dim", justify="right")
     table.add_column("Type", style="magenta")
     table.add_column("Project", style="green")
     for item in results:
-        table.add_row(item.id, item.summary, item.type or "-", item.project)
+        row = [item.id, item.summary]
+        if show_tokens:
+            row.append(str(estimate_tokens(item.summary or "")))
+        row.extend([item.type or "-", item.project])
+        table.add_row(*row)
     console.print(table)
 
 
@@ -262,6 +273,7 @@ def mem_search(
     since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+    show_tokens: bool = typer.Option(False, "--show-tokens/--hide-tokens", help="Show token estimates"),
 ):
     """Alias for search (friendly name for MCP parity)."""
     return search(
@@ -276,6 +288,7 @@ def mem_search(
         since=since,
         tag=tag,
         output=output,
+        show_tokens=show_tokens,
     )
 
 
@@ -294,6 +307,7 @@ def timeline(
     since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+    show_tokens: bool = typer.Option(False, "--show-tokens/--hide-tokens", help="Show token estimates"),
 ):
     """Get chronological context around an observation."""
     manager = get_memory_manager()
@@ -317,16 +331,26 @@ def timeline(
         tag_filters=tag,
     )
     if output == "json":
-        print(json.dumps([item.model_dump() for item in results], indent=2))
+        payload = [item.model_dump() for item in results]
+        if show_tokens:
+            for row, item in zip(payload, results):
+                row["token_estimate"] = estimate_tokens(item.summary or "")
+        print(json.dumps(payload, indent=2))
         return
 
     table = Table(title="Timeline")
     table.add_column("ID", style="dim")
     table.add_column("Summary", style="cyan")
+    if show_tokens:
+        table.add_column("Tokens", style="dim", justify="right")
     table.add_column("Type", style="magenta")
     table.add_column("Project", style="green")
     for item in results:
-        table.add_row(item.id, item.summary, item.type or "-", item.project)
+        row = [item.id, item.summary]
+        if show_tokens:
+            row.append(str(estimate_tokens(item.summary or "")))
+        row.extend([item.type or "-", item.project])
+        table.add_row(*row)
     console.print(table)
 
 
