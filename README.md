@@ -171,6 +171,8 @@ Scripts in scripts/ start common stacks:
 - ./scripts/run-gemini-proxy.sh: Gemini proxy only
 - ./scripts/run-anthropic-proxy.sh: Anthropic proxy only
 - ./scripts/run-mcp.sh: MCP server only
+- ./scripts/install-hooks.sh: install hook scripts to ~/.config/ai-mem/hooks
+- ./scripts/install-mcp-claude-desktop.sh: add ai-mem MCP entry to Claude Desktop config
 
 ## Configuration
 
@@ -376,6 +378,12 @@ Hook environment variables (common):
 - AI_MEM_SUMMARY_COUNT: number of observations to summarize (default 20)
 - AI_MEM_SUMMARY_OBS_TYPE: filter observation type for summaries
 
+Install the hooks into a shared location:
+
+```bash
+./scripts/install-hooks.sh
+```
+
 ## Claude Code Plugin
 
 A local plugin is available in plugin/.
@@ -398,6 +406,12 @@ Start MCP stdio server:
 
 ```bash
 ai-mem mcp
+```
+
+Add ai-mem to Claude Desktop MCP config:
+
+```bash
+./scripts/install-mcp-claude-desktop.sh --bin "$PWD/.venv/bin/ai-mem"
 ```
 
 Tools:

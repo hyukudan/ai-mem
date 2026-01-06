@@ -2,6 +2,16 @@
 
 These scripts provide a lightweight hook layer similar to `claude-mem`, but usable with any LLM client that can call shell hooks.
 
+## Install
+
+Use the installer script to copy hooks into a shared folder:
+
+```bash
+./scripts/install-hooks.sh
+```
+
+This installs hooks into `~/.config/ai-mem/hooks` by default (override with `--dest`).
+
 ## Available Hooks
 
 - `session_start.sh`: print context to inject at session start.
