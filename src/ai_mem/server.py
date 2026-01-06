@@ -235,6 +235,14 @@ def read_root():
                 font-weight: 600;
                 color: var(--muted);
             }
+            .auto-row .auto-mode.global {
+                color: var(--accent);
+            }
+            .auto-row .auto-mode.global::before {
+                content: "●";
+                font-size: 8px;
+                margin-right: 2px;
+            }
             .auto-row .auto-global {
                 display: flex;
                 align-items: center;
@@ -1696,6 +1704,7 @@ def read_root():
                 if (!enabled) {
                     label.textContent = '';
                     label.title = '';
+                    label.classList.remove('global');
                     label.style.display = 'none';
                     return;
                 }
@@ -1706,6 +1715,7 @@ def read_root():
                 const globalToggle = document.getElementById('autoGlobal');
                 const scope = globalToggle && globalToggle.checked ? 'global' : 'project';
                 label.title = `Auto-refresh: ${modeText} • ${interval}s • ${scope}`;
+                label.classList.toggle('global', scope === 'global');
                 label.style.display = 'inline-flex';
             }
 
