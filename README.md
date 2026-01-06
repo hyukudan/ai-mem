@@ -375,6 +375,12 @@ ai-mem hook session_start --project "$PWD"
 echo "Fix OAuth flow" | ai-mem hook user_prompt --project "$PWD" --content-file -
 ```
 
+Generate a hook config snippet for clients that accept command hooks:
+
+```bash
+ai-mem hook-config --bin "$PWD/.venv/bin/ai-mem" --project "$PWD"
+```
+
 Hook environment variables (common):
 - AI_MEM_BIN: path to ai-mem binary
 - AI_MEM_PROJECT: project path

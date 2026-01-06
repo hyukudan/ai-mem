@@ -1143,6 +1143,65 @@ def mcp_config(
     print(text)
 
 
+@app.command("hook-config")
+def hook_config(
+    bin_path: str = typer.Option("ai-mem", help="ai-mem binary path"),
+    project: Optional[str] = typer.Option(None, help="Default project path"),
+    session_tracking: bool = typer.Option(True, help="Enable session tracking for start/end"),
+    summary_on_end: bool = typer.Option(False, help="Summarize on session_end"),
+    summary_count: int = typer.Option(20, help="Summary count"),
+    summary_obs_type: Optional[str] = typer.Option(None, help="Summary observation type filter"),
+    context_total: Optional[int] = typer.Option(None, help="Context index count"),
+    context_full: Optional[int] = typer.Option(None, help="Context full count"),
+    context_full_field: Optional[str] = typer.Option(None, help="Context full field (content or summary)"),
+    context_tags: Optional[str] = typer.Option(None, help="Context tags (comma-separated)"),
+    no_wrap: bool = typer.Option(False, help="Disable <ai-mem-context> wrapper"),
+    output: Optional[str] = typer.Option(None, help="Write JSON to file"),
+):
+    """Generate hook command config for clients that support shell hooks."""
+    def build_args(event: str) -> List[str]:
+        args = ["hook", event]
+        if project:
+            args += ["--project", project]
+        if session_tracking and event in {"session_start", "session_end"}:
+            args.append("--session-tracking")
+        if event == "session_start":
+            if context_total is not None:
+                args += ["--total", str(context_total)]
+            if context_full is not None:
+                args += ["--full", str(context_full)]
+            if context_full_field:
+                args += ["--full-field", context_full_field]
+            if context_tags:
+                for tag in [item.strip() for item in context_tags.split(",") if item.strip()]:
+                    args += ["--context-tag", tag]
+            if no_wrap:
+                args.append("--no-wrap")
+        if event == "session_end":
+            if summary_on_end:
+                args.append("--summary-on-end")
+                args += ["--summary-count", str(summary_count)]
+                if summary_obs_type:
+                    args += ["--summary-obs-type", summary_obs_type]
+        return args
+
+    payload = {
+        "session_start": {"command": bin_path, "args": build_args("session_start")},
+        "user_prompt": {"command": bin_path, "args": build_args("user_prompt")},
+        "assistant_response": {"command": bin_path, "args": build_args("assistant_response")},
+        "tool_output": {"command": bin_path, "args": build_args("tool_output")},
+        "session_end": {"command": bin_path, "args": build_args("session_end")},
+    }
+
+    text = json.dumps(payload, indent=2)
+    if output:
+        with open(output, "w", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+        console.print(f"[green]Wrote hook config to {output}[/green]")
+        return
+    print(text)
+
+
 @app.command()
 def ingest(
     path: str = typer.Argument(".", help="Path to the project directory to ingest"),

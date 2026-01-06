@@ -21,6 +21,12 @@ ai-mem hook session_start --project "$PWD"
 echo "User asked about OAuth refresh tokens." | ai-mem hook user_prompt --content-file -
 ```
 
+Generate a hook config snippet for clients that accept command hooks:
+
+```bash
+ai-mem hook-config --bin "$PWD/.venv/bin/ai-mem" --project "$PWD"
+```
+
 ## Available Hooks
 
 - `session_start.sh`: print context to inject at session start.
