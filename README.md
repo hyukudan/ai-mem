@@ -68,6 +68,31 @@ ai-mem is a local-first memory layer that serves **any large language model**, w
 - **CLI-first control** – All key flows (add/search/context/timeline/endless/snapshot) are available via `ai-mem` so you can script onboarding via a single CLI.
 - **Scripts library** – `./scripts/run*.sh` cover full/stack/proxy setups for Gemini, Claude, Bedrock, Azure, and Anthropic deployments, ensuring the UI + MCP server is always upstream.
 
+## Cross-model handoff
+
+1. Start the server/panel stack so the MCP tools, REST API, and UI feed a shared memory graph:
+
+   ```bash
+   ./scripts/run-all.sh
+   ```
+
+2. Keep a live stream via `ai-mem endless` to continuously refresh context; the same `scoreboard` and cache entries that appear in the UI are printed on every iteration so assistants can explain why memories were selected:
+
+   ```bash
+   ai-mem endless --query "next feature" --interval 30 --token-limit 1000
+   ```
+
+3. Point Claude Desktop, Gemini CLI, Antigravity, or any custom vLLM at the MCP endpoint—each client consumes the same `<ai-mem-context>` blocks, scoreboard, and citations so your investigations stay synchronized.
+
+4. Export and merge checkpoints when you want to hand off context between machines or sessions:
+
+   ```bash
+   ai-mem snapshot export /tmp/ai-mem-checkpoint.ndjson
+   ai-mem snapshot merge /tmp/ai-mem-checkpoint.ndjson
+   ```
+
+This workflow keeps Claude, Gemini, and other assistants aligned with the same persistent history, token budgets, and metadata traceability across every interaction.
+
 ## Documentation
 
 See the `docs/` folder for targeted guides:

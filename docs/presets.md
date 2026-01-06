@@ -32,6 +32,39 @@ This catalog highlights the installer scripts and helper configs that let you dr
 - Antigravity (and other MCP-capable apps) can call the ai-mem MCP server (`ai-mem mcp`). Run `AI_MEM_API_TOKEN=... ai-mem mcp` and configure Antigravity’s MCP integration to point at the same binary/endpoint. The `tools/list` response advertises `mem-search`, `timeline`, `context`, etc., with the same scoreboard metadata you see in the web viewer.
 - If Antigravity supports incoming hook scripts, use `./scripts/install-hooks.sh` or `ai-mem hook-config` to drop the hook commands into its lifecycle events.
 
+## Cross-model memory sharing example
+
+1. Start the ai-mem server (with UI + MCP) so Claude, Gemini, and other clients can call it:
+
+   ```bash
+   ./scripts/run-all.sh
+   ```
+
+2. In parallel, keep an `ai-mem endless` session running to refresh context for long-lived flows:
+
+   ```bash
+   ai-mem endless --query "next steps" --interval 20 --token-limit 950
+   ```
+
+   Each tick prints the `scoreboard` (FTS, vector, recency) and cache stats the MCP tools and UI expose. You can pipe that output directly into Claude Desktop or Gemini prompts, and every model sees the same eligibility reasoning.
+
+3. Start the Gemini proxy/stack so it registers with the same MCP server and can call the shared context:
+
+   ```bash
+   ./scripts/run-gemini-stack.sh
+   ```
+
+4. Capture a checkpoint from one device, ship it to another, and merge it to keep both assistants aligned:
+
+   ```bash
+   ai-mem snapshot export ~/tmp/ai-mem-checkpoint.ndjson
+   scp ~/tmp/ai-mem-checkpoint.ndjson remote:/tmp/
+   # On the remote machine:
+   ai-mem snapshot merge /tmp/ai-mem-checkpoint.ndjson
+   ```
+
+   The merged checkpoint retains IDs and metadata, so Claude Desktop and Gemini continue to reference the same observations, timelines, and citations.
+
 ## Summary
 
 Every installer script above is idempotent and can be re-run in project roots. Refer to `docs/hooks.md` for detailed hook usage and to `docs/mcp-tools.md` for MCP workflow instructions.
