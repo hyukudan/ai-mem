@@ -1289,6 +1289,8 @@ def read_root():
                 const live = autoRefresh ? autoRefresh.checked : false;
                 const modeInput = document.querySelector('input[name="refreshMode"]:checked');
                 const modeValue = modeInput ? modeInput.value : 'all';
+                const intervalInput = document.getElementById('refreshInterval');
+                const interval = Math.max(5, parseInt(intervalInput ? intervalInput.value : '30', 10));
                 const pulseToggle = document.getElementById('pulseToggle');
                 const pulseOn = pulseToggle ? pulseToggle.checked : true;
                 header.classList.toggle('live', live);
@@ -1300,7 +1302,7 @@ def read_root():
                     ? '<span class="timeline-badge">Timeline</span>'
                     : '';
                 const autoBadge = live
-                    ? `<span class="auto-mode-badge">${modeValue === 'stats' ? 'Stats only' : 'Stats + results'}</span>`
+                    ? `<span class="auto-mode-badge" title="Auto-refresh: ${modeValue === 'stats' ? 'Stats only' : 'Stats + results'} • ${interval}s">${modeValue === 'stats' ? 'Stats only' : 'Stats + results'}</span>`
                     : '';
                 if (lastMode === 'timeline') {
                     const depthBefore = timelineDepthBefore || '3';
@@ -1663,6 +1665,7 @@ def read_root():
                     indicator.classList.toggle('active', enabled);
                 }
                 updateAutoModeLabel(modeValue, enabled);
+                updateResultsHeader();
                 updateStatsTitle();
                 if (autoRefreshTimer) {
                     clearInterval(autoRefreshTimer);
