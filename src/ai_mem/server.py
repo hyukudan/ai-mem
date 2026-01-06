@@ -415,6 +415,17 @@ def read_root():
                 text-transform: uppercase;
                 letter-spacing: 0.06em;
             }
+            .auto-mode-badge {
+                margin-left: 6px;
+                padding: 2px 6px;
+                border-radius: 999px;
+                background: #e6f3ee;
+                color: #1f6f59;
+                font-size: 10px;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+            }
             .anchor-badge {
                 display: inline-flex;
                 align-items: center;
@@ -748,6 +759,10 @@ def read_root():
                     display: none;
                 }
                 .timeline-badge {
+                    font-size: 9px;
+                    padding: 2px 5px;
+                }
+                .auto-mode-badge {
                     font-size: 9px;
                     padding: 2px 5px;
                 }
@@ -1272,16 +1287,21 @@ def read_root():
                 const icons = details.count ? `<span class="filter-icons">${details.icons}</span>` : '';
                 const autoRefresh = document.getElementById('autoRefresh');
                 const live = autoRefresh ? autoRefresh.checked : false;
+                const modeInput = document.querySelector('input[name="refreshMode"]:checked');
+                const modeValue = modeInput ? modeInput.value : 'all';
                 const pulseToggle = document.getElementById('pulseToggle');
                 const pulseOn = pulseToggle ? pulseToggle.checked : true;
                 header.classList.toggle('live', live);
                 const liveDot = `<span class="live-dot" title="${getLiveTitle(live)}"></span>`;
-                    const pulseStatus = live && !pulseOn
-                        ? '<span class="pulse-status">Pulse disabled</span>'
-                        : '';
-                    const timelineBadge = lastMode === 'timeline'
-                        ? '<span class="timeline-badge">Timeline</span>'
-                        : '';
+                const pulseStatus = live && !pulseOn
+                    ? '<span class="pulse-status">Pulse disabled</span>'
+                    : '';
+                const timelineBadge = lastMode === 'timeline'
+                    ? '<span class="timeline-badge">Timeline</span>'
+                    : '';
+                const autoBadge = live
+                    ? `<span class="auto-mode-badge">${modeValue === 'stats' ? 'Stats only' : 'Stats + results'}</span>`
+                    : '';
                 if (lastMode === 'timeline') {
                     const depthBefore = timelineDepthBefore || '3';
                     const depthAfter = timelineDepthAfter || '3';
@@ -1289,14 +1309,14 @@ def read_root():
                     if (anchorSummary) {
                         label = `${label} • ${anchorSummary.label}: ${anchorSummary.value}`;
                     }
-                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}${timelineBadge}</span><div class="row inline"><button class="secondary" onclick="clearTimelineAnchor()">Clear anchor</button><button class="secondary" onclick="clearAllFilters()">Clear filters</button><button class="secondary" onclick="search()">Exit</button></div>`;
+                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}${timelineBadge}${autoBadge}</span><div class="row inline"><button class="secondary" onclick="clearTimelineAnchor()">Clear anchor</button><button class="secondary" onclick="clearAllFilters()">Clear filters</button><button class="secondary" onclick="search()">Exit</button></div>`;
                     header.style.display = 'flex';
                     return;
                 }
                 if (lastMode === 'search' && details.count > 0) {
                     const query = (document.getElementById('query').value || '').trim();
                     const label = query ? `Search results for "${query}"` : 'Search results';
-                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}</span><div class="row inline"><button class="secondary" onclick="clearAllFilters()">Clear filters</button></div>`;
+                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}${autoBadge}</span><div class="row inline"><button class="secondary" onclick="clearAllFilters()">Clear filters</button></div>`;
                     header.style.display = 'flex';
                     return;
                 }
