@@ -949,6 +949,29 @@ def delete(
         console.print(f"[yellow]Observation not found: {obs_id}[/yellow]")
 
 
+@app.command(name="update-tags")
+def update_tags(
+    obs_id: str = typer.Argument(..., help="Observation ID to update"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tags to set (replaces existing)"),
+    clear: bool = typer.Option(False, help="Clear all tags"),
+):
+    """Replace tags on a single observation."""
+    if clear:
+        tags = []
+    else:
+        tags = []
+        for item in tag or []:
+            tags.extend([part.strip() for part in str(item).split(",") if part.strip()])
+        if not tags:
+            console.print("[yellow]No tags provided. Use --tag or --clear.[/yellow]")
+            raise typer.Exit(1)
+    manager = get_memory_manager()
+    if manager.update_observation_tags(obs_id, tags):
+        console.print(f"[green]Updated tags for {obs_id}[/green]")
+    else:
+        console.print(f"[yellow]Observation not found: {obs_id}[/yellow]")
+
+
 @app.command()
 def delete_project(
     project: str = typer.Argument(..., help="Project path to delete"),

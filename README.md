@@ -232,6 +232,10 @@ ai-mem timeline --query "Redis" --depth-before 3 --depth-after 3
 # Full observation details
 ai-mem get <observation_id>
 
+# Update tags
+ai-mem update-tags <observation_id> --tag infra --tag followup
+ai-mem update-tags <observation_id> --clear
+
 # Stats
 ai-mem stats --tag infra
 
@@ -307,6 +311,7 @@ Viewer features:
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.
 - Observation detail view lets you edit tags.
+- Click tags in the detail view to filter (shift-click to add).
 - Search and timeline results show a rough token estimate per summary.
 - Session list previews the latest session summary when available.
 - Session detail view shows totals, top types, and top tags.

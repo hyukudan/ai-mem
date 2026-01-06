@@ -576,6 +576,12 @@ def read_root():
                 font-size: 12px;
                 margin-right: 6px;
             }
+            .pill.clickable {
+                cursor: pointer;
+            }
+            .pill.clickable:hover {
+                background: #f1dcc5;
+            }
             .accent { color: var(--accent-2); }
             .token-row {
                 display: grid;
@@ -2774,6 +2780,46 @@ def read_root():
                 restartStreamIfActive();
             }
 
+            function applyTagFilter(tag, append = false) {
+                if (!tag) return;
+                const input = document.getElementById('tagsFilter');
+                if (!input) return;
+                const current = (input.value || '')
+                    .split(',')
+                    .map(item => item.trim())
+                    .filter(item => item);
+                let next = [];
+                if (append) {
+                    const set = new Set(current);
+                    set.add(tag);
+                    next = Array.from(set);
+                } else {
+                    next = [tag];
+                }
+                input.value = next.join(', ');
+                persistFilters();
+                loadStats();
+                if (lastMode === 'timeline') {
+                    timeline({ useInput: false });
+                } else {
+                    search();
+                }
+            }
+
+            function bindTagPills(container) {
+                if (!container) return;
+                container.querySelectorAll('.pill.clickable').forEach(pill => {
+                    if (pill.dataset.bound === 'true') return;
+                    pill.dataset.bound = 'true';
+                    pill.addEventListener('click', event => {
+                        const value = pill.dataset.tag || '';
+                        if (!value) return;
+                        const tag = decodeURIComponent(value);
+                        applyTagFilter(tag, event.shiftKey);
+                    });
+                });
+            }
+
             function persistFilters() {
                 selectedSessionId = (document.getElementById('sessionId')?.value || '').trim();
                 selectedType = document.getElementById('type').value || '';
@@ -3483,7 +3529,10 @@ def read_root():
                     persistTimelineAnchor();
                 }
                 const detail = document.getElementById('detail');
-                const tags = (mem.tags || []).map(tag => `<span class="pill">${tag}</span>`).join('');
+                const tags = (mem.tags || []).map(tag => {
+                    const encoded = encodeURIComponent(tag);
+                    return `<span class="pill clickable" data-tag="${encoded}" title="Filter by tag (shift+click to add)">${escapeHtml(tag)}</span>`;
+                }).join('');
                 const tagLine = tags || '<span class="subtitle">No tags</span>';
                 const sessionInfo = mem.session_id ? ` • session ${mem.session_id}` : '';
                 const sessionButton = mem.session_id
@@ -3511,6 +3560,7 @@ def read_root():
                 if (tagInput) {
                     tagInput.value = (mem.tags || []).join(', ');
                 }
+                bindTagPills(detail);
             }
 
             async function saveTags() {
