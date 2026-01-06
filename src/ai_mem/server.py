@@ -389,6 +389,12 @@ def read_root():
                 font-size: 11px;
                 font-weight: 600;
             }
+            .timeline-status .timeline-value {
+                max-width: 160px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
             .timeline-status strong {
                 color: var(--ink);
                 font-weight: 600;
@@ -733,6 +739,17 @@ def read_root():
                 }
                 .filters-pill button {
                     display: none;
+                }
+                .timeline-status {
+                    font-size: 10px;
+                    padding: 4px 8px;
+                }
+                .timeline-status .timeline-value {
+                    display: none;
+                }
+                .timeline-badge {
+                    font-size: 9px;
+                    padding: 2px 5px;
                 }
                 .actions .row.inline {
                     grid-template-columns: 1fr;
@@ -1298,7 +1315,7 @@ def read_root():
                 const summary = getAnchorSummary();
                 const label = summary ? summary.label : 'Timeline';
                 const value = summary ? summary.value : '';
-                const valueSpan = value ? `<span title="${value}">${value}</span>` : '';
+                const valueSpan = value ? `<span class="timeline-value" title="${value}">${value}</span>` : '';
                 status.style.display = 'inline-flex';
                 status.innerHTML = `
                     <strong>${label}</strong>
