@@ -22,6 +22,7 @@ class DatabaseManager:
         cursor = self.conn.cursor()
         cursor.execute("PRAGMA foreign_keys = ON")
         cursor.execute("PRAGMA journal_mode = WAL")
+        cursor.execute("PRAGMA busy_timeout = 5000")
         self.conn.commit()
 
     def create_tables(self) -> None:
@@ -87,6 +88,7 @@ class DatabaseManager:
             END;
             """
         )
+        # Indexes for optimization
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_project ON observations(project)"
         )
@@ -98,6 +100,18 @@ class DatabaseManager:
         )
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_hash ON observations(content_hash)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observations_session ON observations(session_id)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observations_project_created ON observations(project, created_at)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time)"
         )
         self.conn.commit()
         self._ensure_columns()
@@ -111,13 +125,24 @@ class DatabaseManager:
     ) -> Optional[str]:
         if not tag_filters:
             return None
+        valid_tags = [str(t).strip() for t in tag_filters if str(t).strip()]
+        if not valid_tags:
+            return None
+
+        if column == "tags":
+            # Optimization: Use FTS index for faster tag filtering
+            # We construct a MATCH query like: "tag1" OR "tag2"
+            quoted_tags = [f'"{tag}"' for tag in valid_tags]
+            match_query = " OR ".join(quoted_tags)
+            params.append(match_query)
+            return "rowid IN (SELECT rowid FROM observations_fts WHERE tags MATCH ?)"
+
+        # Fallback for non-FTS columns
         clauses = []
-        for tag in tag_filters:
-            value = str(tag).strip()
-            if not value:
-                continue
+        for tag in valid_tags:
             clauses.append(f"{column} LIKE ?")
-            params.append(f'%"{value}"%')
+            params.append(f'%"{tag}"%')
+        
         if not clauses:
             return None
         return "(" + " OR ".join(clauses) + ")"
@@ -198,18 +223,38 @@ class DatabaseManager:
         )
         self.conn.commit()
 
-    def get_assets_for_observation(self, observation_id: str) -> List[Dict[str, Any]]:
+    def get_assets_for_observations(self, observation_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not observation_ids:
+            return {}
         cursor = self.conn.cursor()
+        # Handle large lists by chunking if necessary, but sqlite limit is typically high (999 default variables)
+        # For simplicity, assuming chunking not strictly needed for page size < 100
+        placeholders = ",".join("?" for _ in observation_ids)
         cursor.execute(
-            """
-            SELECT * FROM observation_assets
-            WHERE observation_id = ?
-            ORDER BY created_at ASC
-            """,
-            (observation_id,),
+            f"SELECT * FROM observation_assets WHERE observation_id IN ({placeholders})",
+            observation_ids,
         )
         rows = cursor.fetchall()
-        return [self._row_to_asset(row) for row in rows]
+        assets_map: Dict[str, List[Dict[str, Any]]] = {oid: [] for oid in observation_ids}
+        for row in rows:
+            obs_id = row["observation_id"]
+            if obs_id in assets_map:
+                assets_map[obs_id].append(
+                    {
+                        "id": row["id"],
+                        "type": row["type"],
+                        "name": row["name"],
+                        "path": row["path"],
+                        "content": row["content"],
+                        "metadata": json.loads(row["metadata"] or "{}"),
+                        "created_at": row["created_at"],
+                    }
+                )
+        return assets_map
+
+    def get_assets_for_observation(self, observation_id: str) -> List[Dict[str, Any]]:
+        # Use the batch method for consistency
+        return self.get_assets_for_observations([observation_id]).get(observation_id, [])
 
     def _row_to_asset(self, row: sqlite3.Row) -> Dict[str, Any]:
         metadata = json.loads(row["metadata"] or "{}")
@@ -331,18 +376,21 @@ class DatabaseManager:
             return None
         return self._row_to_observation(row)
 
-    def get_observations(self, obs_ids: Iterable[str]) -> List[Dict[str, Any]]:
-        ids = list(obs_ids)
+    def get_observations(self, ids: List[str]) -> List[Dict[str, Any]]:
         if not ids:
             return []
-        placeholders = ",".join("?" for _ in ids)
         cursor = self.conn.cursor()
+        placeholders = ",".join("?" for _ in ids)
         cursor.execute(
-            f"SELECT * FROM observations WHERE id IN ({placeholders})",
-            ids,
+            f"SELECT * FROM observations WHERE id IN ({placeholders})", ids
         )
         rows = cursor.fetchall()
-        return [self._row_to_observation(row) for row in rows]
+        
+        # Batch fetch assets
+        found_ids = [row["id"] for row in rows]
+        assets_map = self.get_assets_for_observations(found_ids)
+        
+        return [self._row_to_observation(row, assets=assets_map.get(row["id"])) for row in rows]
 
     def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         cursor = self.conn.cursor()
@@ -392,16 +440,15 @@ class DatabaseManager:
     def list_observations(
         self,
         project: Optional[str] = None,
-        session_id: Optional[str] = None,
+        limit: int = 50,
         obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
         tag_filters: Optional[List[str]] = None,
-        limit: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[ObservationIndex]:
         cursor = self.conn.cursor()
         params: List[Any] = []
-        sql = "SELECT * FROM observations"
         conditions: List[str] = []
         if project:
             conditions.append("project = ?")
@@ -421,15 +468,29 @@ class DatabaseManager:
         tag_clause = self._tag_clause(tag_filters, params)
         if tag_clause:
             conditions.append(tag_clause)
+        
+        sql = """
+            SELECT id, summary, project, type, created_at
+            FROM observations
+        """
         if conditions:
             sql += " WHERE " + " AND ".join(conditions)
-        sql += " ORDER BY created_at DESC"
-        if limit is not None:
-            sql += " LIMIT ?"
-            params.append(limit)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
         cursor.execute(sql, params)
         rows = cursor.fetchall()
-        return [self._row_to_observation(row) for row in rows]
+        
+        return [
+            ObservationIndex(
+                id=row["id"],
+                summary=row["summary"] or "",
+                project=row["project"],
+                type=row["type"],
+                created_at=row["created_at"],
+                score=0.0,
+            )
+            for row in rows
+        ]
 
     def list_projects(self) -> List[str]:
         cursor = self.conn.cursor()
@@ -1103,7 +1164,9 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def _row_to_observation(self, row: sqlite3.Row) -> Dict[str, Any]:
+    def _row_to_observation(
+        self, row: sqlite3.Row, assets: Optional[List[Dict[str, Any]]] = None
+    ) -> Dict[str, Any]:
         return {
             "id": row["id"],
             "session_id": row["session_id"],
@@ -1118,7 +1181,9 @@ class DatabaseManager:
             "tags": json.loads(row["tags"] or "[]"),
             "metadata": json.loads(row["metadata"] or "{}"),
             "diff": row["diff"] if "diff" in row.keys() else None,
-            "assets": self.get_assets_for_observation(row["id"]),
+            "assets": assets
+            if assets is not None
+            else self.get_assets_for_observation(row["id"]),
         }
 
     def _row_to_session(self, row: sqlite3.Row) -> Dict[str, Any]:
