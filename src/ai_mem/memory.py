@@ -44,6 +44,31 @@ def _build_chat_provider(config: AppConfig) -> ChatProvider:
             base_url=base_url,
             timeout_s=config.llm.timeout_s,
         )
+    if provider in {"azure", "azure-openai"}:
+        api_key = config.llm.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("Azure OpenAI provider requires an API key.")
+        endpoint = config.llm.base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        if not endpoint:
+            raise ValueError("Azure OpenAI provider requires a base_url or AZURE_OPENAI_ENDPOINT.")
+        deployment = config.llm.model
+        if not deployment or deployment == "local-model":
+            raise ValueError("Azure OpenAI provider requires a deployment name (llm model).")
+        api_version = (
+            config.llm.api_version
+            or os.environ.get("AI_MEM_AZURE_API_VERSION")
+            or os.environ.get("AZURE_OPENAI_API_VERSION")
+            or "2024-02-01"
+        )
+        from .providers.azure_openai import AzureOpenAIProvider
+
+        return AzureOpenAIProvider(
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=api_version,
+            deployment_name=deployment,
+            timeout_s=config.llm.timeout_s,
+        )
     if provider in {"openai", "openai-compatible", "vllm", "local"}:
         base_url = config.llm.base_url or "http://localhost:8000/v1"
         model_name = config.llm.model or "local-model"
@@ -78,6 +103,30 @@ def _build_embedding_provider(config: AppConfig) -> EmbeddingProvider:
         from .embeddings.fastembed import FastEmbedProvider
 
         return FastEmbedProvider(model_name=config.embeddings.model)
+    if provider in {"azure", "azure-openai"}:
+        api_key = config.embeddings.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("Azure OpenAI embeddings require an API key.")
+        endpoint = config.embeddings.base_url or os.environ.get("AZURE_OPENAI_ENDPOINT")
+        if not endpoint:
+            raise ValueError("Azure OpenAI embeddings require a base_url or AZURE_OPENAI_ENDPOINT.")
+        deployment = config.embeddings.model
+        if not deployment or deployment == "local-embedding":
+            raise ValueError("Azure OpenAI embeddings require a deployment name (embeddings model).")
+        api_version = (
+            config.embeddings.api_version
+            or os.environ.get("AI_MEM_AZURE_API_VERSION")
+            or os.environ.get("AZURE_OPENAI_API_VERSION")
+            or "2024-02-01"
+        )
+        from .embeddings.azure_openai import AzureOpenAIEmbeddingProvider
+
+        return AzureOpenAIEmbeddingProvider(
+            api_key=api_key,
+            azure_endpoint=endpoint,
+            api_version=api_version,
+            deployment_name=deployment,
+        )
     if provider in {"openai", "openai-compatible", "vllm", "local"}:
         base_url = config.embeddings.base_url or "http://localhost:8000/v1"
         model_name = config.embeddings.model or "local-embedding"

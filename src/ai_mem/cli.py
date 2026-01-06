@@ -127,14 +127,20 @@ def get_memory_manager() -> MemoryManager:
 
 @app.command()
 def config(
-    llm_provider: Optional[str] = typer.Option(None, help="LLM provider (gemini, anthropic, openai-compatible, vllm)"),
+    llm_provider: Optional[str] = typer.Option(
+        None, help="LLM provider (gemini, anthropic, azure-openai, openai-compatible, vllm)"
+    ),
     llm_model: Optional[str] = typer.Option(None, help="LLM model name"),
     llm_api_key: Optional[str] = typer.Option(None, help="LLM API key"),
     llm_base_url: Optional[str] = typer.Option(None, help="LLM base URL (OpenAI-compatible)"),
-    embeddings_provider: Optional[str] = typer.Option(None, help="Embeddings provider (fastembed, gemini, openai-compatible, auto)"),
+    llm_api_version: Optional[str] = typer.Option(None, help="LLM API version (Azure OpenAI)"),
+    embeddings_provider: Optional[str] = typer.Option(
+        None, help="Embeddings provider (fastembed, gemini, azure-openai, openai-compatible, auto)"
+    ),
     embeddings_model: Optional[str] = typer.Option(None, help="Embeddings model name"),
     embeddings_api_key: Optional[str] = typer.Option(None, help="Embeddings API key"),
     embeddings_base_url: Optional[str] = typer.Option(None, help="Embeddings base URL (OpenAI-compatible)"),
+    embeddings_api_version: Optional[str] = typer.Option(None, help="Embeddings API version (Azure OpenAI)"),
     data_dir: Optional[str] = typer.Option(None, help="Data directory for SQLite + vector store"),
     sqlite_path: Optional[str] = typer.Option(None, help="Override SQLite database path"),
     vector_dir: Optional[str] = typer.Option(None, help="Override vector store directory"),
@@ -158,10 +164,12 @@ def config(
             llm_model,
             llm_api_key,
             llm_base_url,
+            llm_api_version,
             embeddings_provider,
             embeddings_model,
             embeddings_api_key,
             embeddings_base_url,
+            embeddings_api_version,
             data_dir,
             sqlite_path,
             vector_dir,
@@ -187,6 +195,8 @@ def config(
         patch["llm"]["api_key"] = llm_api_key
     if llm_base_url:
         patch["llm"]["base_url"] = llm_base_url
+    if llm_api_version:
+        patch["llm"]["api_version"] = llm_api_version
     if embeddings_provider:
         patch["embeddings"]["provider"] = embeddings_provider
     if embeddings_model:
@@ -195,6 +205,8 @@ def config(
         patch["embeddings"]["api_key"] = embeddings_api_key
     if embeddings_base_url:
         patch["embeddings"]["base_url"] = embeddings_base_url
+    if embeddings_api_version:
+        patch["embeddings"]["api_version"] = embeddings_api_version
     if data_dir:
         patch["storage"]["data_dir"] = data_dir
     if sqlite_path:
@@ -1105,6 +1117,66 @@ def anthropic_proxy(
         default_project=project,
         summarize=summarize,
         anthropic_version=version,
+    )
+
+
+@app.command(name="azure-proxy")
+def azure_proxy(
+    host: str = typer.Option("0.0.0.0", help="Proxy host"),
+    port: int = typer.Option(8092, help="Proxy port"),
+    upstream: Optional[str] = typer.Option(None, help="Azure OpenAI base URL"),
+    upstream_key: Optional[str] = typer.Option(None, help="Azure OpenAI API key"),
+    deployment: Optional[str] = typer.Option(None, help="Azure OpenAI deployment name"),
+    api_version: Optional[str] = typer.Option(None, help="Azure OpenAI API version"),
+    inject: bool = typer.Option(True, "--inject/--no-inject", help="Inject ai-mem context"),
+    store: bool = typer.Option(True, "--store/--no-store", help="Store prompt/response pairs"),
+    project: Optional[str] = typer.Option(None, help="Default project path"),
+    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Summarize stored content"),
+):
+    """Start an Azure OpenAI proxy that injects context and stores interactions."""
+    from .azure_proxy import start_proxy as start_azure_proxy
+
+    base_url = (
+        upstream
+        or os.environ.get("AI_MEM_AZURE_UPSTREAM_BASE_URL")
+        or os.environ.get("AZURE_OPENAI_ENDPOINT")
+    )
+    if not base_url:
+        console.print("[red]Azure proxy requires --upstream or AZURE_OPENAI_ENDPOINT.[/red]")
+        raise typer.Exit(1)
+    api_key = (
+        upstream_key
+        or os.environ.get("AI_MEM_AZURE_API_KEY")
+        or os.environ.get("AZURE_OPENAI_API_KEY")
+    )
+    if not api_key:
+        console.print("[yellow]Azure proxy running without API key (pass --upstream-key or AZURE_OPENAI_API_KEY).[/yellow]")
+    deployment_name = (
+        deployment
+        or os.environ.get("AI_MEM_AZURE_DEPLOYMENT")
+        or os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+    )
+    if not deployment_name:
+        console.print("[red]Azure proxy requires a deployment name (use --deployment or AZURE_OPENAI_DEPLOYMENT).[/red]")
+        raise typer.Exit(1)
+    version = (
+        api_version
+        or os.environ.get("AI_MEM_AZURE_API_VERSION")
+        or os.environ.get("AZURE_OPENAI_API_VERSION")
+        or "2024-02-01"
+    )
+    console.print(f"[green]Starting ai-mem Azure proxy at http://{host}:{port}[/green]")
+    start_azure_proxy(
+        host=host,
+        port=port,
+        upstream_base_url=base_url,
+        upstream_api_key=api_key,
+        deployment_name=deployment_name,
+        api_version=version,
+        inject_context=inject,
+        store_interactions=store,
+        default_project=project,
+        summarize=summarize,
     )
 
 

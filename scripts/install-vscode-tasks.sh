@@ -111,6 +111,14 @@ tasks = [
         "problemMatcher": [],
         "isBackground": True,
     },
+    {
+        "label": "ai-mem: Start Azure Proxy",
+        "type": "shell",
+        "command": bin_path,
+        "args": ["azure-proxy", "--port", "8092"],
+        "problemMatcher": [],
+        "isBackground": True,
+    },
 ]
 
 data = {"version": "2.0.0", "tasks": []}

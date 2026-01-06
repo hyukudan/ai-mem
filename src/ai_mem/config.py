@@ -11,6 +11,7 @@ class LLMConfig(BaseModel):
     model: str = "local-model"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    api_version: Optional[str] = None
     timeout_s: float = 60.0
 
 
@@ -19,6 +20,7 @@ class EmbeddingConfig(BaseModel):
     model: str = "BAAI/bge-small-en-v1.5"
     api_key: Optional[str] = None
     base_url: Optional[str] = None
+    api_version: Optional[str] = None
 
 
 class StorageConfig(BaseModel):

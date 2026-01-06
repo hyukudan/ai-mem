@@ -47,7 +47,7 @@ You can use ai-mem entirely locally with fast embeddings, or connect it to Gemin
 
 ## Key Features
 
-- Model agnostic: Gemini native + OpenAI-compatible local models.
+- Model agnostic: Gemini native + OpenAI-compatible local models + Azure OpenAI.
 - Claude ready: Anthropic proxy + summarization provider.
 - Local and private: SQLite + FTS5 + ChromaDB stored on disk.
 - Semantic + keyword search: hybrid retrieval for relevance.
@@ -165,11 +165,14 @@ Scripts in scripts/ start common stacks:
 - ./scripts/run-gemini-full.sh: server + Gemini proxy + MCP
 - ./scripts/run-anthropic-stack.sh: server + Anthropic proxy
 - ./scripts/run-anthropic-full.sh: server + Anthropic proxy + MCP
+- ./scripts/run-azure-stack.sh: server + Azure OpenAI proxy
+- ./scripts/run-azure-full.sh: server + Azure OpenAI proxy + MCP
 - ./scripts/run-dual-stack.sh: server + OpenAI-compatible proxy + Gemini proxy
 - ./scripts/run-dual-full.sh: server + OpenAI-compatible proxy + Gemini proxy + MCP
 - ./scripts/run-proxy.sh: OpenAI-compatible proxy only
 - ./scripts/run-gemini-proxy.sh: Gemini proxy only
 - ./scripts/run-anthropic-proxy.sh: Anthropic proxy only
+- ./scripts/run-azure-proxy.sh: Azure OpenAI proxy only
 - ./scripts/run-mcp.sh: MCP server only
 - ./scripts/install-hooks.sh: install hook scripts to ~/.config/ai-mem/hooks
 - ./scripts/install-mcp-claude-desktop.sh: add ai-mem MCP entry to Claude Desktop config
@@ -199,11 +202,17 @@ ai-mem config --embeddings-provider fastembed
 # Anthropic (Claude) summarization
 ai-mem config --llm-provider anthropic --llm-model claude-3-haiku-20240307 --llm-api-key YOUR_KEY
 
+# Azure OpenAI summarization
+ai-mem config --llm-provider azure-openai --llm-model YOUR_DEPLOYMENT --llm-api-key YOUR_KEY --llm-base-url https://YOUR_RESOURCE.openai.azure.com --llm-api-version 2024-02-01
+
 # OpenAI-compatible model (vLLM, LM Studio, Ollama)
 ai-mem config --llm-provider openai-compatible --llm-base-url http://localhost:8000/v1 --llm-model YOUR_MODEL
 
 # If your OpenAI-compatible server exposes embeddings
 ai-mem config --embeddings-provider openai-compatible --embeddings-base-url http://localhost:8000/v1 --embeddings-model YOUR_EMBED_MODEL
+
+# Azure OpenAI embeddings
+ai-mem config --embeddings-provider azure-openai --embeddings-model YOUR_EMBED_DEPLOYMENT --embeddings-api-key YOUR_KEY --embeddings-base-url https://YOUR_RESOURCE.openai.azure.com --embeddings-api-version 2024-02-01
 
 # Auto embeddings: use OpenAI-compatible if configured, else fastembed
 ai-mem config --embeddings-provider auto
@@ -535,6 +544,25 @@ Env vars:
 - AI_MEM_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY
 - AI_MEM_ANTHROPIC_UPSTREAM_BASE_URL
 - AI_MEM_ANTHROPIC_VERSION (default 2023-06-01)
+
+### Azure OpenAI proxy
+
+```bash
+AI_MEM_AZURE_API_KEY="YOUR_KEY" AI_MEM_AZURE_DEPLOYMENT="YOUR_DEPLOYMENT" AI_MEM_AZURE_UPSTREAM_BASE_URL="https://YOUR_RESOURCE.openai.azure.com" ai-mem azure-proxy --port 8092
+```
+
+Point your Azure OpenAI client to http://localhost:8092/v1
+
+Supported endpoints:
+- /v1/chat/completions
+- /v1/completions
+- /v1/embeddings
+
+Env vars:
+- AI_MEM_AZURE_API_KEY or AZURE_OPENAI_API_KEY
+- AI_MEM_AZURE_UPSTREAM_BASE_URL or AZURE_OPENAI_ENDPOINT
+- AI_MEM_AZURE_DEPLOYMENT or AZURE_OPENAI_DEPLOYMENT
+- AI_MEM_AZURE_API_VERSION or AZURE_OPENAI_API_VERSION (default 2024-02-01)
 
 ## API Token (Optional)
 
