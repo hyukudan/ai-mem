@@ -32,6 +32,35 @@ def _infer_format(path: str, fmt: Optional[str], default: str) -> str:
         return "csv"
     return default
 
+def _write_snapshot_file(path: str, fmt: str, meta: Dict[str, Any], items: List[Dict[str, Any]]) -> None:
+    if fmt == "json":
+        payload = {"snapshot": meta, "observations": items}
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+        return
+    if fmt in {"jsonl", "ndjson"}:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"snapshot": meta}, ensure_ascii=True))
+            handle.write("\n")
+            for item in items:
+                handle.write(json.dumps(item, ensure_ascii=True))
+                handle.write("\n")
+        return
+    if fmt == "csv":
+        if not items:
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                csv.writer(handle).writerows([])
+            return
+        headers = sorted(items[0].keys())
+        with open(path, "w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=headers)
+            writer.writeheader()
+            for item in items:
+                writer.writerow(item)
+        return
+    console.print(f"[red]Unsupported format: {fmt}[/red]")
+    raise typer.Exit(1)
+
 def _read_export_file(path: str, fmt: str) -> tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     metadata: Optional[Dict[str, Any]] = None
     items: List[Dict[str, Any]] = []
@@ -80,6 +109,18 @@ def _read_export_file(path: str, fmt: str) -> tuple[List[Dict[str, Any]], Option
         return items, metadata
     console.print(f"[red]Unsupported format: {fmt}[/red]")
     raise typer.Exit(1)
+
+def _snapshot_key(item: Dict[str, Any]) -> str:
+    content_hash = item.get("content_hash")
+    if content_hash:
+        return str(content_hash)
+    parts = (
+        str(item.get("project") or ""),
+        str(item.get("session_id") or ""),
+        str(item.get("content") or ""),
+        str(item.get("created_at") or ""),
+    )
+    return "|".join(parts)
 
 
 def _import_items(
@@ -669,6 +710,85 @@ def context(
         print(json.dumps({"context": context_text, "metadata": meta}, indent=2))
         return
     console.print(context_text)
+
+
+@app.command()
+def endless(
+    query: Optional[str] = typer.Option(None, help="Optional search query"),
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
+    total: Optional[int] = typer.Option(None, help="Base index count"),
+    full: Optional[int] = typer.Option(None, help="Base full count"),
+    full_field: Optional[str] = typer.Option(None, help="Full context field (content or summary)"),
+    show_tokens: Optional[bool] = typer.Option(None, "--show-tokens/--hide-tokens", help="Toggle token estimates"),
+    no_wrap: bool = typer.Option(False, help="Disable <ai-mem-context> wrapper"),
+    interval: int = typer.Option(60, help="Seconds between context refreshes"),
+    token_limit: Optional[int] = typer.Option(1200, help="Target total token count (index+full)"),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON per iteration"),
+):
+    """Run Endless Mode: auto-refresh context with rolling window control."""
+    manager = get_memory_manager()
+    if session_id:
+        project = None
+    elif not project:
+        project = os.getcwd()
+    console.print("[cyan]Starting Endless Mode (Ctrl+C to stop)[/cyan]")
+    current_total = total if total is not None else manager.config.context.total_observation_count
+    full_count = full if full is not None else manager.config.context.full_observation_count
+    try:
+        while True:
+            context_text, meta = build_context(
+                manager,
+                project=project,
+                session_id=session_id,
+                query=query,
+                obs_type=obs_type,
+                tag_filters=tag,
+                total_count=current_total,
+                full_count=full_count,
+                full_field=full_field,
+                show_tokens=show_tokens,
+                wrap=not no_wrap,
+            )
+            tokens = meta.get("tokens", {})
+            total_tokens = tokens.get("total") or 0
+            scoreboard = meta.get("scoreboard") or {}
+            cache = manager.search_cache_summary()
+            if json_output:
+                payload = {
+                    "context": context_text,
+                    "metadata": meta,
+                    "cache": cache,
+                }
+                console.print(json.dumps(payload, indent=2))
+            else:
+                console.print(context_text)
+                console.print(f"[green]Total tokens: {total_tokens} (index {tokens.get('index', 0)} + full {tokens.get('full', 0)})[/green]")
+                if scoreboard:
+                    table = Table(title="Scoreboard (top 5)")
+                    table.add_column("ID", style="dim")
+                    table.add_column("FTS", justify="right")
+                    table.add_column("Vec", justify="right")
+                    table.add_column("Rec", justify="right")
+                    for obs_id, data in list(scoreboard.items())[:5]:
+                        table.add_row(
+                            obs_id,
+                            f"{(data.get('fts_score') or 0):.3f}",
+                            f"{(data.get('vector_score') or 0):.3f}",
+                            f"{(data.get('recency_factor') or 0):.3f}",
+                        )
+                    console.print(table)
+                console.print(f"[yellow]Cache hits: {cache.get('hits')} misses: {cache.get('misses')} (hit rate {round(((cache.get('hits') or 0) / max(1, (cache.get('hits', 0) + cache.get('misses', 0))))*100, 1)}%)[/yellow]")
+            if token_limit:
+                if total_tokens > token_limit:
+                    current_total = max(1, current_total - 1)
+                elif total_tokens < token_limit * 0.9:
+                    current_total += 1
+            time.sleep(max(5, interval))
+    except KeyboardInterrupt:
+        console.print("[yellow]\nEndless Mode stopped.[/yellow]")
 
 
 @app.command()
@@ -1842,8 +1962,45 @@ def snapshot_import(
             meta_parts.append(f"id={snapshot_id}")
         if metadata.get("note"):
             meta_parts.append(f"note={metadata['note']}")
-        console.print(f"[green]Snapshot metadata:{' '.join(meta_parts)}[/green]")
+    console.print(f"[green]Snapshot metadata:{' '.join(meta_parts)}[/green]")
     console.print(f"[green]Imported {imported} observations from snapshot[/green]")
+
+
+@snapshot_app.command("merge")
+def snapshot_merge(
+    output: str = typer.Argument(..., help="Path to write merged snapshot"),
+    inputs: List[str] = typer.Argument(..., help="Snapshot files to merge"),
+    dedupe: bool = typer.Option(True, help="Skip duplicates by content hash"),
+    output_format: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json, jsonl, csv"),
+):
+    """Merge multiple snapshot exports into one file (dedupe & reorder)."""
+    if not inputs:
+        console.print("[red]Provide at least one input snapshot file.[/red]")
+        raise typer.Exit(1)
+    all_items: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for path in inputs:
+        fmt = _infer_format(path, None, "jsonl")
+        items, _ = _read_export_file(path, fmt)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = _snapshot_key(item)
+            if dedupe and key in seen:
+                continue
+            seen.add(key)
+            all_items.append(item)
+    all_items.sort(key=lambda obs: float(obs.get("created_at") or 0))
+    fmt_out = _infer_format(output, output_format, "jsonl")
+    meta = {
+        "snapshot_id": str(uuid4()),
+        "created_at": time.time(),
+        "sources": inputs,
+        "count": len(all_items),
+        "dedupe": dedupe,
+    }
+    _write_snapshot_file(output, fmt_out, meta, all_items)
+    console.print(f"[green]Merged {len(all_items)} observations into {output} ({fmt_out})[/green]")
 
 
 @app.command()
