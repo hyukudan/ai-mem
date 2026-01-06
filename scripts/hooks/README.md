@@ -44,6 +44,11 @@ Common:
 - `AI_MEM_SUMMARY_COUNT`: number of observations to summarize (default 20).
 - `AI_MEM_SUMMARY_OBS_TYPE`: optional observation type filter for summaries.
 
+Hooks can auto-load a local env file before running:
+
+- Default: `hooks.env` in the same directory as the hook script.
+- Override with `AI_MEM_HOOKS_ENV=/path/to/hooks.env`.
+
 Context hook only:
 - `AI_MEM_QUERY`: optional query to bias context.
 - `AI_MEM_CONTEXT_TOTAL`: max index items.

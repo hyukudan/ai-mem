@@ -388,6 +388,11 @@ Hook environment variables (common):
 - AI_MEM_SUMMARY_COUNT: number of observations to summarize (default 20)
 - AI_MEM_SUMMARY_OBS_TYPE: filter observation type for summaries
 
+Hooks can auto-load a local env file before running:
+
+- Default: `hooks.env` in the same directory as the hook script.
+- Override with `AI_MEM_HOOKS_ENV=/path/to/hooks.env`.
+
 Install the hooks into a shared location:
 
 ```bash

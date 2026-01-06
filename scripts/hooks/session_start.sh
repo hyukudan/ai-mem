@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="${AI_MEM_HOOKS_ENV:-$SCRIPT_DIR/hooks.env}"
+if [ -f "$ENV_FILE" ]; then
+  set +u
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set -u
+fi
+
 AI_MEM_BIN="${AI_MEM_BIN:-ai-mem}"
 PROJECT="${AI_MEM_PROJECT:-${PWD}}"
 SESSION_ID="${AI_MEM_SESSION_ID:-}"
