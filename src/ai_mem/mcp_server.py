@@ -56,6 +56,21 @@ class MCPServer:
                 "description": "Summarize recent observations. Params: project, session_id, count, obs_type, store, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
+            {
+                "name": "tags",
+                "description": "List tags with counts. Params: project, session_id, obs_type, date_start, date_end, tags, limit.",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
+            {
+                "name": "tag-rename",
+                "description": "Rename a tag across matching observations. Params: old_tag, new_tag, project, session_id, obs_type, date_start, date_end.",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
+            {
+                "name": "tag-delete",
+                "description": "Delete a tag across matching observations. Params: tag, project, session_id, obs_type, date_start, date_end.",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
         ]
 
     def call_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -69,6 +84,12 @@ class MCPServer:
             return self._get_observations(args)
         if name == "summarize":
             return self._summarize(args)
+        if name == "tags":
+            return self._tags(args)
+        if name == "tag-rename":
+            return self._tag_rename(args)
+        if name == "tag-delete":
+            return self._tag_delete(args)
         return self._wrap_text(f"Unknown tool: {name}", is_error=True)
 
     @staticmethod
@@ -158,6 +179,71 @@ class MCPServer:
             tags=tags if isinstance(tags, list) else None,
         )
         return self._wrap_text(json.dumps(result or {}, indent=2))
+
+    def _tags(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        project = args.get("project")
+        session_id = args.get("session_id")
+        obs_type = args.get("obs_type") or args.get("type")
+        date_start = args.get("date_start")
+        date_end = args.get("date_end")
+        tags = self._parse_tags(args.get("tags") or args.get("tag"))
+        limit = int(args.get("limit", 50))
+        if session_id:
+            project = None
+        results = self.manager.list_tags(
+            project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
+            tag_filters=tags,
+            limit=limit,
+        )
+        return self._wrap_text(json.dumps(results, indent=2))
+
+    def _tag_rename(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        old_tag = str(args.get("old_tag") or args.get("from") or "").strip()
+        new_tag = str(args.get("new_tag") or args.get("to") or "").strip()
+        if not old_tag or not new_tag:
+            return self._wrap_text("old_tag and new_tag are required", is_error=True)
+        project = args.get("project")
+        session_id = args.get("session_id")
+        obs_type = args.get("obs_type") or args.get("type")
+        date_start = args.get("date_start")
+        date_end = args.get("date_end")
+        if session_id:
+            project = None
+        updated = self.manager.rename_tag(
+            old_tag=old_tag,
+            new_tag=new_tag,
+            project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
+        )
+        return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
+
+    def _tag_delete(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        value = str(args.get("tag") or args.get("value") or "").strip()
+        if not value:
+            return self._wrap_text("tag is required", is_error=True)
+        project = args.get("project")
+        session_id = args.get("session_id")
+        obs_type = args.get("obs_type") or args.get("type")
+        date_start = args.get("date_start")
+        date_end = args.get("date_end")
+        if session_id:
+            project = None
+        updated = self.manager.delete_tag(
+            tag=value,
+            project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
+        )
+        return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
 
     @staticmethod
     def _wrap_text(text: str, is_error: bool = False) -> Dict[str, Any]:

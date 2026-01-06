@@ -381,6 +381,9 @@ Tools:
 - timeline
 - get_observations
 - summarize
+- tags
+- tag-rename
+- tag-delete
 
 Search and timeline accept session_id to scope results.
 
