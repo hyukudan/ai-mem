@@ -332,6 +332,7 @@ Viewer features:
 - Save and re-apply search filters per project or globally (stored locally in the browser).
 - Tag management panel to add, list, rename, and delete tags.
 - Context presets per project in the viewer UI.
+- Collapsible sidebar panels for saved filters, tags, and context.
 
 ## Hooks (Model Agnostic)
 

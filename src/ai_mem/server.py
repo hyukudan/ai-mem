@@ -723,6 +723,20 @@ def read_root():
                 flex-wrap: wrap;
                 gap: 8px;
             }
+            .section-collapse {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .section-collapse button {
+                padding: 6px 10px;
+                border-radius: 10px;
+                font-size: 12px;
+            }
+            .collapsed-body {
+                display: none;
+            }
             .session-card {
                 padding: 12px;
                 border-radius: 12px;
@@ -1193,7 +1207,11 @@ def read_root():
                         <input type="text" id="tagsFilter" placeholder="comma,separated">
                     </div>
                     <div class="saved-card" id="savedFiltersCard">
-                        <div class="saved-title">Saved filters</div>
+                        <div class="section-collapse">
+                            <div class="saved-title">Saved filters</div>
+                            <button class="secondary" onclick="toggleSection('savedFiltersCard')">Collapse</button>
+                        </div>
+                        <div class="saved-body">
                         <select id="savedFilters">
                             <option value="">Select saved filter</option>
                         </select>
@@ -1209,27 +1227,37 @@ def read_root():
                             <button class="secondary" onclick="applySavedFilter()">Apply</button>
                             <button class="secondary" onclick="deleteSavedFilter()">Delete</button>
                         </div>
+                        </div>
                     </div>
                     <div class="tag-card" id="tagCard">
-                        <div class="tag-header">
+                        <div class="section-collapse">
                             <div class="tag-title">Tags</div>
-                            <button class="chip" onclick="loadTagManager()">Refresh</button>
+                            <button class="secondary" onclick="toggleSection('tagCard')">Collapse</button>
                         </div>
-                        <div class="tag-meta" id="tagMeta">Scope: current filters</div>
-                        <div class="tag-list" id="tagList"></div>
-                        <div class="tag-editor">
-                            <input type="text" id="tagAdd" placeholder="add tag">
-                            <input type="text" id="tagOld" placeholder="tag">
-                            <input type="text" id="tagNew" placeholder="rename to">
-                        </div>
-                        <div class="tag-row">
-                            <button class="secondary" onclick="addTag()">Add</button>
-                            <button class="secondary" onclick="renameTag()">Rename</button>
-                            <button class="secondary" onclick="deleteTag()">Delete</button>
+                        <div class="tag-body">
+                            <div class="tag-header">
+                                <div class="tag-meta" id="tagMeta">Scope: current filters</div>
+                                <button class="chip" onclick="loadTagManager()">Refresh</button>
+                            </div>
+                            <div class="tag-list" id="tagList"></div>
+                            <div class="tag-editor">
+                                <input type="text" id="tagAdd" placeholder="add tag">
+                                <input type="text" id="tagOld" placeholder="tag">
+                                <input type="text" id="tagNew" placeholder="rename to">
+                            </div>
+                            <div class="tag-row">
+                                <button class="secondary" onclick="addTag()">Add</button>
+                                <button class="secondary" onclick="renameTag()">Rename</button>
+                                <button class="secondary" onclick="deleteTag()">Delete</button>
+                            </div>
                         </div>
                     </div>
                     <div class="context-card" id="contextCard">
-                        <div class="context-title">Context</div>
+                        <div class="section-collapse">
+                            <div class="context-title">Context</div>
+                            <button class="secondary" onclick="toggleSection('contextCard')">Collapse</button>
+                        </div>
+                        <div class="context-body">
                         <div class="context-grid">
                             <div class="context-row">
                                 <label for="contextTotal">Index count</label>
@@ -1284,6 +1312,7 @@ def read_root():
                                     <button class="chip" onclick="deleteContextPreset()">Delete</button>
                                 </div>
                             </div>
+                        </div>
                         </div>
                     </div>
                     <div class="session-card" id="sessionCard">
@@ -1503,6 +1532,11 @@ def read_root():
             let savedFilters = [];
             let contextPresets = [];
             let savedFiltersUseGlobal = true;
+            const SECTION_BODY_MAP = {
+                savedFiltersCard: '.saved-body',
+                tagCard: '.tag-body',
+                contextCard: '.context-body',
+            };
 
             async function loadProjects() {
                 const response = await fetch('/api/projects', { headers: getAuthHeaders() });
@@ -2701,6 +2735,37 @@ def read_root():
                 persistContextPresets();
                 if (select) {
                     select.value = '';
+                }
+            }
+
+            function toggleSection(sectionId) {
+                const section = document.getElementById(sectionId);
+                if (!section) return;
+                const bodySelector = SECTION_BODY_MAP[sectionId] || '.panel-body';
+                const body = section.querySelector(bodySelector);
+                if (!body) return;
+                const isCollapsed = body.classList.toggle('collapsed-body');
+                const key = `ai-mem-section-${sectionId}-collapsed`;
+                localStorage.setItem(key, String(isCollapsed));
+                const toggleButton = section.querySelector('.section-collapse button');
+                if (toggleButton) {
+                    toggleButton.textContent = isCollapsed ? 'Expand' : 'Collapse';
+                }
+            }
+
+            function loadSectionState(sectionId) {
+                const key = `ai-mem-section-${sectionId}-collapsed`;
+                const stored = localStorage.getItem(key);
+                const section = document.getElementById(sectionId);
+                if (!section) return;
+                const bodySelector = SECTION_BODY_MAP[sectionId] || '.panel-body';
+                const body = section.querySelector(bodySelector);
+                if (!body) return;
+                const isCollapsed = stored === 'true';
+                body.classList.toggle('collapsed-body', isCollapsed);
+                const toggleButton = section.querySelector('.section-collapse button');
+                if (toggleButton) {
+                    toggleButton.textContent = isCollapsed ? 'Expand' : 'Collapse';
                 }
             }
 
@@ -4650,6 +4715,9 @@ def read_root():
             loadSelectedProject();
             loadLastMode();
             loadSelectedFilters();
+            loadSectionState('savedFiltersCard');
+            loadSectionState('tagCard');
+            loadSectionState('contextCard');
             loadSavedFilters();
             loadQuery();
             loadContextConfig().catch(err => console.warn('Context config load failed', err));
