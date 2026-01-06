@@ -1319,7 +1319,7 @@ def read_root():
                 const fullModeLabel = modeValue === 'stats' ? 'Stats only' : 'Stats + results';
                 const compactModeLabel = modeValue === 'stats' ? 'Stats' : 'All';
                 const modeLabel = compact ? compactModeLabel : fullModeLabel;
-                const autoScopeMarker = autoScope === 'global' ? '● ' : '';
+                const autoScopeMarker = autoScope === 'global' && !compact ? '● ' : '';
                 const autoBadge = live
                     ? `<span class="auto-mode-badge" title="Auto-refresh: ${fullModeLabel} • ${interval}s • ${autoScope}">${autoScopeMarker}${modeLabel}</span>`
                     : '';
