@@ -1310,6 +1310,10 @@ def read_root():
                                 <button class="chip" onclick="copyContext()">Copy</button>
                                 <button class="chip" onclick="summarizeContext()">Summarize</button>
                             </div>
+                            <div class="context-actions">
+                                <button class="chip" onclick="syncContextToFilters()">Copy from filters</button>
+                                <button class="chip" onclick="syncFiltersFromContext()">Copy to filters</button>
+                            </div>
                             <div class="context-presets">
                                 <select id="contextPresets">
                                     <option value="">Select preset</option>
@@ -2667,6 +2671,37 @@ def read_root():
                 const projectValue = getCurrentProjectValue();
                 const config = readContextForm();
                 persistContextConfig(config, projectValue);
+            }
+
+            function syncContextToFilters() {
+                const tagsInput = document.getElementById('contextTags');
+                const typesInput = document.getElementById('contextTypes');
+                const tagsValue = (tagsInput?.value || '').trim();
+                const typesValue = (typesInput?.value || '').trim();
+                if (tagsValue) {
+                    document.getElementById('tagsFilter').value = tagsValue;
+                }
+                if (typesValue) {
+                    document.getElementById('type').value = typesValue.split(',')[0].trim();
+                }
+                persistFilters();
+                loadStats();
+                loadTagManager();
+                refreshResultsForFilters();
+            }
+
+            function syncFiltersFromContext() {
+                const tagsFilter = (document.getElementById('tagsFilter')?.value || '').trim();
+                const typeFilter = document.getElementById('type').value || '';
+                const tagsInput = document.getElementById('contextTags');
+                const typesInput = document.getElementById('contextTypes');
+                if (tagsInput) {
+                    tagsInput.value = tagsFilter;
+                }
+                if (typesInput) {
+                    typesInput.value = typeFilter || '';
+                }
+                updateContextConfig();
             }
 
             function loadContextPresets() {

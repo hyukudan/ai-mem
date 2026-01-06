@@ -333,6 +333,7 @@ Viewer features:
 - Click stats entries (type/tag/project) to auto-filter.
 - Tag management panel to add, list, rename, and delete tags.
 - Context presets per project or globally in the viewer UI.
+- Quick sync between filters and context tag/type fields.
 - Collapsible sidebar panels for saved filters, tags, and context.
 
 ## Hooks (Model Agnostic)
