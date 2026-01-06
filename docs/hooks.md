@@ -72,3 +72,23 @@ Helper scripts are included for popular IDEs:
 - Cursor MCP: `./scripts/install-mcp-cursor.sh`
 
 These install project-local tasks or config entries so you can launch ai-mem servers, proxies, and hooks from inside the IDE.
+
+## Context, scoreboard, and streaming
+
+Use `ai-mem context` whenever you need a `<ai-mem-context>` block. The CLI prints token budgets (`tokens.index`, `tokens.full`, `tokens.total`), scoreboard metadata (`fts_score`, `vector_score`, `recency_factor`), and cache stats so Claude, Gemini, Antigravity, or any other LLM can inspect why memories were selected before replying.
+
+```bash
+ai-mem context --query "deploy checklist" --show-tokens
+```
+
+The same metadata flows through `ai-mem endless` (auto-refreshing context for long-lived workflows) and the MCP server, so every agent sees the same reasoning. Call `ai-mem endless` from a hook script when you want a persistent stream, then relay the printed context block into your model prompt.
+
+## Endless mode & checkpoint syncing
+
+`ai-mem endless` loops over the context builder, adjusts the observation window to honor a token cap, and prints cache/scoreboard telemetry on each tick. Use it from hooks if you want to keep an LLM session warm without restarting it.
+
+```bash
+ai-mem endless --query "design notes" --interval 20 --token-limit 1000
+```
+
+Snapshot commands (`ai-mem snapshot export` / `ai-mem snapshot merge`) let you capture a project’s state and rehydrate another workspace (or a new LLM) while preserving IDs/metadata. Run them from hooks when you want to persist session history for collaboration or offline review.
