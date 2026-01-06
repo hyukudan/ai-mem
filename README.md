@@ -54,7 +54,7 @@ You can use ai-mem entirely locally with fast embeddings, or connect it to Gemin
 - Web viewer UI: browse, search, and manage memory at http://localhost:8000.
 - Sessions: track goals and scope retrieval to a session.
 - Privacy tags: <private>...</private> is stripped before storage.
-- Tag management: edit, filter, rename, and delete tags.
+- Tag management: add, edit, rename, and delete tags.
 - Context injection: generate <ai-mem-context> blocks for any model.
 - Hooks and proxies: automatic storage and injection.
 - MCP tools: search memory from Claude Desktop or other MCP clients.
@@ -330,9 +330,8 @@ Viewer features:
 - Session list previews the latest session summary when available.
 - Session detail view shows totals, top types, and top tags.
 - Save and re-apply search filters in the viewer UI (stored locally in the browser).
-- Tag management panel to list, rename, and delete tags.
+- Tag management panel to add, list, rename, and delete tags.
 - Context presets per project in the viewer UI.
-- Export "since" field in the viewer for incremental exports.
 
 ## Hooks (Model Agnostic)
 
@@ -472,8 +471,8 @@ Key endpoints:
 - GET /api/stats (project, session_id, obs_type, tags, date_start, date_end, tag_limit, day_limit, type_tag_limit)
 - GET /api/tags (project, session_id, obs_type, tags, date_start, date_end, limit)
 - POST /api/tags/add (tag, project, session_id, obs_type, tags, date_start, date_end)
-- POST /api/tags/rename (old_tag, new_tag, project, session_id, obs_type, date_start, date_end)
-- POST /api/tags/delete (tag, project, session_id, obs_type, date_start, date_end)
+- POST /api/tags/rename (old_tag, new_tag, project, session_id, obs_type, tags, date_start, date_end)
+- POST /api/tags/delete (tag, project, session_id, obs_type, tags, date_start, date_end)
 - GET /api/context/preview (project, session_id, query, obs_type, obs_types, tags, total, full, full_field, show_tokens, wrap)
 - GET /api/context/inject (same as preview)
 - GET /api/context (alias)
@@ -534,7 +533,7 @@ Planned or proposed improvements:
 Run tests:
 
 ```bash
-.venv/bin/python -m pytest tests/test_db.py tests/test_summary.py tests/test_privacy.py tests/test_chunking.py
+.venv/bin/python -m pytest tests/test_db.py tests/test_summary.py tests/test_privacy.py tests/test_chunking.py tests/test_dates.py
 ```
 
 ## Credits and Attribution
