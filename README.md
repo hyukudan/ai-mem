@@ -329,7 +329,7 @@ Viewer features:
 - Search and timeline results show a rough token estimate per summary.
 - Session list previews the latest session summary when available.
 - Session detail view shows totals, top types, and top tags.
-- Save and re-apply search filters in the viewer UI (stored locally in the browser).
+- Save and re-apply search filters per project or globally (stored locally in the browser).
 - Tag management panel to add, list, rename, and delete tags.
 - Context presets per project in the viewer UI.
 

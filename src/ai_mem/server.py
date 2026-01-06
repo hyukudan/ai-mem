@@ -1197,6 +1197,10 @@ def read_root():
                         <select id="savedFilters">
                             <option value="">Select saved filter</option>
                         </select>
+                        <label class="pulse-toggle">
+                            <input type="checkbox" id="savedFiltersGlobal">
+                            Use global presets
+                        </label>
                         <div class="saved-row">
                             <input type="text" id="savedFilterName" placeholder="name">
                             <button class="secondary" onclick="saveCurrentFilter()">Save</button>
@@ -1498,6 +1502,7 @@ def read_root():
             const streamMaxItems = 20;
             let savedFilters = [];
             let contextPresets = [];
+            let savedFiltersUseGlobal = true;
 
             async function loadProjects() {
                 const response = await fetch('/api/projects', { headers: getAuthHeaders() });
@@ -1523,6 +1528,7 @@ def read_root():
                 loadTimelineAnchor();
                 loadQuery();
                 await loadContextConfig();
+                loadSavedFilters();
                 refreshSessions();
                 restartStreamIfActive();
             }
@@ -3223,24 +3229,60 @@ def read_root():
                 localStorage.setItem('ai-mem-date-end', selectedDateEnd);
             }
 
+            function getSavedFiltersKeys(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return {
+                    project: `ai-mem-saved-filters-${key}`,
+                    global: 'ai-mem-saved-filters-global',
+                    useGlobal: `ai-mem-saved-filters-use-global-${key}`,
+                };
+            }
+
+            function getSavedFiltersUseGlobal() {
+                const toggle = document.getElementById('savedFiltersGlobal');
+                return toggle ? toggle.checked : savedFiltersUseGlobal;
+            }
+
             function loadSavedFilters() {
-                const stored = localStorage.getItem('ai-mem-saved-filters');
-                if (!stored) {
-                    savedFilters = [];
-                    renderSavedFilters();
-                    return;
+                const projectValue = getCurrentProjectValue();
+                const keys = getSavedFiltersKeys(projectValue);
+                const legacy = localStorage.getItem('ai-mem-saved-filters');
+                if (legacy && !localStorage.getItem(keys.global)) {
+                    localStorage.setItem(keys.global, legacy);
+                    localStorage.removeItem('ai-mem-saved-filters');
                 }
+                const projectStored = localStorage.getItem(keys.project);
+                const globalStored = localStorage.getItem(keys.global) || '';
+                const useGlobalStored = localStorage.getItem(keys.useGlobal);
+                const useGlobal = useGlobalStored === null
+                    ? projectStored === null
+                    : useGlobalStored === 'true';
+                savedFiltersUseGlobal = useGlobal;
+                const storedText = useGlobal ? globalStored : (projectStored === null ? globalStored : projectStored);
                 try {
-                    const parsed = JSON.parse(stored);
+                    const parsed = JSON.parse(storedText || '[]');
                     savedFilters = Array.isArray(parsed) ? parsed : [];
                 } catch (error) {
                     savedFilters = [];
+                }
+                const toggle = document.getElementById('savedFiltersGlobal');
+                if (toggle) {
+                    toggle.checked = useGlobal;
                 }
                 renderSavedFilters();
             }
 
             function persistSavedFilters() {
-                localStorage.setItem('ai-mem-saved-filters', JSON.stringify(savedFilters));
+                const projectValue = getCurrentProjectValue();
+                const keys = getSavedFiltersKeys(projectValue);
+                const useGlobal = getSavedFiltersUseGlobal();
+                const payload = JSON.stringify(savedFilters);
+                if (useGlobal) {
+                    localStorage.setItem(keys.global, payload);
+                } else {
+                    localStorage.setItem(keys.project, payload);
+                }
+                localStorage.setItem(keys.useGlobal, String(!!useGlobal));
                 renderSavedFilters();
             }
 
@@ -4435,6 +4477,7 @@ def read_root():
                     loadTimelineAnchor();
                     loadQuery();
                     await loadContextConfig();
+                    loadSavedFilters();
                     loadLastMode();
                     await loadStats();
                     refreshSessions();
@@ -4507,6 +4550,15 @@ def read_root():
                 document.getElementById('contextTokens').addEventListener('change', updateContextConfig);
                 document.getElementById('contextWrap').addEventListener('change', updateContextConfig);
                 document.getElementById('contextGlobal').addEventListener('change', updateContextConfig);
+                const savedFiltersGlobal = document.getElementById('savedFiltersGlobal');
+                if (savedFiltersGlobal) {
+                    savedFiltersGlobal.addEventListener('change', () => {
+                        const projectValue = getCurrentProjectValue();
+                        const keys = getSavedFiltersKeys(projectValue);
+                        localStorage.setItem(keys.useGlobal, String(savedFiltersGlobal.checked));
+                        loadSavedFilters();
+                    });
+                }
                 document.getElementById('streamToggle').addEventListener('change', toggleStream);
                 document.getElementById('streamQuery').addEventListener('input', () => {
                     const value = document.getElementById('streamQuery').value || '';
