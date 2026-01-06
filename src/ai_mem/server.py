@@ -1301,8 +1301,10 @@ def read_root():
                 const timelineBadge = lastMode === 'timeline' || anchorSummary
                     ? '<span class="timeline-badge">Timeline</span>'
                     : '';
+                const globalToggle = document.getElementById('autoGlobal');
+                const autoScope = globalToggle && globalToggle.checked ? 'global' : 'project';
                 const autoBadge = live
-                    ? `<span class="auto-mode-badge" title="Auto-refresh: ${modeValue === 'stats' ? 'Stats only' : 'Stats + results'} • ${interval}s">${modeValue === 'stats' ? 'Stats only' : 'Stats + results'}</span>`
+                    ? `<span class="auto-mode-badge" title="Auto-refresh: ${modeValue === 'stats' ? 'Stats only' : 'Stats + results'} • ${interval}s • ${autoScope}">${modeValue === 'stats' ? 'Stats only' : 'Stats + results'}</span>`
                     : '';
                 if (lastMode === 'timeline') {
                     const depthBefore = timelineDepthBefore || '3';
