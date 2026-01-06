@@ -175,6 +175,7 @@ Scripts in scripts/ start common stacks:
 - ./scripts/install-mcp-claude-desktop.sh: add ai-mem MCP entry to Claude Desktop config
 - ./scripts/install-mcp-cursor.sh: add ai-mem MCP entry to Cursor config
 - ./scripts/install-vscode-tasks.sh: add ai-mem tasks to VS Code
+- ./scripts/install-jetbrains-tools.sh: add ai-mem External Tools to JetBrains IDEs
 
 ## Configuration
 
@@ -447,6 +448,12 @@ Add ai-mem tasks to VS Code:
 
 ```bash
 ./scripts/install-vscode-tasks.sh --bin "$PWD/.venv/bin/ai-mem"
+```
+
+Add ai-mem External Tools to JetBrains:
+
+```bash
+./scripts/install-jetbrains-tools.sh --bin "$PWD/.venv/bin/ai-mem"
 ```
 
 Generate an MCP config snippet for any MCP client:
