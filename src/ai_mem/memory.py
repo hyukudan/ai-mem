@@ -29,6 +29,21 @@ def _build_chat_provider(config: AppConfig) -> ChatProvider:
             api_key=config.llm.api_key,
             model_name=config.llm.model,
         )
+    if provider == "anthropic":
+        if not config.llm.api_key:
+            raise ValueError("Anthropic provider requires an API key.")
+        base_url = config.llm.base_url or "https://api.anthropic.com"
+        model_name = config.llm.model
+        if not model_name or model_name == "local-model":
+            model_name = "claude-3-haiku-20240307"
+        from .providers.anthropic import AnthropicProvider
+
+        return AnthropicProvider(
+            api_key=config.llm.api_key,
+            model_name=model_name,
+            base_url=base_url,
+            timeout_s=config.llm.timeout_s,
+        )
     if provider in {"openai", "openai-compatible", "vllm", "local"}:
         base_url = config.llm.base_url or "http://localhost:8000/v1"
         model_name = config.llm.model or "local-model"

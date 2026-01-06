@@ -82,7 +82,7 @@ def get_memory_manager() -> MemoryManager:
 
 @app.command()
 def config(
-    llm_provider: Optional[str] = typer.Option(None, help="LLM provider (gemini, openai-compatible, vllm)"),
+    llm_provider: Optional[str] = typer.Option(None, help="LLM provider (gemini, anthropic, openai-compatible, vllm)"),
     llm_model: Optional[str] = typer.Option(None, help="LLM model name"),
     llm_api_key: Optional[str] = typer.Option(None, help="LLM API key"),
     llm_base_url: Optional[str] = typer.Option(None, help="LLM base URL (OpenAI-compatible)"),
@@ -868,6 +868,54 @@ def gemini_proxy(
         store_interactions=store,
         default_project=project,
         summarize=summarize,
+    )
+
+
+@app.command()
+def anthropic_proxy(
+    host: str = typer.Option("0.0.0.0", help="Bind host"),
+    port: int = typer.Option(8095, help="Proxy port"),
+    upstream: Optional[str] = typer.Option(None, help="Anthropic API base URL"),
+    upstream_key: Optional[str] = typer.Option(None, help="Anthropic API key"),
+    anthropic_version: Optional[str] = typer.Option(None, help="Anthropic API version header"),
+    inject: bool = typer.Option(True, "--inject/--no-inject", help="Inject memory context"),
+    store: bool = typer.Option(True, "--store/--no-store", help="Store interactions"),
+    project: Optional[str] = typer.Option(None, help="Project path override"),
+    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Summarize stored content"),
+):
+    """Start an Anthropic API proxy that injects context and stores interactions."""
+    from .anthropic_proxy import start_proxy as start_anthropic_proxy
+
+    base_url = (
+        upstream
+        or os.environ.get("AI_MEM_ANTHROPIC_UPSTREAM_BASE_URL")
+        or "https://api.anthropic.com"
+    )
+    api_key = (
+        upstream_key
+        or os.environ.get("AI_MEM_ANTHROPIC_API_KEY")
+        or os.environ.get("ANTHROPIC_API_KEY")
+    )
+    if not api_key:
+        console.print(
+            "[yellow]Anthropic proxy running without API key (pass --upstream-key or AI_MEM_ANTHROPIC_API_KEY).[/yellow]"
+        )
+    version = (
+        anthropic_version
+        or os.environ.get("AI_MEM_ANTHROPIC_VERSION")
+        or "2023-06-01"
+    )
+    console.print(f"[green]Starting ai-mem Anthropic proxy at http://{host}:{port}[/green]")
+    start_anthropic_proxy(
+        host=host,
+        port=port,
+        upstream_base_url=base_url,
+        upstream_api_key=api_key,
+        inject_context=inject,
+        store_interactions=store,
+        default_project=project,
+        summarize=summarize,
+        anthropic_version=version,
     )
 
 
