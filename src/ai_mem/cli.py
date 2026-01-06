@@ -511,6 +511,37 @@ def tags(
     console.print(table)
 
 
+@app.command(name="tag-add")
+def tag_add(
+    tag_value: str = typer.Argument(..., help="Tag to add"),
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Include all projects"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    filter_tag: Optional[List[str]] = typer.Option(None, "--filter-tag", help="Additional tag filter (any match)"),
+):
+    """Add a tag across matching observations."""
+    manager = get_memory_manager()
+    if session_id:
+        project = None
+    elif not project and not all_projects:
+        project = os.getcwd()
+    if all_projects:
+        project = None
+    updated = manager.add_tag(
+        tag=tag_value,
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
+        tag_filters=filter_tag,
+    )
+    console.print(f"[green]Added tag to {updated} observations[/green]")
+
+
 @app.command(name="tag-rename")
 def tag_rename(
     old_tag: str = typer.Argument(..., help="Tag to rename"),

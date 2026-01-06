@@ -242,6 +242,7 @@ ai-mem stats --tag infra
 
 # Tags
 ai-mem tags
+ai-mem tag-add triage --filter-tag bug
 ai-mem tag-rename infra infrastructure
 ai-mem tag-delete legacy --force
 ai-mem tag-rename infra infrastructure --filter-tag important
@@ -383,6 +384,7 @@ Tools:
 - get_observations
 - summarize
 - tags
+- tag-add
 - tag-rename
 - tag-delete
 
@@ -461,6 +463,7 @@ Key endpoints:
 - POST /api/sessions/end (session_id or latest)
 - GET /api/stats (project, session_id, obs_type, tags, date_start, date_end, tag_limit, day_limit, type_tag_limit)
 - GET /api/tags (project, session_id, obs_type, tags, date_start, date_end, limit)
+- POST /api/tags/add (tag, project, session_id, obs_type, tags, date_start, date_end)
 - POST /api/tags/rename (old_tag, new_tag, project, session_id, obs_type, date_start, date_end)
 - POST /api/tags/delete (tag, project, session_id, obs_type, date_start, date_end)
 - GET /api/context/preview (project, session_id, query, obs_type, obs_types, tags, total, full, full_field, show_tokens, wrap)

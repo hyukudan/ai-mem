@@ -126,6 +126,16 @@ class TagDeleteRequest(BaseModel):
     tags: Optional[str] = None
 
 
+class TagAddRequest(BaseModel):
+    tag: str
+    project: Optional[str] = None
+    session_id: Optional[str] = None
+    obs_type: Optional[str] = None
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
+    tags: Optional[str] = None
+
+
 class ContextRequest(BaseModel):
     project: Optional[str] = None
     session_id: Optional[str] = None
@@ -1189,10 +1199,12 @@ def read_root():
                         <div class="tag-meta" id="tagMeta">Scope: current filters</div>
                         <div class="tag-list" id="tagList"></div>
                         <div class="tag-editor">
+                            <input type="text" id="tagAdd" placeholder="add tag">
                             <input type="text" id="tagOld" placeholder="tag">
                             <input type="text" id="tagNew" placeholder="rename to">
                         </div>
                         <div class="tag-row">
+                            <button class="secondary" onclick="addTag()">Add</button>
                             <button class="secondary" onclick="renameTag()">Rename</button>
                             <button class="secondary" onclick="deleteTag()">Delete</button>
                         </div>
@@ -3152,6 +3164,35 @@ def read_root():
                 bindTagPills(list);
             }
 
+            async function addTag() {
+                const addInput = document.getElementById('tagAdd');
+                const tag = (addInput?.value || '').trim();
+                if (!tag) {
+                    alert('Provide a tag to add.');
+                    return;
+                }
+                const payload = buildTagScopePayload();
+                payload.tag = tag;
+                const response = await fetch('/api/tags/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify(payload),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to add tag');
+                    return;
+                }
+                if (addInput) addInput.value = '';
+                await loadTagManager();
+                await loadStats();
+                if (lastMode === 'timeline') {
+                    timeline({ useInput: false });
+                } else {
+                    search();
+                }
+            }
+
             async function renameTag() {
                 const oldInput = document.getElementById('tagOld');
                 const newInput = document.getElementById('tagNew');
@@ -4652,6 +4693,24 @@ def rename_tag(payload: TagRenameRequest, request: Request):
     updated = get_manager().rename_tag(
         old_tag=old_tag,
         new_tag=new_tag,
+        project=payload.project,
+        obs_type=payload.obs_type,
+        session_id=payload.session_id,
+        date_start=payload.date_start,
+        date_end=payload.date_end,
+        tag_filters=_parse_list_param(payload.tags),
+    )
+    return {"success": True, "updated": updated}
+
+
+@app.post("/api/tags/add")
+def add_tag(payload: TagAddRequest, request: Request):
+    _check_token(request)
+    value = payload.tag.strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="tag is required")
+    updated = get_manager().add_tag(
+        tag=value,
         project=payload.project,
         obs_type=payload.obs_type,
         session_id=payload.session_id,

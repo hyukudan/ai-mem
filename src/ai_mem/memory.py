@@ -655,6 +655,28 @@ class MemoryManager:
             tag_filters=_normalize_tags(tag_filters),
         )
 
+    def add_tag(
+        self,
+        tag: str,
+        project: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
+    ) -> int:
+        start_ts = _parse_date(date_start)
+        end_ts = _parse_date(date_end)
+        return self.db.add_tag(
+            tag=tag,
+            project=project,
+            obs_type=obs_type,
+            session_id=session_id,
+            date_start=start_ts,
+            date_end=end_ts,
+            tag_filters=_normalize_tags(tag_filters),
+        )
+
     def export_observations(
         self,
         project: Optional[str] = None,

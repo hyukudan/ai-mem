@@ -62,6 +62,11 @@ class MCPServer:
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
+                "name": "tag-add",
+                "description": "Add a tag across matching observations. Params: tag, project, session_id, obs_type, date_start, date_end, tags.",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
+            {
                 "name": "tag-rename",
                 "description": "Rename a tag across matching observations. Params: old_tag, new_tag, project, session_id, obs_type, date_start, date_end, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
@@ -86,6 +91,8 @@ class MCPServer:
             return self._summarize(args)
         if name == "tags":
             return self._tags(args)
+        if name == "tag-add":
+            return self._tag_add(args)
         if name == "tag-rename":
             return self._tag_rename(args)
         if name == "tag-delete":
@@ -200,6 +207,29 @@ class MCPServer:
             limit=limit,
         )
         return self._wrap_text(json.dumps(results, indent=2))
+
+    def _tag_add(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        value = str(args.get("tag") or args.get("value") or "").strip()
+        if not value:
+            return self._wrap_text("tag is required", is_error=True)
+        project = args.get("project")
+        session_id = args.get("session_id")
+        obs_type = args.get("obs_type") or args.get("type")
+        date_start = args.get("date_start")
+        date_end = args.get("date_end")
+        tags = self._parse_tags(args.get("tags") or args.get("filter_tags") or args.get("filter_tag"))
+        if session_id:
+            project = None
+        updated = self.manager.add_tag(
+            tag=value,
+            project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
+            tag_filters=tags,
+        )
+        return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
 
     def _tag_rename(self, args: Dict[str, Any]) -> Dict[str, Any]:
         old_tag = str(args.get("old_tag") or args.get("from") or "").strip()

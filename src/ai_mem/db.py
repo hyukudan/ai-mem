@@ -672,6 +672,71 @@ class DatabaseManager:
             self.conn.commit()
         return updated
 
+    def add_tag(
+        self,
+        tag: str,
+        project: Optional[str] = None,
+        session_id: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
+        tag_filters: Optional[List[str]] = None,
+    ) -> int:
+        value = str(tag or "").strip()
+        if not value:
+            return 0
+        cursor = self.conn.cursor()
+        params: List[Any] = []
+        conditions: List[str] = []
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if date_start is not None:
+            conditions.append("created_at >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("created_at <= ?")
+            params.append(date_end)
+        tag_clause = self._tag_clause(tag_filters, params)
+        if tag_clause:
+            conditions.append(tag_clause)
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        cursor.execute(f"SELECT id, tags FROM observations {where_clause}", params)
+        updated = 0
+        for row in cursor.fetchall():
+            raw = row["tags"]
+            try:
+                tags = json.loads(raw) if raw else []
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(tags, list):
+                continue
+            if value in tags:
+                continue
+            tags.append(value)
+            deduped = []
+            seen = set()
+            for tag_item in tags:
+                tag_str = str(tag_item).strip()
+                if not tag_str or tag_str in seen:
+                    continue
+                seen.add(tag_str)
+                deduped.append(tag_str)
+            cursor.execute(
+                "UPDATE observations SET tags = ? WHERE id = ?",
+                (json.dumps(deduped), row["id"]),
+            )
+            updated += 1
+        if updated:
+            self.conn.commit()
+        return updated
+
     def search_observations_fts(
         self,
         query: str,
