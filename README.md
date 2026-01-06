@@ -173,6 +173,7 @@ Scripts in scripts/ start common stacks:
 - ./scripts/run-mcp.sh: MCP server only
 - ./scripts/install-hooks.sh: install hook scripts to ~/.config/ai-mem/hooks
 - ./scripts/install-mcp-claude-desktop.sh: add ai-mem MCP entry to Claude Desktop config
+- ./scripts/install-mcp-cursor.sh: add ai-mem MCP entry to Cursor config
 
 ## Configuration
 
@@ -433,6 +434,12 @@ Add ai-mem to Claude Desktop MCP config:
 
 ```bash
 ./scripts/install-mcp-claude-desktop.sh --bin "$PWD/.venv/bin/ai-mem"
+```
+
+Add ai-mem to Cursor MCP config:
+
+```bash
+./scripts/install-mcp-cursor.sh --bin "$PWD/.venv/bin/ai-mem"
 ```
 
 Generate an MCP config snippet for any MCP client:
