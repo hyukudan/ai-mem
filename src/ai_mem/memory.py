@@ -676,6 +676,9 @@ class MemoryManager:
             )
             if not obs:
                 return None
+            if session_id and session:
+                session.summary = summary_text
+                self.db.add_session(session)
             return {"summary": summary_text, "observation": obs, "metadata": metadata}
 
         return {"summary": summary_text, "metadata": metadata}

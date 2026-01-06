@@ -190,6 +190,34 @@ def search(
     console.print(table)
 
 
+@app.command(name="mem-search")
+def mem_search(
+    query: str = typer.Argument(..., help="Search query"),
+    limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    all_projects: bool = typer.Option(False, help="Search across all projects"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Alias for search (friendly name for MCP parity)."""
+    return search(
+        query=query,
+        limit=limit,
+        project=project,
+        obs_type=obs_type,
+        session_id=session_id,
+        all_projects=all_projects,
+        date_start=date_start,
+        date_end=date_end,
+        tag=tag,
+        output=output,
+    )
+
+
 @app.command()
 def timeline(
     anchor_id: Optional[str] = typer.Option(None, help="Anchor observation ID"),

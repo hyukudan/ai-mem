@@ -62,6 +62,9 @@ class SummaryTests(unittest.TestCase):
                 obs = result["observation"]
                 self.assertIsNotNone(obs)
                 self.assertEqual(obs.session_id, session.id)
+                stored_session = manager.get_session(session.id)
+                self.assertIsNotNone(stored_session)
+                self.assertIn("Session note", stored_session.get("summary") or "")
 
 
 if __name__ == "__main__":

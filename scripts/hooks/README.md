@@ -21,6 +21,9 @@ Common:
 - `AI_MEM_OBS_TYPE`: override observation type (defaults to sensible values per hook).
 - `AI_MEM_NO_SUMMARY`: disable summarization (set to any value to enable).
 - `AI_MEM_SESSION_TRACKING`: when set, `session_start.sh` opens a session and `session_end.sh` closes the latest one.
+- `AI_MEM_SUMMARY_ON_END`: when set, `session_end.sh` runs a summary after closing the session.
+- `AI_MEM_SUMMARY_COUNT`: number of observations to summarize (default 20).
+- `AI_MEM_SUMMARY_OBS_TYPE`: optional observation type filter for summaries.
 
 Context hook only:
 - `AI_MEM_QUERY`: optional query to bias context.

@@ -1499,6 +1499,11 @@ def read_root():
                     .replace(/>/g, '&gt;');
             }
 
+            function estimateTokens(text) {
+                if (!text) return 0;
+                return Math.max(1, Math.ceil(text.length / 4));
+            }
+
             function formatLocalDate(date) {
                 const year = date.getFullYear();
                 const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -1919,6 +1924,9 @@ def read_root():
                 const end = session.end_time ? formatStreamTime(session.end_time) : '';
                 const project = session.project || 'Global';
                 const goal = session.goal ? `<div class="meta">Goal: ${escapeHtml(session.goal)}</div>` : '';
+                const sessionSummary = session.summary
+                    ? `<div class="accent">Summary</div><pre>${escapeHtml(session.summary)}</pre>`
+                    : '';
                 const rows = (observations || []).map(obs => {
                     const summary = escapeHtml(obs.summary || obs.content || '(no summary)');
                     const meta = `${escapeHtml(obs.type || 'note')} • ${escapeHtml(obs.id || '')}`;
@@ -1929,6 +1937,7 @@ def read_root():
                     <div><strong>Session ${escapeHtml(id)}</strong></div>
                     <div class="meta">${escapeHtml(project)} • ${start ? `Start ${start}` : ''}${end ? ` • End ${end}` : ''}</div>
                     ${goal}
+                    ${sessionSummary}
                     <div class="accent">Observations</div>
                     <div class="button-row">
                         <label class="pulse-toggle">
@@ -3142,10 +3151,13 @@ def read_root():
                 data.forEach(mem => {
                     const div = document.createElement('div');
                     div.className = 'card';
+                    const summaryText = mem.summary || '(no summary)';
+                    const tokenEstimate = estimateTokens(mem.summary || '');
+                    const tokenLabel = tokenEstimate ? ` • ~${tokenEstimate} tok` : '';
                     div.innerHTML = `
-                        <div>${mem.summary || '(no summary)'}</div>
+                        <div>${summaryText}</div>
                         <div class="meta">
-                            ${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}
+                            ${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}${tokenLabel}
                         </div>
                     `;
                     div.onclick = () => loadDetail(mem.id);
@@ -3230,6 +3242,9 @@ def read_root():
                 const detail = document.getElementById('detail');
                 const tags = (mem.tags || []).map(tag => `<span class="pill">${tag}</span>`).join('');
                 const sessionInfo = mem.session_id ? ` • session ${mem.session_id}` : '';
+                const sessionButton = mem.session_id
+                    ? `<button class="secondary" onclick="loadSessionDetail('${mem.session_id}')">View session</button>`
+                    : '';
                 detail.innerHTML = `
                     <div><strong>${mem.summary || '(no summary)'}</strong></div>
                     <div class="meta">${mem.project || 'Global'} • ${mem.type || 'note'} • ${mem.id}${sessionInfo}</div>
@@ -3237,6 +3252,7 @@ def read_root():
                     <div class="button-row">
                         <button onclick="copyId()">Copy ID</button>
                         <button class="secondary" onclick="copyCitation()">Copy URL</button>
+                        ${sessionButton}
                         <button class="secondary" onclick="deleteObservation()">Delete</button>
                     </div>
                     <div class="accent">Content</div>

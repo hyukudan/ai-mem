@@ -224,6 +224,7 @@ ai-mem add "We decided to use Redis for session cache." --obs-type decision --ta
 
 # Search
 ai-mem search "Redis session cache" --limit 10
+ai-mem mem-search "Redis session cache" --limit 10
 
 # Timeline
 ai-mem timeline --query "Redis" --depth-before 3 --depth-after 3
@@ -267,6 +268,7 @@ Session summaries:
 ```bash
 ai-mem summarize --session-id <session_id> --count 50
 ```
+Stored session summaries also update the session summary field (visible in the UI).
 
 ## Context Injection
 
@@ -277,7 +279,7 @@ Generate a formatted context block for any client:
 ai-mem context
 
 # With a query
-aio-mem context --query "OAuth flow" --tag auth --tag bug
+ai-mem context --query "OAuth flow" --tag auth --tag bug
 
 # Session scope
 ai-mem context --session-id <session_id>
@@ -300,6 +302,7 @@ Viewer features:
 - Stream view for new observations.
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.
+- Search and timeline results show a rough token estimate per summary.
 
 ## Hooks (Model Agnostic)
 
@@ -324,6 +327,9 @@ Hook environment variables (common):
 - AI_MEM_OBS_TYPE: override type
 - AI_MEM_NO_SUMMARY: disable summarization
 - AI_MEM_SESSION_TRACKING: session_start opens, session_end closes
+- AI_MEM_SUMMARY_ON_END: run summarize after session_end
+- AI_MEM_SUMMARY_COUNT: number of observations to summarize (default 20)
+- AI_MEM_SUMMARY_OBS_TYPE: filter observation type for summaries
 
 ## Claude Code Plugin
 
