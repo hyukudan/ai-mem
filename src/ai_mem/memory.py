@@ -617,6 +617,7 @@ class MemoryManager:
         session_id: Optional[str] = None,
         date_start: Optional[str] = None,
         date_end: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
     ) -> int:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
@@ -628,6 +629,7 @@ class MemoryManager:
             session_id=session_id,
             date_start=start_ts,
             date_end=end_ts,
+            tag_filters=_normalize_tags(tag_filters),
         )
 
     def delete_tag(
@@ -638,6 +640,7 @@ class MemoryManager:
         session_id: Optional[str] = None,
         date_start: Optional[str] = None,
         date_end: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
     ) -> int:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
@@ -649,6 +652,7 @@ class MemoryManager:
             session_id=session_id,
             date_start=start_ts,
             date_end=end_ts,
+            tag_filters=_normalize_tags(tag_filters),
         )
 
     def export_observations(

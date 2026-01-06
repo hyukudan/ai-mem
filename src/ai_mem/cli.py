@@ -521,6 +521,7 @@ def tag_rename(
     obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    filter_tag: Optional[List[str]] = typer.Option(None, "--filter-tag", help="Additional tag filter (any match)"),
 ):
     """Rename a tag across matching observations."""
     manager = get_memory_manager()
@@ -538,6 +539,7 @@ def tag_rename(
         obs_type=obs_type,
         date_start=date_start,
         date_end=date_end,
+        tag_filters=filter_tag,
     )
     console.print(f"[green]Renamed tag in {updated} observations[/green]")
 
@@ -552,6 +554,7 @@ def tag_delete(
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
     force: bool = typer.Option(False, help="Skip confirmation prompt"),
+    filter_tag: Optional[List[str]] = typer.Option(None, "--filter-tag", help="Additional tag filter (any match)"),
 ):
     """Delete a tag across matching observations."""
     if not force:
@@ -572,6 +575,7 @@ def tag_delete(
         obs_type=obs_type,
         date_start=date_start,
         date_end=date_end,
+        tag_filters=filter_tag,
     )
     console.print(f"[green]Removed tag from {updated} observations[/green]")
 

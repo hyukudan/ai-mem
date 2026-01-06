@@ -606,6 +606,7 @@ class DatabaseManager:
         obs_type: Optional[str] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
+        tag_filters: Optional[List[str]] = None,
     ) -> int:
         value = str(old_tag or "").strip()
         if not value:
@@ -631,6 +632,9 @@ class DatabaseManager:
         tag_clause = self._tag_clause([value], params)
         if tag_clause:
             conditions.append(tag_clause)
+        extra_clause = self._tag_clause(tag_filters, params)
+        if extra_clause:
+            conditions.append(extra_clause)
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
         cursor.execute(f"SELECT id, tags FROM observations {where_clause}", params)
         updated = 0

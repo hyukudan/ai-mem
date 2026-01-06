@@ -244,6 +244,7 @@ ai-mem stats --tag infra
 ai-mem tags
 ai-mem tag-rename infra infrastructure
 ai-mem tag-delete legacy --force
+ai-mem tag-rename infra infrastructure --filter-tag important
 
 # Export / import
 ai-mem export memories.json

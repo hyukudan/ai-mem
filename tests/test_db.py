@@ -132,12 +132,17 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual(counts.get("alpha"), 1)
             self.assertEqual(counts.get("beta"), 2)
 
-            updated = db.replace_tag("beta", "gamma", project="proj")
-            self.assertEqual(updated, 2)
+            updated = db.replace_tag("beta", "gamma", project="proj", tag_filters=["alpha"])
+            self.assertEqual(updated, 1)
             obs_a_updated = db.get_observation(obs_a.id)
             obs_b_updated = db.get_observation(obs_b.id)
             self.assertIn("gamma", obs_a_updated["tags"])
             self.assertNotIn("beta", obs_a_updated["tags"])
+            self.assertEqual(obs_b_updated["tags"], ["beta"])
+
+            updated_all = db.replace_tag("beta", "gamma", project="proj")
+            self.assertEqual(updated_all, 1)
+            obs_b_updated = db.get_observation(obs_b.id)
             self.assertEqual(obs_b_updated["tags"], ["gamma"])
 
             removed = db.replace_tag("alpha", None, project="proj")

@@ -113,6 +113,7 @@ class TagRenameRequest(BaseModel):
     obs_type: Optional[str] = None
     date_start: Optional[str] = None
     date_end: Optional[str] = None
+    tags: Optional[str] = None
 
 
 class TagDeleteRequest(BaseModel):
@@ -122,6 +123,7 @@ class TagDeleteRequest(BaseModel):
     obs_type: Optional[str] = None
     date_start: Optional[str] = None
     date_end: Optional[str] = None
+    tags: Optional[str] = None
 
 
 class ContextRequest(BaseModel):
@@ -3069,6 +3071,7 @@ def read_root():
                 const project = document.getElementById('project').value;
                 const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const type = document.getElementById('type').value;
+                const tagsFilter = (document.getElementById('tagsFilter')?.value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
                 if (sessionId) {
@@ -3077,6 +3080,7 @@ def read_root():
                     params.append('project', project);
                 }
                 if (type) params.append('obs_type', type);
+                if (tagsFilter) params.append('tags', tagsFilter);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
                 params.append('limit', '50');
@@ -3088,6 +3092,7 @@ def read_root():
                 const project = document.getElementById('project').value;
                 const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const type = document.getElementById('type').value;
+                const tagsFilter = (document.getElementById('tagsFilter')?.value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
                 if (sessionId) {
@@ -3096,6 +3101,7 @@ def read_root():
                     payload.project = project;
                 }
                 if (type) payload.obs_type = type;
+                if (tagsFilter) payload.tags = tagsFilter;
                 if (dateStart) payload.date_start = dateStart;
                 if (dateEnd) payload.date_end = dateEnd;
                 return payload;
@@ -3113,6 +3119,7 @@ def read_root():
                 const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const project = document.getElementById('project').value;
                 const type = document.getElementById('type').value;
+                const tagsFilter = (document.getElementById('tagsFilter')?.value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
                 if (sessionId) {
@@ -3123,6 +3130,7 @@ def read_root():
                     scopeParts.push('all projects');
                 }
                 if (type) scopeParts.push(type);
+                if (tagsFilter) scopeParts.push(`tags: ${tagsFilter}`);
                 if (dateStart || dateEnd) {
                     scopeParts.push(`${dateStart || '...'} → ${dateEnd || '...'}`);
                 }
@@ -4649,6 +4657,7 @@ def rename_tag(payload: TagRenameRequest, request: Request):
         session_id=payload.session_id,
         date_start=payload.date_start,
         date_end=payload.date_end,
+        tag_filters=_parse_list_param(payload.tags),
     )
     return {"success": True, "updated": updated}
 
@@ -4666,6 +4675,7 @@ def delete_tag(payload: TagDeleteRequest, request: Request):
         session_id=payload.session_id,
         date_start=payload.date_start,
         date_end=payload.date_end,
+        tag_filters=_parse_list_param(payload.tags),
     )
     return {"success": True, "updated": updated}
 

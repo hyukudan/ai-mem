@@ -63,12 +63,12 @@ class MCPServer:
             },
             {
                 "name": "tag-rename",
-                "description": "Rename a tag across matching observations. Params: old_tag, new_tag, project, session_id, obs_type, date_start, date_end.",
+                "description": "Rename a tag across matching observations. Params: old_tag, new_tag, project, session_id, obs_type, date_start, date_end, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
                 "name": "tag-delete",
-                "description": "Delete a tag across matching observations. Params: tag, project, session_id, obs_type, date_start, date_end.",
+                "description": "Delete a tag across matching observations. Params: tag, project, session_id, obs_type, date_start, date_end, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
         ]
@@ -211,6 +211,7 @@ class MCPServer:
         obs_type = args.get("obs_type") or args.get("type")
         date_start = args.get("date_start")
         date_end = args.get("date_end")
+        tags = self._parse_tags(args.get("tags") or args.get("filter_tags") or args.get("filter_tag"))
         if session_id:
             project = None
         updated = self.manager.rename_tag(
@@ -221,6 +222,7 @@ class MCPServer:
             obs_type=obs_type,
             date_start=date_start,
             date_end=date_end,
+            tag_filters=tags,
         )
         return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
 
@@ -233,6 +235,7 @@ class MCPServer:
         obs_type = args.get("obs_type") or args.get("type")
         date_start = args.get("date_start")
         date_end = args.get("date_end")
+        tags = self._parse_tags(args.get("tags") or args.get("filter_tags") or args.get("filter_tag"))
         if session_id:
             project = None
         updated = self.manager.delete_tag(
@@ -242,6 +245,7 @@ class MCPServer:
             obs_type=obs_type,
             date_start=date_start,
             date_end=date_end,
+            tag_filters=tags,
         )
         return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
 
