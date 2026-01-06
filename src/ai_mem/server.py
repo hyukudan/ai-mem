@@ -598,6 +598,30 @@ def read_root():
                 display: grid;
                 gap: 10px;
             }
+            .saved-card {
+                padding: 12px;
+                border-radius: 12px;
+                background: #f3efe8;
+                display: grid;
+                gap: 10px;
+            }
+            .saved-title {
+                font-weight: 600;
+                color: var(--muted);
+                text-transform: uppercase;
+                font-size: 12px;
+                letter-spacing: 0.08em;
+            }
+            .saved-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                align-items: center;
+            }
+            .saved-row input {
+                flex: 1;
+                min-width: 120px;
+            }
             .session-card {
                 padding: 12px;
                 border-radius: 12px;
@@ -1067,6 +1091,20 @@ def read_root():
                         <label for="tagsFilter">Tags</label>
                         <input type="text" id="tagsFilter" placeholder="comma,separated">
                     </div>
+                    <div class="saved-card" id="savedFiltersCard">
+                        <div class="saved-title">Saved filters</div>
+                        <select id="savedFilters">
+                            <option value="">Select saved filter</option>
+                        </select>
+                        <div class="saved-row">
+                            <input type="text" id="savedFilterName" placeholder="name">
+                            <button class="secondary" onclick="saveCurrentFilter()">Save</button>
+                        </div>
+                        <div class="saved-row">
+                            <button class="secondary" onclick="applySavedFilter()">Apply</button>
+                            <button class="secondary" onclick="deleteSavedFilter()">Delete</button>
+                        </div>
+                    </div>
                     <div class="context-card" id="contextCard">
                         <div class="context-title">Context</div>
                         <div class="context-grid">
@@ -1320,6 +1358,7 @@ def read_root():
             let streamSource = null;
             let streamItems = [];
             const streamMaxItems = 20;
+            let savedFilters = [];
 
             async function loadProjects() {
                 const response = await fetch('/api/projects', { headers: getAuthHeaders() });
@@ -2748,6 +2787,144 @@ def read_root():
                 localStorage.setItem('ai-mem-date-end', selectedDateEnd);
             }
 
+            function loadSavedFilters() {
+                const stored = localStorage.getItem('ai-mem-saved-filters');
+                if (!stored) {
+                    savedFilters = [];
+                    renderSavedFilters();
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(stored);
+                    savedFilters = Array.isArray(parsed) ? parsed : [];
+                } catch (error) {
+                    savedFilters = [];
+                }
+                renderSavedFilters();
+            }
+
+            function persistSavedFilters() {
+                localStorage.setItem('ai-mem-saved-filters', JSON.stringify(savedFilters));
+                renderSavedFilters();
+            }
+
+            function renderSavedFilters() {
+                const select = document.getElementById('savedFilters');
+                if (!select) return;
+                select.innerHTML = '<option value="">Select saved filter</option>';
+                savedFilters.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.name || '';
+                    option.textContent = item.name || '';
+                    select.appendChild(option);
+                });
+            }
+
+            function collectFilterState() {
+                return {
+                    name: '',
+                    mode: lastMode || 'search',
+                    query: (document.getElementById('query')?.value || '').trim(),
+                    project: document.getElementById('project').value || '',
+                    sessionId: (document.getElementById('sessionId')?.value || '').trim(),
+                    type: document.getElementById('type').value || '',
+                    tags: (document.getElementById('tagsFilter')?.value || '').trim(),
+                    dateStart: document.getElementById('dateStart')?.value || '',
+                    dateEnd: document.getElementById('dateEnd')?.value || '',
+                    limit: document.getElementById('limit')?.value || listLimit,
+                    depthBefore: document.getElementById('depthBefore')?.value || timelineDepthBefore,
+                    depthAfter: document.getElementById('depthAfter')?.value || timelineDepthAfter,
+                    anchorId: timelineAnchorId || '',
+                };
+            }
+
+            async function applyFilterState(state) {
+                if (!state) return;
+                const projectSelect = document.getElementById('project');
+                if (projectSelect) {
+                    projectSelect.value = state.project || '';
+                }
+                document.getElementById('query').value = state.query || '';
+                document.getElementById('sessionId').value = state.sessionId || '';
+                document.getElementById('type').value = state.type || '';
+                document.getElementById('tagsFilter').value = state.tags || '';
+                document.getElementById('dateStart').value = state.dateStart || '';
+                document.getElementById('dateEnd').value = state.dateEnd || '';
+                document.getElementById('limit').value = state.limit || listLimit;
+                document.getElementById('depthBefore').value = state.depthBefore || timelineDepthBefore;
+                document.getElementById('depthAfter').value = state.depthAfter || timelineDepthAfter;
+
+                selectedProject = state.project || '';
+                localStorage.setItem('ai-mem-selected-project', selectedProject);
+                listLimit = state.limit || listLimit;
+                timelineDepthBefore = state.depthBefore || timelineDepthBefore;
+                timelineDepthAfter = state.depthAfter || timelineDepthAfter;
+                localStorage.setItem('ai-mem-list-limit', listLimit);
+                localStorage.setItem('ai-mem-timeline-depth-before', timelineDepthBefore);
+                localStorage.setItem('ai-mem-timeline-depth-after', timelineDepthAfter);
+
+                timelineAnchorId = state.anchorId || '';
+                timelineQuery = state.query || '';
+                persistFilters();
+                persistQuery(state.query || '');
+                persistTimelineAnchor();
+                updateQueryClearButton();
+                updateAnchorPill();
+                updateResultsHeader();
+                updateFiltersPill();
+                await loadStats();
+                if (state.mode === 'timeline') {
+                    lastMode = 'timeline';
+                    persistLastMode('timeline');
+                    await timeline();
+                } else {
+                    lastMode = 'search';
+                    persistLastMode('search');
+                    await search();
+                }
+                restartStreamIfActive();
+            }
+
+            function saveCurrentFilter() {
+                const nameInput = document.getElementById('savedFilterName');
+                const name = (nameInput?.value || '').trim();
+                if (!name) {
+                    alert('Enter a name for this filter.');
+                    return;
+                }
+                const state = collectFilterState();
+                state.name = name;
+                const existingIndex = savedFilters.findIndex(item => item.name === name);
+                if (existingIndex >= 0) {
+                    savedFilters[existingIndex] = state;
+                } else {
+                    savedFilters.unshift(state);
+                }
+                persistSavedFilters();
+                if (nameInput) {
+                    nameInput.value = '';
+                }
+            }
+
+            async function applySavedFilter() {
+                const select = document.getElementById('savedFilters');
+                const name = select?.value || '';
+                if (!name) return;
+                const state = savedFilters.find(item => item.name === name);
+                await applyFilterState(state);
+            }
+
+            function deleteSavedFilter() {
+                const select = document.getElementById('savedFilters');
+                const name = select?.value || '';
+                if (!name) return;
+                savedFilters = savedFilters.filter(item => item.name !== name);
+                persistSavedFilters();
+                if (select) {
+                    select.value = '';
+                }
+            }
+
             function updateQueryClearButton() {
                 const input = document.getElementById('query');
                 const button = document.getElementById('queryClear');
@@ -3742,6 +3919,7 @@ def read_root():
             loadSelectedProject();
             loadLastMode();
             loadSelectedFilters();
+            loadSavedFilters();
             loadQuery();
             loadContextConfig().catch(err => console.warn('Context config load failed', err));
             loadStatsCollapse();
