@@ -1283,7 +1283,7 @@ def read_root():
                 if (!header) return;
                 const anchorSummary = getAnchorSummary();
                 const details = getFilterDetails();
-                const filtersLabel = details.count > 0 ? `Filters (${details.count})` : 'Filters (0)';
+                const filtersLabel = details.count > 0 ? `Filters (${details.count})` : '';
                 const icons = details.count ? `<span class="filter-icons">${details.icons}</span>` : '';
                 const autoRefresh = document.getElementById('autoRefresh');
                 const live = autoRefresh ? autoRefresh.checked : false;
@@ -1311,14 +1311,16 @@ def read_root():
                     if (anchorSummary) {
                         label = `${label} • ${anchorSummary.label}: ${anchorSummary.value}`;
                     }
-                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}${timelineBadge}${autoBadge}</span><div class="row inline"><button class="secondary" onclick="clearTimelineAnchor()">Clear anchor</button><button class="secondary" onclick="clearAllFilters()">Clear filters</button><button class="secondary" onclick="search()">Exit</button></div>`;
+                    const filterText = filtersLabel ? ` • ${filtersLabel}` : '';
+                    header.innerHTML = `<span>${label}${filterText}${icons}${liveDot}${pulseStatus}${timelineBadge}${autoBadge}</span><div class="row inline"><button class="secondary" onclick="clearTimelineAnchor()">Clear anchor</button><button class="secondary" onclick="clearAllFilters()">Clear filters</button><button class="secondary" onclick="search()">Exit</button></div>`;
                     header.style.display = 'flex';
                     return;
                 }
                 if (lastMode === 'search' && (details.count > 0 || live)) {
                     const query = (document.getElementById('query').value || '').trim();
                     const label = query ? `Search results for "${query}"` : 'Search results';
-                    header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}${autoBadge}</span><div class="row inline"><button class="secondary" onclick="clearAllFilters()">Clear filters</button></div>`;
+                    const filterText = filtersLabel ? ` • ${filtersLabel}` : '';
+                    header.innerHTML = `<span>${label}${filterText}${icons}${liveDot}${pulseStatus}${autoBadge}</span><div class="row inline"><button class="secondary" onclick="clearAllFilters()">Clear filters</button></div>`;
                     header.style.display = 'flex';
                     return;
                 }
