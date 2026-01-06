@@ -330,6 +330,7 @@ Viewer features:
 - Session list previews the latest session summary when available.
 - Session detail view shows totals, top types, and top tags.
 - Save and re-apply search filters per project or globally (stored locally in the browser).
+- Click stats entries (type/tag/project) to auto-filter.
 - Tag management panel to add, list, rename, and delete tags.
 - Context presets per project in the viewer UI.
 - Collapsible sidebar panels for saved filters, tags, and context.

@@ -1030,6 +1030,17 @@ def read_root():
                 gap: 12px;
                 font-size: 13px;
             }
+            .stat-click {
+                cursor: pointer;
+            }
+            .stat-click:hover {
+                color: var(--accent);
+            }
+            .stat-pill {
+                padding: 2px 8px;
+                font-size: 11px;
+                margin-right: 0;
+            }
             .stat-row strong {
                 color: var(--accent);
             }
@@ -3256,11 +3267,62 @@ def read_root():
                 input.value = next.join(', ');
                 persistFilters();
                 loadStats();
+                loadTagManager();
                 if (lastMode === 'timeline') {
                     timeline({ useInput: false });
                 } else {
                     search();
                 }
+            }
+
+            function applyTypeFilter(type) {
+                if (!type) return;
+                const input = document.getElementById('type');
+                if (!input) return;
+                input.value = type;
+                persistFilters();
+                loadStats();
+                loadTagManager();
+                refreshResultsForFilters();
+                restartStreamIfActive();
+            }
+
+            function applyProjectFilter(project) {
+                if (!project) return;
+                const select = document.getElementById('project');
+                if (!select) return;
+                select.value = project;
+                select.dispatchEvent(new Event('change'));
+            }
+
+            function bindStatsActions() {
+                const container = document.getElementById('stats');
+                if (!container) return;
+                container.querySelectorAll('[data-stat-tag]').forEach(item => {
+                    if (item.dataset.bound === 'true') return;
+                    item.dataset.bound = 'true';
+                    item.addEventListener('click', event => {
+                        const tag = item.dataset.statTag || '';
+                        if (!tag) return;
+                        applyTagFilter(tag, event.shiftKey);
+                    });
+                });
+                container.querySelectorAll('[data-stat-type]').forEach(item => {
+                    if (item.dataset.bound === 'true') return;
+                    item.dataset.bound = 'true';
+                    item.addEventListener('click', () => {
+                        const value = item.dataset.statType || '';
+                        applyTypeFilter(value);
+                    });
+                });
+                container.querySelectorAll('[data-stat-project]').forEach(item => {
+                    if (item.dataset.bound === 'true') return;
+                    item.dataset.bound = 'true';
+                    item.addEventListener('click', () => {
+                        const value = item.dataset.statProject || '';
+                        applyProjectFilter(value);
+                    });
+                });
             }
 
             function bindTagPills(container) {
@@ -4024,7 +4086,7 @@ def read_root():
                 if (data.by_type && data.by_type.length) {
                     html += data.by_type.map(item => `
                         <div class="stat-row">
-                            <span>${item.type}</span>
+                            <span class="stat-click" data-stat-type="${item.type || ''}">${item.type}</span>
                             <strong>${item.count}</strong>
                         </div>
                     `).join('');
@@ -4039,7 +4101,7 @@ def read_root():
                         const topProjects = data.by_project.slice(0, 8);
                         html += topProjects.map(item => `
                             <div class="stat-row">
-                                <span>${item.project}</span>
+                                <span class="stat-click" data-stat-project="${item.project || ''}">${item.project}</span>
                                 <strong>${item.count}</strong>
                             </div>
                         `).join('');
@@ -4053,7 +4115,7 @@ def read_root():
                             const width = Math.max(6, Math.round((item.count / maxProject) * 100));
                             return `
                                 <div class="project-bar">
-                                    <span title="${item.project}">${item.project}</span>
+                                    <span class="stat-click" data-stat-project="${item.project || ''}" title="${item.project}">${item.project}</span>
                                     <div class="bar-track">
                                         <div class="bar-fill" style="width:${width}%"></div>
                                     </div>
@@ -4072,7 +4134,7 @@ def read_root():
                 if (data.top_tags && data.top_tags.length) {
                     html += data.top_tags.map(item => `
                         <div class="stat-row">
-                            <span>${item.tag}</span>
+                            <span class="pill clickable stat-pill" data-stat-tag="${item.tag || ''}">${item.tag}</span>
                             <strong>${item.count}</strong>
                         </div>
                     `).join('');
@@ -4101,16 +4163,17 @@ def read_root():
                     html += '<div class="stat-section">Top tags by type</div>';
                     data.top_tags_by_type.forEach(group => {
                         if (!group.tags || !group.tags.length) return;
-                        html += `<div class="subtitle">${group.type}</div>`;
+                        html += `<div class="subtitle"><span class="stat-click" data-stat-type="${group.type || ''}">${group.type}</span></div>`;
                         html += group.tags.map(item => `
                             <div class="stat-row">
-                                <span>${item.tag}</span>
+                                <span class="pill clickable stat-pill" data-stat-tag="${item.tag || ''}">${item.tag}</span>
                                 <strong>${item.count}</strong>
                             </div>
                         `).join('');
                     });
                 }
                 container.innerHTML = html;
+                bindStatsActions();
             }
 
             async function renderResults(data) {
