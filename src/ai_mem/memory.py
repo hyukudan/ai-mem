@@ -44,6 +44,29 @@ def _build_chat_provider(config: AppConfig) -> ChatProvider:
             base_url=base_url,
             timeout_s=config.llm.timeout_s,
         )
+    if provider == "bedrock":
+        model_id = config.llm.model
+        if not model_id or model_id == "local-model":
+            raise ValueError("Bedrock provider requires a model id (llm model).")
+        region = (
+            os.environ.get("AI_MEM_BEDROCK_REGION")
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+        )
+        endpoint = config.llm.base_url or os.environ.get("AI_MEM_BEDROCK_ENDPOINT")
+        profile = os.environ.get("AI_MEM_BEDROCK_PROFILE")
+        max_tokens = int(os.environ.get("AI_MEM_BEDROCK_MAX_TOKENS", "1024"))
+        anthropic_version = os.environ.get("AI_MEM_BEDROCK_ANTHROPIC_VERSION", "bedrock-2023-05-31")
+        from .providers.bedrock import BedrockProvider
+
+        return BedrockProvider(
+            model_id=model_id,
+            region=region,
+            endpoint_url=endpoint,
+            profile=profile,
+            max_tokens=max_tokens,
+            anthropic_version=anthropic_version,
+        )
     if provider in {"azure", "azure-openai"}:
         api_key = config.llm.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
         if not api_key:
@@ -103,6 +126,27 @@ def _build_embedding_provider(config: AppConfig) -> EmbeddingProvider:
         from .embeddings.fastembed import FastEmbedProvider
 
         return FastEmbedProvider(model_name=config.embeddings.model)
+    if provider == "bedrock":
+        model_id = config.embeddings.model
+        if not model_id or model_id == "local-embedding":
+            raise ValueError("Bedrock embeddings require a model id.")
+        region = (
+            os.environ.get("AI_MEM_BEDROCK_REGION")
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+        )
+        endpoint = config.embeddings.base_url or os.environ.get("AI_MEM_BEDROCK_ENDPOINT")
+        profile = os.environ.get("AI_MEM_BEDROCK_PROFILE")
+        input_type = os.environ.get("AI_MEM_BEDROCK_EMBED_INPUT_TYPE")
+        from .embeddings.bedrock import BedrockEmbeddingProvider
+
+        return BedrockEmbeddingProvider(
+            model_id=model_id,
+            region=region,
+            endpoint_url=endpoint,
+            profile=profile,
+            input_type=input_type,
+        )
     if provider in {"azure", "azure-openai"}:
         api_key = config.embeddings.api_key or os.environ.get("AZURE_OPENAI_API_KEY")
         if not api_key:

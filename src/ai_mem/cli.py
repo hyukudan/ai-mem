@@ -128,14 +128,14 @@ def get_memory_manager() -> MemoryManager:
 @app.command()
 def config(
     llm_provider: Optional[str] = typer.Option(
-        None, help="LLM provider (gemini, anthropic, azure-openai, openai-compatible, vllm)"
+        None, help="LLM provider (gemini, anthropic, bedrock, azure-openai, openai-compatible, vllm)"
     ),
     llm_model: Optional[str] = typer.Option(None, help="LLM model name"),
     llm_api_key: Optional[str] = typer.Option(None, help="LLM API key"),
     llm_base_url: Optional[str] = typer.Option(None, help="LLM base URL (OpenAI-compatible)"),
     llm_api_version: Optional[str] = typer.Option(None, help="LLM API version (Azure OpenAI)"),
     embeddings_provider: Optional[str] = typer.Option(
-        None, help="Embeddings provider (fastembed, gemini, azure-openai, openai-compatible, auto)"
+        None, help="Embeddings provider (fastembed, gemini, bedrock, azure-openai, openai-compatible, auto)"
     ),
     embeddings_model: Optional[str] = typer.Option(None, help="Embeddings model name"),
     embeddings_api_key: Optional[str] = typer.Option(None, help="Embeddings API key"),

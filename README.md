@@ -47,7 +47,7 @@ You can use ai-mem entirely locally with fast embeddings, or connect it to Gemin
 
 ## Key Features
 
-- Model agnostic: Gemini native + OpenAI-compatible local models + Azure OpenAI.
+- Model agnostic: Gemini native + OpenAI-compatible local models + Azure OpenAI + AWS Bedrock.
 - Claude ready: Anthropic proxy + summarization provider.
 - Local and private: SQLite + FTS5 + ChromaDB stored on disk.
 - Semantic + keyword search: hybrid retrieval for relevance.
@@ -205,6 +205,9 @@ ai-mem config --llm-provider anthropic --llm-model claude-3-haiku-20240307 --llm
 # Azure OpenAI summarization
 ai-mem config --llm-provider azure-openai --llm-model YOUR_DEPLOYMENT --llm-api-key YOUR_KEY --llm-base-url https://YOUR_RESOURCE.openai.azure.com --llm-api-version 2024-02-01
 
+# AWS Bedrock summarization
+ai-mem config --llm-provider bedrock --llm-model anthropic.claude-3-haiku-20240307-v1:0
+
 # OpenAI-compatible model (vLLM, LM Studio, Ollama)
 ai-mem config --llm-provider openai-compatible --llm-base-url http://localhost:8000/v1 --llm-model YOUR_MODEL
 
@@ -213,6 +216,9 @@ ai-mem config --embeddings-provider openai-compatible --embeddings-base-url http
 
 # Azure OpenAI embeddings
 ai-mem config --embeddings-provider azure-openai --embeddings-model YOUR_EMBED_DEPLOYMENT --embeddings-api-key YOUR_KEY --embeddings-base-url https://YOUR_RESOURCE.openai.azure.com --embeddings-api-version 2024-02-01
+
+# AWS Bedrock embeddings
+ai-mem config --embeddings-provider bedrock --embeddings-model amazon.titan-embed-text-v1
 
 # Auto embeddings: use OpenAI-compatible if configured, else fastembed
 ai-mem config --embeddings-provider auto
@@ -563,6 +569,22 @@ Env vars:
 - AI_MEM_AZURE_UPSTREAM_BASE_URL or AZURE_OPENAI_ENDPOINT
 - AI_MEM_AZURE_DEPLOYMENT or AZURE_OPENAI_DEPLOYMENT
 - AI_MEM_AZURE_API_VERSION or AZURE_OPENAI_API_VERSION (default 2024-02-01)
+
+## AWS Bedrock
+
+Set AWS credentials + region via standard AWS environment variables or profiles:
+
+- AWS_REGION / AWS_DEFAULT_REGION
+- AWS_PROFILE
+- AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+
+Optional overrides:
+- AI_MEM_BEDROCK_REGION
+- AI_MEM_BEDROCK_PROFILE
+- AI_MEM_BEDROCK_ENDPOINT (custom endpoint)
+- AI_MEM_BEDROCK_MAX_TOKENS (default 1024)
+- AI_MEM_BEDROCK_ANTHROPIC_VERSION (default bedrock-2023-05-31)
+- AI_MEM_BEDROCK_EMBED_INPUT_TYPE (for Cohere embed, default search_document)
 
 ## API Token (Optional)
 
