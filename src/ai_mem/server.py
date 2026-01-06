@@ -1451,6 +1451,10 @@ def read_root():
                         <input type="date" id="dateEnd">
                     </div>
                     <div>
+                        <label for="dateSince">Date since (relative)</label>
+                        <input type="text" id="dateSince" placeholder="e.g. 24h, 7d">
+                    </div>
+                    <div>
                         <label for="exportSince">Export since (relative)</label>
                         <input type="text" id="exportSince" placeholder="e.g. 24h, 7d">
                     </div>
@@ -1545,6 +1549,7 @@ def read_root():
             let selectedTags = '';
             let selectedDateStart = '';
             let selectedDateEnd = '';
+            let selectedDateSince = '';
             let streamSource = null;
             let streamItems = [];
             const streamMaxItems = 20;
@@ -1598,6 +1603,7 @@ def read_root():
                 localStorage.setItem('ai-mem-list-limit', listLimit);
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 const params = new URLSearchParams({ query });
                 if (sessionId) {
                     params.append('session_id', sessionId);
@@ -1609,6 +1615,7 @@ def read_root():
                 if (limit) params.append('limit', limit);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
+                if (!dateStart && dateSince) params.append('since', dateSince);
                 return params.toString();
             }
 
@@ -1728,6 +1735,7 @@ def read_root():
                 const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 const params = new URLSearchParams();
                 if (sessionId) {
                     params.append('session_id', sessionId);
@@ -1738,6 +1746,7 @@ def read_root():
                 if (tags) params.append('tags', tags);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
+                if (!dateStart && dateSince) params.append('since', dateSince);
                 params.append('day_limit', String(options.day_limit ?? 7));
                 params.append('tag_limit', String(options.tag_limit ?? 7));
                 if (options.type_tag_limit !== undefined) {
@@ -2401,8 +2410,11 @@ def read_root():
                 if (!id) return;
                 const exportSince = getExportSinceValue();
                 const params = new URLSearchParams({ session_id: id, format });
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 if (exportSince) {
                     params.append('since', exportSince);
+                } else if (dateSince) {
+                    params.append('since', dateSince);
                 }
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
@@ -3062,6 +3074,7 @@ def read_root():
                 const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 if (sessionId) {
                     dots.push({ label: 'session', value: sessionId });
                 } else if (project) {
@@ -3071,6 +3084,8 @@ def read_root():
                 if (tags) dots.push({ label: 'tag', value: tags });
                 if (dateStart || dateEnd) {
                     dots.push({ label: 'date', value: `${dateStart || '…'} → ${dateEnd || '…'}` });
+                } else if (dateSince) {
+                    dots.push({ label: 'date', value: `since ${dateSince}` });
                 }
                 if (query) dots.push({ label: 'query', value: query });
                 const iconMap = {
@@ -3206,6 +3221,10 @@ def read_root():
                 start.setDate(end.getDate() - (days - 1));
                 document.getElementById('dateEnd').value = formatLocalDate(end);
                 document.getElementById('dateStart').value = formatLocalDate(start);
+                const dateSinceInput = document.getElementById('dateSince');
+                if (dateSinceInput) {
+                    dateSinceInput.value = '';
+                }
                 persistFilters();
                 loadStats();
                 loadTagManager();
@@ -3235,6 +3254,10 @@ def read_root():
             function clearDates() {
                 document.getElementById('dateStart').value = '';
                 document.getElementById('dateEnd').value = '';
+                const dateSinceInput = document.getElementById('dateSince');
+                if (dateSinceInput) {
+                    dateSinceInput.value = '';
+                }
                 persistFilters();
                 loadStats();
                 loadTagManager();
@@ -3267,6 +3290,10 @@ def read_root():
                 document.getElementById('tagsFilter').value = '';
                 document.getElementById('dateStart').value = '';
                 document.getElementById('dateEnd').value = '';
+                const dateSinceInput = document.getElementById('dateSince');
+                if (dateSinceInput) {
+                    dateSinceInput.value = '';
+                }
                 timelineAnchorId = '';
                 timelineQuery = '';
                 selectedProject = '';
@@ -3275,6 +3302,7 @@ def read_root():
                 selectedTags = '';
                 selectedDateStart = '';
                 selectedDateEnd = '';
+                selectedDateSince = '';
                 listLimit = '10';
                 timelineDepthBefore = '3';
                 timelineDepthAfter = '3';
@@ -3287,6 +3315,7 @@ def read_root():
                 localStorage.removeItem('ai-mem-selected-tags');
                 localStorage.removeItem('ai-mem-date-start');
                 localStorage.removeItem('ai-mem-date-end');
+                localStorage.removeItem('ai-mem-date-since');
                 clearQueryStorage(previousProject);
                 clearQueryStorage('');
                 clearQueryUseGlobalStorage(previousProject);
@@ -3411,11 +3440,13 @@ def read_root():
                 selectedTags = (document.getElementById('tagsFilter').value || '').trim();
                 selectedDateStart = document.getElementById('dateStart').value || '';
                 selectedDateEnd = document.getElementById('dateEnd').value || '';
+                selectedDateSince = (document.getElementById('dateSince')?.value || '').trim();
                 localStorage.setItem('ai-mem-selected-session-id', selectedSessionId);
                 localStorage.setItem('ai-mem-selected-type', selectedType);
                 localStorage.setItem('ai-mem-selected-tags', selectedTags);
                 localStorage.setItem('ai-mem-date-start', selectedDateStart);
                 localStorage.setItem('ai-mem-date-end', selectedDateEnd);
+                localStorage.setItem('ai-mem-date-since', selectedDateSince);
             }
 
             function getSavedFiltersKeys(projectValue) {
@@ -3498,6 +3529,7 @@ def read_root():
                     tags: (document.getElementById('tagsFilter')?.value || '').trim(),
                     dateStart: document.getElementById('dateStart')?.value || '',
                     dateEnd: document.getElementById('dateEnd')?.value || '',
+                    dateSince: (document.getElementById('dateSince')?.value || '').trim(),
                     limit: document.getElementById('limit')?.value || listLimit,
                     depthBefore: document.getElementById('depthBefore')?.value || timelineDepthBefore,
                     depthAfter: document.getElementById('depthAfter')?.value || timelineDepthAfter,
@@ -3517,6 +3549,15 @@ def read_root():
                 document.getElementById('tagsFilter').value = state.tags || '';
                 document.getElementById('dateStart').value = state.dateStart || '';
                 document.getElementById('dateEnd').value = state.dateEnd || '';
+                const dateSinceInput = document.getElementById('dateSince');
+                const dateSinceValue = state.dateSince || '';
+                if (dateSinceInput) {
+                    dateSinceInput.value = dateSinceValue;
+                }
+                if (dateSinceValue) {
+                    document.getElementById('dateStart').value = '';
+                    document.getElementById('dateEnd').value = '';
+                }
                 document.getElementById('limit').value = state.limit || listLimit;
                 document.getElementById('depthBefore').value = state.depthBefore || timelineDepthBefore;
                 document.getElementById('depthAfter').value = state.depthAfter || timelineDepthAfter;
@@ -4065,6 +4106,7 @@ def read_root():
                 selectedTags = localStorage.getItem('ai-mem-selected-tags') || '';
                 selectedDateStart = localStorage.getItem('ai-mem-date-start') || '';
                 selectedDateEnd = localStorage.getItem('ai-mem-date-end') || '';
+                selectedDateSince = localStorage.getItem('ai-mem-date-since') || '';
                 const sessionInput = document.getElementById('sessionId');
                 if (sessionInput) {
                     sessionInput.value = selectedSessionId;
@@ -4077,6 +4119,14 @@ def read_root():
                 }
                 document.getElementById('dateStart').value = selectedDateStart;
                 document.getElementById('dateEnd').value = selectedDateEnd;
+                const dateSinceInput = document.getElementById('dateSince');
+                if (dateSinceInput) {
+                    dateSinceInput.value = selectedDateSince;
+                }
+                if (selectedDateSince) {
+                    document.getElementById('dateStart').value = '';
+                    document.getElementById('dateEnd').value = '';
+                }
                 restartStreamIfActive();
             }
 
@@ -4287,6 +4337,7 @@ def read_root():
                 const type = document.getElementById('type').value;
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 const depthBefore = document.getElementById('depthBefore').value;
                 const depthAfter = document.getElementById('depthAfter').value;
                 timelineDepthBefore = depthBefore || timelineDepthBefore;
@@ -4302,6 +4353,7 @@ def read_root():
                 if (tags) params.append('tags', tags);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
+                if (!dateStart && dateSince) params.append('since', dateSince);
                 if (timelineAnchorId) {
                     params.append('anchor_id', timelineAnchorId);
                 } else {
@@ -4460,6 +4512,7 @@ def read_root():
                 const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 const exportSince = getExportSinceValue();
                 const params = new URLSearchParams();
                 if (sessionId) {
@@ -4471,7 +4524,11 @@ def read_root():
                 if (tags) params.append('tags', tags);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
-                if (exportSince && !dateStart) params.append('since', exportSince);
+                if (exportSince && !dateStart) {
+                    params.append('since', exportSince);
+                } else if (!dateStart && dateSince) {
+                    params.append('since', dateSince);
+                }
                 params.append('format', format);
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
@@ -4507,6 +4564,7 @@ def read_root():
                 const type = document.getElementById('type').value;
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 const params = buildStatsParams({ day_limit: 60, tag_limit: 100, type_tag_limit: 3 });
                 const response = await fetch(`/api/stats?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
@@ -4541,6 +4599,7 @@ def read_root():
                     type ? safeSlug(type, 'type') : '',
                     dateStart ? safeSlug(dateStart, '') : '',
                     dateEnd ? safeSlug(dateEnd, '') : '',
+                    !dateStart && dateSince ? `since-${safeSlug(dateSince, '')}` : '',
                 ].filter(Boolean);
                 link.href = url;
                 link.download = `ai-mem-stats-${suffixParts.join('-') || 'all'}.csv`;
@@ -4556,6 +4615,7 @@ def read_root():
                 const type = document.getElementById('type').value;
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const dateSince = (document.getElementById('dateSince')?.value || '').trim();
                 const params = buildStatsParams({ day_limit: 60, tag_limit: 100, type_tag_limit: 3 });
                 const response = await fetch(`/api/stats?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
@@ -4571,6 +4631,7 @@ def read_root():
                     type ? safeSlug(type, 'type') : '',
                     dateStart ? safeSlug(dateStart, '') : '',
                     dateEnd ? safeSlug(dateEnd, '') : '',
+                    !dateStart && dateSince ? `since-${safeSlug(dateSince, '')}` : '',
                 ].filter(Boolean);
                 link.href = url;
                 link.download = `ai-mem-stats-${suffixParts.join('-') || 'all'}.json`;
@@ -4708,17 +4769,36 @@ def read_root():
                     restartStreamIfActive();
                 });
                 document.getElementById('dateStart').addEventListener('change', () => {
+                    const dateSinceInput = document.getElementById('dateSince');
+                    if (dateSinceInput) {
+                        dateSinceInput.value = '';
+                    }
                     persistFilters();
                     loadStats();
                     loadTagManager();
                     refreshResultsForFilters();
                 });
                 document.getElementById('dateEnd').addEventListener('change', () => {
+                    const dateSinceInput = document.getElementById('dateSince');
+                    if (dateSinceInput) {
+                        dateSinceInput.value = '';
+                    }
                     persistFilters();
                     loadStats();
                     loadTagManager();
                     refreshResultsForFilters();
                 });
+                const dateSinceInput = document.getElementById('dateSince');
+                if (dateSinceInput) {
+                    dateSinceInput.addEventListener('change', () => {
+                        document.getElementById('dateStart').value = '';
+                        document.getElementById('dateEnd').value = '';
+                        persistFilters();
+                        loadStats();
+                        loadTagManager();
+                        refreshResultsForFilters();
+                    });
+                }
                 const exportSinceInput = document.getElementById('exportSince');
                 if (exportSinceInput) {
                     exportSinceInput.addEventListener('change', () => {
@@ -4911,9 +4991,12 @@ def search_memories(
     session_id: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    since: Optional[str] = None,
     tags: Optional[str] = None,
 ):
     _check_token(request)
+    if date_start is None and since is not None:
+        date_start = since
     try:
         results = get_manager().search(
             query,
@@ -4942,9 +5025,12 @@ def get_timeline(
     session_id: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    since: Optional[str] = None,
     tags: Optional[str] = None,
 ):
     _check_token(request)
+    if date_start is None and since is not None:
+        date_start = since
     try:
         results = get_manager().timeline(
             anchor_id=anchor_id,
@@ -5231,12 +5317,15 @@ def get_stats(
     session_id: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    since: Optional[str] = None,
     tags: Optional[str] = None,
     tag_limit: Optional[int] = None,
     day_limit: Optional[int] = None,
     type_tag_limit: Optional[int] = None,
 ):
     _check_token(request)
+    if date_start is None and since is not None:
+        date_start = since
     return get_manager().get_stats(
         project=project,
         obs_type=obs_type,

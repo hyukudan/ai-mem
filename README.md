@@ -321,6 +321,8 @@ Viewer features:
 - Session start/end, summaries, and export.
 - Export JSON/JSONL/CSV and import JSON/JSONL/CSV from the viewer.
 - Export since (relative) for incremental snapshots.
+- Date since (relative) filter for search, timeline, and stats in the viewer.
+- Relative date filters (since) for search, timeline, and stats.
 - Stream view for new observations.
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.
@@ -458,8 +460,8 @@ When you run ai-mem server, see docs at:
 
 Key endpoints:
 - POST /api/memories: add a memory (project, session_id, obs_type, tags, metadata, title, summarize)
-- GET /api/search: search (project, session_id, obs_type, tags, date_start, date_end)
-- GET /api/timeline: timeline (project, session_id, obs_type, tags, date_start, date_end, depth_before, depth_after)
+- GET /api/search: search (project, session_id, obs_type, tags, date_start, date_end, since)
+- GET /api/timeline: timeline (project, session_id, obs_type, tags, date_start, date_end, since, depth_before, depth_after)
 - GET /api/observations: list observations (project, session_id, obs_type, tags, date_start, date_end, since, limit)
 - GET /api/observations/{id}: single observation
 - GET /api/observation/{id}: alias
@@ -471,7 +473,7 @@ Key endpoints:
 - GET /api/sessions/{id}/observations
 - POST /api/sessions/start (project, goal, session_id)
 - POST /api/sessions/end (session_id or latest)
-- GET /api/stats (project, session_id, obs_type, tags, date_start, date_end, tag_limit, day_limit, type_tag_limit)
+- GET /api/stats (project, session_id, obs_type, tags, date_start, date_end, since, tag_limit, day_limit, type_tag_limit)
 - GET /api/tags (project, session_id, obs_type, tags, date_start, date_end, limit)
 - POST /api/tags/add (tag, project, session_id, obs_type, tags, date_start, date_end)
 - POST /api/tags/rename (old_tag, new_tag, project, session_id, obs_type, tags, date_start, date_end)
