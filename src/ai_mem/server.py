@@ -1301,7 +1301,8 @@ def read_root():
                 let timelineBadge = '';
                 if (lastMode === 'timeline' || anchorSummary) {
                     const suffix = anchorSummary ? '' : ' (no anchor)';
-                    timelineBadge = `<span class="timeline-badge">Timeline${suffix}</span>`;
+                    const title = anchorSummary ? 'Timeline mode' : 'Timeline mode without an anchor';
+                    timelineBadge = `<span class="timeline-badge" title="${title}">Timeline${suffix}</span>`;
                 }
                 const globalToggle = document.getElementById('autoGlobal');
                 const autoScope = globalToggle && globalToggle.checked ? 'global' : 'project';
