@@ -74,6 +74,34 @@ class DatabaseTests(unittest.TestCase):
             stats = db.get_stats(project="proj", tag_filters=["alpha"])
             self.assertEqual(stats["total"], 1)
 
+    def test_assets_are_stored_and_retrieved(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            session = Session(project="proj")
+            db.add_session(session)
+
+            obs = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Asset note",
+                summary="Asset note",
+            )
+            db.add_observation(obs)
+            db.add_asset(
+                observation_id=obs.id,
+                asset_type="file",
+                name="proof.txt",
+                path="/tmp/proof.txt",
+                content="diff content",
+                metadata={"purpose": "test"},
+            )
+            assets = db.get_assets_for_observation(obs.id)
+            self.assertEqual(len(assets), 1)
+            self.assertEqual(assets[0]["metadata"].get("purpose"), "test")
+            stored = db.get_observation(obs.id)
+            self.assertEqual(len(stored.get("assets", [])), 1)
+
     def test_list_observations_filters(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")

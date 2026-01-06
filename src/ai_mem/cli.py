@@ -4,7 +4,8 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 import typer
 from rich.console import Console
@@ -15,7 +16,10 @@ from .context import build_context, estimate_tokens
 from .memory import MemoryManager
 
 app = typer.Typer(help="AI Memory: Persistent memory for any LLM.")
+snapshot_app = typer.Typer(help="Snapshot export/import for incremental sync")
 console = Console()
+
+app.add_typer(snapshot_app, name="snapshot")
 
 
 def _infer_format(path: str, fmt: Optional[str], default: str) -> str:
@@ -27,6 +31,98 @@ def _infer_format(path: str, fmt: Optional[str], default: str) -> str:
     if suffix == ".csv":
         return "csv"
     return default
+
+def _read_export_file(path: str, fmt: str) -> tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    metadata: Optional[Dict[str, Any]] = None
+    items: List[Dict[str, Any]] = []
+    if fmt == "json":
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if isinstance(payload, dict):
+            metadata = payload.get("snapshot")
+            if isinstance(payload.get("observations"), list):
+                items = payload["observations"]
+            elif isinstance(payload.get("data"), list):
+                items = payload["data"]
+            else:
+                console.print("[red]JSON export must contain an observations list.[/red]")
+                raise typer.Exit(1)
+        elif isinstance(payload, list):
+            items = payload
+        else:
+            console.print("[red]Invalid export format.[/red]")
+            raise typer.Exit(1)
+        return items, metadata
+    if fmt in {"jsonl", "ndjson"}:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                parsed: Dict[str, Any]
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    console.print("[red]Invalid JSON line detected in export file.[/red]")
+                    raise typer.Exit(1)
+                if metadata is None and isinstance(parsed, dict):
+                    header = parsed.get("snapshot")
+                    if isinstance(header, dict):
+                        metadata = header
+                        continue
+                items.append(parsed)
+        return items, metadata
+    if fmt == "csv":
+        with open(path, "r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                items.append(row)
+        return items, metadata
+    console.print(f"[red]Unsupported format: {fmt}[/red]")
+    raise typer.Exit(1)
+
+
+def _import_items(
+    manager: MemoryManager,
+    items: List[Dict[str, Any]],
+    project_override: Optional[str],
+    dedupe: bool,
+) -> int:
+    imported = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        obs_type = item.get("type") or item.get("obs_type") or "note"
+        if not content:
+            continue
+        item_project = item.get("project") or None
+        session_id = item.get("session_id") or None
+        if project_override and item_project and project_override != item_project:
+            session_id = None
+        tags = _parse_tags_value(item.get("tags"))
+        metadata = _parse_metadata_value(item.get("metadata"))
+        assets = _parse_assets_value(item.get("assets"))
+        created_at = _parse_float(item.get("created_at"))
+        importance_score = _parse_float(item.get("importance_score"))
+        result = manager.add_observation(
+            content=content,
+            obs_type=obs_type,
+            project=project_override or item_project,
+            session_id=session_id,
+            tags=tags,
+            metadata=metadata,
+            title=item.get("title") or None,
+            summarize=False,
+            dedupe=dedupe,
+            summary=item.get("summary") or None,
+            created_at=created_at,
+            importance_score=importance_score if importance_score is not None else 0.5,
+            assets=assets,
+        )
+        if result:
+            imported += 1
+    return imported
 
 
 def _parse_tags_value(value: object) -> List[str]:
@@ -62,6 +158,24 @@ def _parse_metadata_value(value: object) -> dict:
     except json.JSONDecodeError:
         return {}
     return {}
+
+
+def _parse_assets_value(value: object) -> List[Dict[str, Any]]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    text = str(value).strip()
+    if not text:
+        return []
+    if text.startswith("["):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            return []
+    return []
 
 
 def _parse_float(value: object) -> Optional[float]:
@@ -100,6 +214,60 @@ def _env_list(name: str) -> List[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _parse_metadata_pair(value: str) -> Dict[str, Any]:
+    text = value.strip()
+    if not text:
+        return {}
+    if "=" in text:
+        key, raw = text.split("=", 1)
+    else:
+        return {text: ""}
+    try:
+        parsed = json.loads(raw)
+        return {key.strip(): parsed}
+    except json.JSONDecodeError:
+        return {key.strip(): raw}
+
+
+def _load_json_file(path: str) -> Dict[str, Any]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            if isinstance(data, dict):
+                return data
+    except Exception as exc:
+        console.print(f"[yellow]Failed to load JSON from {path}: {exc}[/yellow]")
+    return {}
+
+
+def _read_asset_file(path: str) -> Optional[str]:
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read()
+    except Exception as exc:
+        console.print(f"[yellow]Failed to read asset {path}: {exc}[/yellow]")
+    return None
+
+
+def _build_asset_entries(paths: Optional[List[str]], asset_type: str) -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    if not paths:
+        return entries
+    for item in paths:
+        if not item:
+            continue
+        entry = {
+            "type": asset_type,
+            "name": Path(item).name,
+            "path": item,
+        }
+        content = _read_asset_file(item)
+        if content is not None:
+            entry["content"] = content
+        entries.append(entry)
+    return entries
 
 
 def _read_content(value: Optional[str], content_file: Optional[str]) -> str:
@@ -144,6 +312,17 @@ def config(
     data_dir: Optional[str] = typer.Option(None, help="Data directory for SQLite + vector store"),
     sqlite_path: Optional[str] = typer.Option(None, help="Override SQLite database path"),
     vector_dir: Optional[str] = typer.Option(None, help="Override vector store directory"),
+    vector_provider: Optional[str] = typer.Option(
+        None, help="Vector store provider (chroma or pgvector)"
+    ),
+    vector_chroma_collection: Optional[str] = typer.Option(
+        None, help="Chroma collection name used by the chroma provider"
+    ),
+    pgvector_dsn: Optional[str] = typer.Option(None, help="Postgres DSN for pgvector"),
+    pgvector_table: Optional[str] = typer.Option(None, help="pgvector table name"),
+    pgvector_dimension: Optional[int] = typer.Option(None, help="pgvector embedding dimension"),
+    pgvector_index_type: Optional[str] = typer.Option(None, help="pgvector index type (ivfflat/hnsw)"),
+    pgvector_lists: Optional[int] = typer.Option(None, help="pgvector ivfflat lists count"),
     context_total: Optional[int] = typer.Option(None, help="Context index item count"),
     context_full: Optional[int] = typer.Option(None, help="Context full item count"),
     context_types: Optional[str] = typer.Option(None, help="Comma-separated context observation types"),
@@ -173,6 +352,13 @@ def config(
             data_dir,
             sqlite_path,
             vector_dir,
+            vector_provider,
+            vector_chroma_collection,
+            pgvector_dsn,
+            pgvector_table,
+            pgvector_dimension,
+            pgvector_index_type,
+            pgvector_lists,
             context_total,
             context_full,
             context_types,
@@ -186,7 +372,7 @@ def config(
         console.print(json.dumps(config_data, indent=2))
         return
 
-    patch = {"llm": {}, "embeddings": {}, "storage": {}, "context": {}}
+    patch = {"llm": {}, "embeddings": {}, "storage": {}, "context": {}, "vector": {}}
     if llm_provider:
         patch["llm"]["provider"] = llm_provider
     if llm_model:
@@ -213,6 +399,20 @@ def config(
         patch["storage"]["sqlite_path"] = sqlite_path
     if vector_dir:
         patch["storage"]["vector_dir"] = vector_dir
+    if vector_provider:
+        patch["vector"]["provider"] = vector_provider
+    if vector_chroma_collection:
+        patch["vector"]["chroma_collection"] = vector_chroma_collection
+    if pgvector_dsn:
+        patch["vector"]["pgvector_dsn"] = pgvector_dsn
+    if pgvector_table:
+        patch["vector"]["pgvector_table"] = pgvector_table
+    if pgvector_dimension is not None:
+        patch["vector"]["pgvector_dimension"] = pgvector_dimension
+    if pgvector_index_type:
+        patch["vector"]["pgvector_index_type"] = pgvector_index_type
+    if pgvector_lists is not None:
+        patch["vector"]["pgvector_lists"] = pgvector_lists
     if context_total is not None:
         patch["context"]["total_observation_count"] = context_total
     if context_full is not None:
@@ -240,11 +440,23 @@ def add(
     session_id: Optional[str] = typer.Option(None, help="Session ID override"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tags to associate"),
     no_summary: bool = typer.Option(False, help="Disable summarization"),
+    metadata: Optional[List[str]] = typer.Option(None, "--metadata", "-m", help="Metadata key=value pairs"),
+    metadata_file: Optional[str] = typer.Option(None, help="JSON file with metadata"),
+    attach_file: Optional[List[str]] = typer.Option(None, "--file", "-f", help="Attach file asset paths"),
+    attach_diff: Optional[List[str]] = typer.Option(None, "--diff", help="Attach diff/patch asset paths"),
 ):
     """Store a new memory observation."""
     manager = get_memory_manager()
     if session_id and not project:
         project = None
+    metadata_payload: Dict[str, Any] = {}
+    for item in metadata or []:
+        metadata_payload.update(_parse_metadata_pair(item))
+    if metadata_file:
+        metadata_payload.update(_load_json_file(metadata_file))
+    assets: List[Dict[str, Any]] = []
+    assets.extend(_build_asset_entries(attach_file, "file"))
+    assets.extend(_build_asset_entries(attach_diff, "diff"))
     obs = manager.add_observation(
         content=content,
         obs_type=obs_type,
@@ -252,6 +464,8 @@ def add(
         session_id=session_id,
         tags=tag or [],
         summarize=not no_summary,
+        metadata=metadata_payload or None,
+        assets=assets or None,
     )
     if not obs:
         console.print("[yellow]Skipped: content marked as private.[/yellow]")
@@ -472,6 +686,10 @@ def hook(
     no_summary: Optional[bool] = typer.Option(
         None, "--no-summary/--summary", help="Disable or enable summarization"
     ),
+    metadata: Optional[List[str]] = typer.Option(None, "--metadata", "-m", help="Metadata key=value pairs"),
+    metadata_file: Optional[str] = typer.Option(None, help="JSON file with metadata"),
+    asset_file: Optional[List[str]] = typer.Option(None, "--file", "-f", help="Attach file asset paths"),
+    asset_diff: Optional[List[str]] = typer.Option(None, "--diff", help="Attach diff/patch asset paths"),
     query: Optional[str] = typer.Option(None, help="Context query (session_start)"),
     total: Optional[int] = typer.Option(None, help="Context index count"),
     full: Optional[int] = typer.Option(None, help="Context full count"),
@@ -569,6 +787,19 @@ def hook(
             seen.add(item)
             deduped_tags.append(item)
 
+    env_metadata = _parse_metadata_value(os.environ.get("AI_MEM_METADATA"))
+    metadata_payload: Dict[str, Any] = {}
+    metadata_payload.update(env_metadata)
+    for item in metadata or []:
+        metadata_payload.update(_parse_metadata_pair(item))
+    if metadata_file:
+        metadata_payload.update(_load_json_file(metadata_file))
+    assets: List[Dict[str, Any]] = []
+    assets.extend(_build_asset_entries(_env_list("AI_MEM_ASSET_FILES"), "file"))
+    assets.extend(_build_asset_entries(_env_list("AI_MEM_ASSET_DIFFS"), "diff"))
+    assets.extend(_build_asset_entries(asset_file, "file"))
+    assets.extend(_build_asset_entries(asset_diff, "diff"))
+
     manager.add_observation(
         content=content_text,
         obs_type=obs_type_value,
@@ -576,6 +807,8 @@ def hook(
         session_id=session_value,
         tags=deduped_tags,
         summarize=not no_summary_value,
+        metadata=metadata_payload or None,
+        assets=assets or None,
     )
 
     if normalized == "session_end":
@@ -1180,6 +1413,76 @@ def azure_proxy(
     )
 
 
+@app.command(name="bedrock-proxy")
+def bedrock_proxy(
+    host: str = typer.Option("0.0.0.0", help="Proxy host"),
+    port: int = typer.Option(8094, help="Proxy port"),
+    model: Optional[str] = typer.Option(None, help="Bedrock model id"),
+    region: Optional[str] = typer.Option(None, help="AWS region override"),
+    endpoint: Optional[str] = typer.Option(None, help="Bedrock runtime endpoint override"),
+    profile: Optional[str] = typer.Option(None, help="AWS profile name"),
+    anthropic_version: Optional[str] = typer.Option(None, help="Anthropic Bedrock version"),
+    max_tokens: Optional[int] = typer.Option(None, help="Default max tokens"),
+    inject: bool = typer.Option(True, "--inject/--no-inject", help="Inject ai-mem context"),
+    store: bool = typer.Option(True, "--store/--no-store", help="Store prompt/response pairs"),
+    project: Optional[str] = typer.Option(None, help="Default project path"),
+    summarize: bool = typer.Option(True, "--summarize/--no-summarize", help="Summarize stored content"),
+):
+    """Start a Bedrock proxy that injects context and stores interactions."""
+    from .bedrock_proxy import (
+        DEFAULT_ANTHROPIC_VERSION,
+        DEFAULT_MAX_TOKENS,
+        start_proxy as start_bedrock_proxy,
+    )
+
+    model_id = model or os.environ.get("AI_MEM_BEDROCK_MODEL")
+    if not model_id:
+        console.print("[red]Bedrock proxy requires a model id (use --model or AI_MEM_BEDROCK_MODEL).[/red]")
+        raise typer.Exit(1)
+    region_name = (
+        region
+        or os.environ.get("AI_MEM_BEDROCK_REGION")
+        or os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+    )
+    profile_name = profile or os.environ.get("AI_MEM_BEDROCK_PROFILE") or os.environ.get("AWS_PROFILE")
+    endpoint_url = endpoint or os.environ.get("AI_MEM_BEDROCK_ENDPOINT")
+    version = (
+        anthropic_version
+        or os.environ.get("AI_MEM_BEDROCK_ANTHROPIC_VERSION")
+        or DEFAULT_ANTHROPIC_VERSION
+    )
+    max_tokens_value: int
+    if max_tokens is not None:
+        max_tokens_value = max_tokens
+    else:
+        env_max = os.environ.get("AI_MEM_BEDROCK_MAX_TOKENS")
+        if env_max:
+            try:
+                max_tokens_value = int(env_max)
+            except ValueError:
+                console.print("[yellow]Invalid AI_MEM_BEDROCK_MAX_TOKENS; using default.[/yellow]")
+                max_tokens_value = DEFAULT_MAX_TOKENS
+        else:
+            max_tokens_value = DEFAULT_MAX_TOKENS
+
+    console.print(f"[green]Starting ai-mem Bedrock proxy at http://{host}:{port}[/green]")
+    start_bedrock_proxy(
+        host=host,
+        port=port,
+        model_id=model_id,
+        region=region_name,
+        endpoint_url=endpoint_url,
+        profile=profile_name,
+        anthropic_version=version,
+        max_tokens=max_tokens_value,
+        inject_context=inject,
+        store_interactions=store,
+        default_project=project,
+        summarize=summarize,
+    )
+
+
 @app.command()
 def mcp():
     """Start MCP stdio server with search tools."""
@@ -1452,69 +1755,95 @@ def import_memories(
     """Import observations from an export file."""
     manager = get_memory_manager()
     fmt = _infer_format(path, input_format, "json")
+    items, metadata = _read_export_file(path, fmt)
+    imported = _import_items(manager, items, project, dedupe)
+    if metadata:
+        meta_parts = []
+        since = metadata.get("since")
+        if since:
+            meta_parts.append(f"since={since}")
+        meta_parts.append(f"snapshot_id={metadata.get('snapshot_id')}")
+        console.print(f"[green]Snapshot metadata:{' '.join(meta_parts)}[/green]")
+    console.print(f"[green]Imported {imported} observations[/green]")
+
+
+@snapshot_app.command("export")
+def snapshot_export(
+    path: str = typer.Argument(..., help="Path to write snapshot data"),
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    since: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or relative)"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
+    limit: Optional[int] = typer.Option(None, help="Limit number of observations"),
+    output: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json, jsonl"),
+    note: Optional[str] = typer.Option(None, help="Optional note to include in snapshot metadata"),
+):
+    """Export a snapshot (JSONL) for incremental syncing."""
+    manager = get_memory_manager()
+    fmt = _infer_format(path, output, "jsonl")
+    data = manager.export_observations(
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=since,
+        date_end=None,
+        tag_filters=tag,
+        limit=limit,
+    )
+    data = sorted(data, key=lambda item: float(item.get("created_at") or 0))
+    now = time.time()
+    meta = {
+        "snapshot_id": str(uuid4()),
+        "created_at": now,
+        "project": project,
+        "session_id": session_id,
+        "obs_type": obs_type,
+        "since": since,
+        "limit": limit,
+        "note": note,
+        "last_observation": data[-1]["created_at"] if data else None,
+        "count": len(data),
+    }
     if fmt == "json":
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-        if not isinstance(payload, list):
-            console.print("[red]Import file must contain a list of observations.[/red]")
-            raise typer.Exit(1)
-        items = payload
+        payload = {"snapshot": meta, "observations": data}
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
     elif fmt in {"jsonl", "ndjson"}:
-        items = []
-        with open(path, "r", encoding="utf-8") as handle:
-            for line in handle:
-                text = line.strip()
-                if not text:
-                    continue
-                try:
-                    item = json.loads(text)
-                except json.JSONDecodeError:
-                    console.print("[red]Invalid JSONL line detected.[/red]")
-                    raise typer.Exit(1)
-                items.append(item)
-    elif fmt == "csv":
-        items = []
-        with open(path, "r", encoding="utf-8", newline="") as handle:
-            reader = csv.DictReader(handle)
-            for row in reader:
-                items.append(row)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps({"snapshot": meta}, ensure_ascii=True))
+            handle.write("\n")
+            for item in data:
+                handle.write(json.dumps(item, ensure_ascii=True))
+                handle.write("\n")
     else:
         console.print(f"[red]Unsupported format: {fmt}[/red]")
         raise typer.Exit(1)
+    console.print(f"[green]Snapshot exported with {len(data)} observations to {path}[/green]")
+    console.print(f"[green]Snapshot id: {meta['snapshot_id']} created at {meta['created_at']}[/green]")
 
-    imported = 0
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        content = item.get("content")
-        obs_type = item.get("type") or item.get("obs_type") or "note"
-        if not content:
-            continue
-        item_project = item.get("project") or None
-        session_id = item.get("session_id") or None
-        if project and item_project and project != item_project:
-            session_id = None
-        tags = _parse_tags_value(item.get("tags"))
-        metadata = _parse_metadata_value(item.get("metadata"))
-        created_at = _parse_float(item.get("created_at"))
-        importance_score = _parse_float(item.get("importance_score"))
-        result = manager.add_observation(
-            content=content,
-            obs_type=obs_type,
-            project=project or item_project,
-            session_id=session_id,
-            tags=tags,
-            metadata=metadata,
-            title=item.get("title") or None,
-            summarize=False,
-            dedupe=dedupe,
-            summary=item.get("summary") or None,
-            created_at=created_at,
-            importance_score=importance_score if importance_score is not None else 0.5,
-        )
-        if result:
-            imported += 1
-    console.print(f"[green]Imported {imported} observations[/green]")
+
+@snapshot_app.command("import")
+def snapshot_import(
+    path: str = typer.Argument(..., help="Path to snapshot file"),
+    project: Optional[str] = typer.Option(None, help="Override project for imported items"),
+    dedupe: bool = typer.Option(True, help="Skip duplicates by content hash"),
+    input_format: Optional[str] = typer.Option(None, "--format", "-f", help="Input format: json, jsonl, ndjson"),
+):
+    """Import a snapshot file (JSONL or JSON) and merge into the local store."""
+    manager = get_memory_manager()
+    fmt = _infer_format(path, input_format, "jsonl")
+    items, metadata = _read_export_file(path, fmt)
+    imported = _import_items(manager, items, project, dedupe)
+    if metadata:
+        meta_parts = []
+        snapshot_id = metadata.get("snapshot_id")
+        if snapshot_id:
+            meta_parts.append(f"id={snapshot_id}")
+        if metadata.get("note"):
+            meta_parts.append(f"note={metadata['note']}")
+        console.print(f"[green]Snapshot metadata:{' '.join(meta_parts)}[/green]")
+    console.print(f"[green]Imported {imported} observations from snapshot[/green]")
 
 
 @app.command()

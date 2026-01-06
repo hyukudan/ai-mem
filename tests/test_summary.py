@@ -12,14 +12,19 @@ class DummyEmbeddingProvider:
 
 
 class DummyVectorStore:
-    def __init__(self, path: str, collection_name: str = "observations"):
-        self.path = path
-        self.collection_name = collection_name
+    def __init__(self, *args, **kwargs):
+        pass
 
-    def add(self, embeddings, documents, metadatas, ids):
+    def add(self, embeddings=None, documents=None, metadatas=None, ids=None):
         return None
 
+    def query(self, embedding=None, n_results=0, where=None):
+        return {"ids": [[]], "metadatas": [[]], "distances": [[]]}
+
     def delete_where(self, where):
+        return None
+
+    def delete_ids(self, ids):
         return None
 
 
@@ -32,7 +37,7 @@ class SummaryTests(unittest.TestCase):
                 storage=StorageConfig(data_dir=tmpdir),
             )
             with mock.patch("ai_mem.memory._build_embedding_provider", return_value=DummyEmbeddingProvider()), \
-                mock.patch("ai_mem.memory.VectorStore", DummyVectorStore):
+                mock.patch("ai_mem.memory.build_vector_store", return_value=DummyVectorStore()):
                 manager = MemoryManager(config)
                 manager.add_observation(content="First note", obs_type="note", project="proj", summarize=False)
                 manager.add_observation(content="Second note", obs_type="note", project="proj", summarize=False)
@@ -51,7 +56,7 @@ class SummaryTests(unittest.TestCase):
                 storage=StorageConfig(data_dir=tmpdir),
             )
             with mock.patch("ai_mem.memory._build_embedding_provider", return_value=DummyEmbeddingProvider()), \
-                mock.patch("ai_mem.memory.VectorStore", DummyVectorStore):
+                mock.patch("ai_mem.memory.build_vector_store", return_value=DummyVectorStore()):
                 manager = MemoryManager(config)
                 session = manager.start_session(project="proj")
                 manager.add_observation(content="Session note", obs_type="note", project="proj", summarize=False)

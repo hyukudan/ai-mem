@@ -67,6 +67,7 @@ tools = [
     ("ai-mem: Start Gemini Proxy", "gemini-proxy --port 8090"),
     ("ai-mem: Start Anthropic Proxy", "anthropic-proxy --port 8095"),
     ("ai-mem: Start Azure Proxy", "azure-proxy --port 8092"),
+    ("ai-mem: Start Bedrock Proxy", "bedrock-proxy --port 8094"),
 ]
 
 tool_entries = []

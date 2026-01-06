@@ -36,6 +36,16 @@ class SearchConfig(BaseModel):
     fts_top_k: int = 20
 
 
+class VectorConfig(BaseModel):
+    provider: str = "chroma"
+    chroma_collection: str = "observations"
+    pgvector_dsn: Optional[str] = None
+    pgvector_table: str = "ai_mem_vectors"
+    pgvector_dimension: int = 1536
+    pgvector_index_type: str = "ivfflat"
+    pgvector_lists: int = 100
+
+
 class ContextConfig(BaseModel):
     total_observation_count: int = 12
     full_observation_count: int = 4
@@ -54,6 +64,7 @@ class AppConfig(BaseModel):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     search: SearchConfig = Field(default_factory=SearchConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
+    vector: VectorConfig = Field(default_factory=VectorConfig)
 
 
 def _config_path() -> Path:
@@ -176,5 +187,28 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         config.context.show_token_estimates = context_show_tokens
     if context_wrap is not None:
         config.context.wrap_context_tag = context_wrap
+
+    vector_provider = os.environ.get("AI_MEM_VECTOR_PROVIDER")
+    vector_collection = os.environ.get("AI_MEM_VECTOR_CHROMA_COLLECTION")
+    pgvector_dsn = os.environ.get("AI_MEM_PGVECTOR_DSN")
+    pgvector_table = os.environ.get("AI_MEM_PGVECTOR_TABLE")
+    pgvector_dimension = _env_int("AI_MEM_PGVECTOR_DIMENSION")
+    pgvector_index_type = os.environ.get("AI_MEM_PGVECTOR_INDEX_TYPE")
+    pgvector_lists = _env_int("AI_MEM_PGVECTOR_LISTS")
+
+    if vector_provider:
+        config.vector.provider = vector_provider
+    if vector_collection:
+        config.vector.chroma_collection = vector_collection
+    if pgvector_dsn:
+        config.vector.pgvector_dsn = pgvector_dsn
+    if pgvector_table:
+        config.vector.pgvector_table = pgvector_table
+    if pgvector_dimension is not None:
+        config.vector.pgvector_dimension = pgvector_dimension
+    if pgvector_index_type:
+        config.vector.pgvector_index_type = pgvector_index_type
+    if pgvector_lists is not None:
+        config.vector.pgvector_lists = pgvector_lists
 
     return config

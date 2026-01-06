@@ -23,7 +23,7 @@ License: AGPL-3.0
 - Hooks (Model Agnostic)
 - Claude Code Plugin
 - MCP Tools (Claude Desktop and others)
-- Proxies (OpenAI-compatible and Gemini)
+- Proxies
 - API Token (Optional)
 - REST API
 - Storage Layout
@@ -57,8 +57,11 @@ You can use ai-mem entirely locally with fast embeddings, or connect it to Gemin
 - Privacy tags: <private>...</private> is stripped before storage.
 - Tag management: add, edit, rename, and delete tags.
 - Context injection: generate <ai-mem-context> blocks for any model.
+- Incremental snapshots: JSONL exports with metadata so you can merge memory across machines or workflows.
+- Vector store flexibility: default Chroma or PostgreSQL/pgvector for shared databases (pgvector reuses Postgres backups, joins, and ACID semantics).
 - Hooks and proxies: automatic storage and injection.
 - MCP tools: search memory from Claude Desktop or other MCP clients.
+- IDE integrations: VS Code tasks, JetBrains External Tools, and Cursor MCP setup scripts.
 - Citations: reference observations via /api/observation/{id}.
 
 ## Core Concepts
@@ -89,7 +92,7 @@ Core components:
 - Vector store: embeddings and semantic search.
 - Context builder: formats <ai-mem-context> blocks with token estimates.
 - Web server: REST API + viewer UI.
-- Proxies: OpenAI-compatible proxy and Gemini proxy.
+- Proxies: OpenAI-compatible, Gemini, Anthropic, Azure OpenAI, and Bedrock proxies.
 - MCP server: tools for external clients.
 - Hook scripts: for any lifecycle-based client.
 
@@ -102,7 +105,7 @@ Architecture diagram (simplified):
                                  |
                                  v
                      +-----------------------+
-   Hooks / MCP <---->|  MemoryManager + RAG  |<---- Proxies (OpenAI/Gemini)
+   Hooks / MCP <---->|  MemoryManager + RAG  |<---- Proxies (OpenAI/Gemini/Anthropic/Azure/Bedrock)
                      +-----------+-----------+
                                  |
                     +------------+------------+
@@ -119,6 +122,7 @@ Architecture diagram (simplified):
 Requirements:
 - Python 3.10+
 - pip, venv
+- PostgreSQL 15+ with pgvector extension (only needed when using the pgvector provider)
 
 Clone and install:
 
@@ -167,12 +171,15 @@ Scripts in scripts/ start common stacks:
 - ./scripts/run-anthropic-full.sh: server + Anthropic proxy + MCP
 - ./scripts/run-azure-stack.sh: server + Azure OpenAI proxy
 - ./scripts/run-azure-full.sh: server + Azure OpenAI proxy + MCP
+- ./scripts/run-bedrock-stack.sh: server + Bedrock proxy
+- ./scripts/run-bedrock-full.sh: server + Bedrock proxy + MCP
 - ./scripts/run-dual-stack.sh: server + OpenAI-compatible proxy + Gemini proxy
 - ./scripts/run-dual-full.sh: server + OpenAI-compatible proxy + Gemini proxy + MCP
 - ./scripts/run-proxy.sh: OpenAI-compatible proxy only
 - ./scripts/run-gemini-proxy.sh: Gemini proxy only
 - ./scripts/run-anthropic-proxy.sh: Anthropic proxy only
 - ./scripts/run-azure-proxy.sh: Azure OpenAI proxy only
+- ./scripts/run-bedrock-proxy.sh: Bedrock proxy only
 - ./scripts/run-mcp.sh: MCP server only
 - ./scripts/install-hooks.sh: install hook scripts to ~/.config/ai-mem/hooks
 - ./scripts/install-mcp-claude-desktop.sh: add ai-mem MCP entry to Claude Desktop config
@@ -242,6 +249,35 @@ export AI_MEM_CONTEXT_SHOW_TOKENS=true
 export AI_MEM_CONTEXT_WRAP=true
 ```
 
+### Vector store configuration
+
+Configure the vector backend you want to use for semantic search:
+
+```bash
+ai-mem config --vector-provider chroma --vector-chroma-collection observations
+
+ai-mem config \
+  --vector-provider pgvector \
+  --pgvector-dsn "postgresql://user:pass@localhost:5432/ai_mem" \
+  --pgvector-table ai_mem_vectors \
+  --pgvector-dimension 1536 \
+  --pgvector-index-type ivfflat
+```
+
+Environment overrides:
+
+```bash
+export AI_MEM_VECTOR_PROVIDER=pgvector
+export AI_MEM_VECTOR_CHROMA_COLLECTION=observations
+export AI_MEM_PGVECTOR_DSN="postgresql://user:pass@localhost:5432/ai_mem"
+export AI_MEM_PGVECTOR_TABLE=ai_mem_vectors
+export AI_MEM_PGVECTOR_DIMENSION=1536
+export AI_MEM_PGVECTOR_INDEX_TYPE=ivfflat
+export AI_MEM_PGVECTOR_LISTS=200
+```
+
+The pgvector provider requires Postgres with the `pgvector` extension enabled and a connection DSN. With pgvector you benefit from Postgres tooling (migrations, backups, monitoring) and can join vector hits with other relational metadata or reuse existing transaction semantics for ingestion.
+
 Date filters accept epoch, ISO-8601, or relative durations like 7d, 24h, 30m.
 
 ## Using the CLI
@@ -249,8 +285,27 @@ Date filters accept epoch, ISO-8601, or relative durations like 7d, 24h, 30m.
 Common commands:
 
 ```bash
+## Snapshots & incremental sync
+
+Use `ai-mem snapshot export` to record a JSONL snapshot with embedded metadata (snapshot id, filters, `since`, note). Each snapshot keeps a header line (`{"snapshot": {...}}`) followed by observation records so you can easily stream it to another machine.
+
+```
+ai-mem snapshot export snapshots/2024-03-01.jsonl --since 2024-02-28 --project "$PWD"
+ai-mem snapshot export snapshots/latest.jsonl --since "$(cat snapshots/last-snapshot.txt)"
+```
+
+On the receiving side load the file with `--dedupe` to merge (skipping duplicates by content hash) yet preserve local memory history:
+
+```
+ai-mem snapshot import snapshots/latest.jsonl --project "$PWD"
+```
+
+Snapshots capture assets, metadata, tags, and diff/file attachments just like the live store; the metadata header documents the snapshot id, time range, and an optional note so you can track what changed between exports.
+
 # Add
 ai-mem add "We decided to use Redis for session cache." --obs-type decision --tag architecture
+ai-mem add "Documented API change" --metadata author=sergio --metadata file=api.md --file docs/api.md --diff patches/api.patch
+ai-mem add --metadata-file metadata.json --file design.pdf
 
 # Search
 ai-mem search "Redis session cache" --limit 10
@@ -392,6 +447,11 @@ ai-mem hook session_start --project "$PWD"
 # Store a user prompt from stdin
 echo "Fix OAuth flow" | ai-mem hook user_prompt --project "$PWD" --content-file -
 ```
+You can pass metadata and attachments to the hook runner as well, for example:
+
+```bash
+ai-mem hook user_prompt --metadata author=sergio --file docs/notes.md
+```
 
 Generate a hook config snippet for clients that accept command hooks:
 
@@ -411,6 +471,9 @@ Hook environment variables (common):
 - AI_MEM_SUMMARY_ON_END: run summarize after session_end
 - AI_MEM_SUMMARY_COUNT: number of observations to summarize (default 20)
 - AI_MEM_SUMMARY_OBS_TYPE: filter observation type for summaries
+- AI_MEM_METADATA: JSON or `key=value` pairs to attach extra metadata
+- AI_MEM_ASSET_FILES: comma-separated file paths whose contents are stored as file assets
+- AI_MEM_ASSET_DIFFS: comma-separated patch/diff paths for diff assets
 
 Hooks can auto-load a local env file before running:
 
@@ -493,6 +556,16 @@ Tools:
 
 Search and timeline accept session_id to scope results.
 
+## IDE Integrations
+
+Helper scripts are included for popular IDEs:
+
+- VS Code tasks: `./scripts/install-vscode-tasks.sh`
+- JetBrains External Tools: `./scripts/install-jetbrains-tools.sh`
+- Cursor MCP: `./scripts/install-mcp-cursor.sh`
+
+These install project-local tasks or config entries so you can launch ai-mem servers, proxies, and hooks from inside the IDE.
+
 ## Proxies
 
 ### OpenAI-compatible proxy
@@ -569,6 +642,31 @@ Env vars:
 - AI_MEM_AZURE_UPSTREAM_BASE_URL or AZURE_OPENAI_ENDPOINT
 - AI_MEM_AZURE_DEPLOYMENT or AZURE_OPENAI_DEPLOYMENT
 - AI_MEM_AZURE_API_VERSION or AZURE_OPENAI_API_VERSION (default 2024-02-01)
+
+### Bedrock proxy
+
+```bash
+AI_MEM_BEDROCK_MODEL="anthropic.claude-3-haiku-20240307-v1:0" ai-mem bedrock-proxy --port 8094
+```
+
+Point your client to http://localhost:8094/v1
+
+Supported endpoints:
+- /v1/chat/completions
+- /v1/completions
+
+Notes:
+- Streaming is only supported for Anthropic Bedrock models.
+- You can override the model per request with `x-ai-mem-bedrock-model` or the `model` field in the payload.
+- Supports the same context headers as the OpenAI-compatible proxy (`x-ai-mem-*`).
+
+Env vars:
+- AI_MEM_BEDROCK_MODEL (required, unless you pass --model)
+- AI_MEM_BEDROCK_REGION / AWS_REGION / AWS_DEFAULT_REGION
+- AI_MEM_BEDROCK_PROFILE / AWS_PROFILE
+- AI_MEM_BEDROCK_ENDPOINT
+- AI_MEM_BEDROCK_ANTHROPIC_VERSION (default bedrock-2023-05-31)
+- AI_MEM_BEDROCK_MAX_TOKENS (default 1024)
 
 ## AWS Bedrock
 
@@ -660,9 +758,11 @@ The private segments are removed before hashing, indexing, and storage.
 
 - Proxy fails to start: set AI_MEM_PROXY_UPSTREAM_BASE_URL.
 - Gemini proxy warns about API key: set AI_MEM_GEMINI_API_KEY or GOOGLE_API_KEY.
+- Bedrock proxy requires AWS credentials + region and a model id (AI_MEM_BEDROCK_MODEL or --model).
+- pgvector backend errors: check `AI_MEM_PGVECTOR_DSN`, PostgreSQL connectivity, and that the `pgvector` extension is installed.
 - No results: check project path, session_id, or tags.
 - Token estimates are rough: they are based on character count heuristics.
-- Port in use: change AI_MEM_PORT, AI_MEM_PROXY_PORT, or AI_MEM_GEMINI_PROXY_PORT.
+- Port in use: change AI_MEM_PORT, AI_MEM_PROXY_PORT, AI_MEM_GEMINI_PROXY_PORT, AI_MEM_AZURE_PROXY_PORT, or AI_MEM_BEDROCK_PROXY_PORT.
 
 ## Roadmap
 

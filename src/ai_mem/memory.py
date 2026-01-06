@@ -10,10 +10,10 @@ from .chunking import chunk_text
 from .config import AppConfig, load_config, resolve_storage_paths
 from .db import DatabaseManager
 from .embeddings.base import EmbeddingProvider
-from .models import Observation, ObservationIndex, Session
+from .models import Observation, ObservationAsset, ObservationIndex, Session
 from .providers.base import ChatMessage, ChatProvider, NoOpChatProvider
 from .privacy import strip_memory_tags
-from .vector_store import VectorStore
+from .vector_store import build_vector_store
 
 
 def _build_chat_provider(config: AppConfig) -> ChatProvider:
@@ -252,7 +252,7 @@ class MemoryManager:
         os.makedirs(storage.data_dir, exist_ok=True)
         os.makedirs(storage.vector_dir, exist_ok=True)
         self.db = DatabaseManager(storage.sqlite_path)
-        self.vector_store = VectorStore(storage.vector_dir)
+        self.vector_store = build_vector_store(self.config, storage)
         self.chat_provider = _build_chat_provider(self.config)
         self.embedding_provider = _build_embedding_provider(self.config)
         self.allow_llm_summaries = self.chat_provider.get_name() != "none"
@@ -367,6 +367,7 @@ class MemoryManager:
         summary: Optional[str] = None,
         created_at: Optional[float] = None,
         importance_score: float = 0.5,
+        assets: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Observation]:
         session = None
         if session_id:
@@ -425,10 +426,62 @@ class MemoryManager:
             metadata=metadata,
             content_hash=content_hash,
         )
+        normalized_assets = self._normalize_assets(assets or [])
+        if normalized_assets:
+            obs.assets = [
+                ObservationAsset(
+                    observation_id=obs.id,
+                    type=asset["type"],
+                    name=asset.get("name"),
+                    path=asset.get("path"),
+                    content=asset.get("content"),
+                    metadata=asset.get("metadata") or {},
+                    created_at=asset.get("created_at"),
+                )
+                for asset in normalized_assets
+            ]
         self.db.add_observation(obs)
+        if obs.assets:
+            self._store_assets(obs.id, obs.assets)
         self._index_observation(obs)
         self._notify_listeners(obs)
         return obs
+
+    def _normalize_assets(self, assets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized: List[Dict[str, Any]] = []
+        for entry in assets:
+            if not entry or not isinstance(entry, dict):
+                continue
+            asset_type = (entry.get("type") or entry.get("asset_type") or "file").lower()
+            name = entry.get("name") or entry.get("filename")
+            path = entry.get("path")
+            content = entry.get("content")
+            metadata = entry.get("metadata") or {}
+            created = entry.get("created_at")
+            normalized.append(
+                {
+                    "type": asset_type,
+                    "name": name,
+                    "path": path,
+                    "content": content,
+                    "metadata": metadata,
+                    "created_at": created,
+                }
+            )
+        return normalized
+
+    def _store_assets(self, observation_id: str, assets: List[ObservationAsset]) -> None:
+        for asset in assets:
+            self.db.add_asset(
+                observation_id=observation_id,
+                asset_type=asset.type,
+                name=asset.name,
+                path=asset.path,
+                content=asset.content,
+                metadata=asset.metadata,
+                asset_id=asset.id,
+                created_at=asset.created_at,
+            )
 
     def _index_observation(self, obs: Observation) -> None:
         chunks = chunk_text(

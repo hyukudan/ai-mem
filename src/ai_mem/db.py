@@ -1,8 +1,10 @@
 import json
 import sqlite3
+import time
+import uuid
+from collections import Counter
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Iterable
-from collections import Counter
 
 from .models import Observation, Session, ObservationIndex
 
@@ -99,6 +101,7 @@ class DatabaseManager:
         )
         self.conn.commit()
         self._ensure_columns()
+        self._ensure_asset_table()
 
     def _tag_clause(
         self,
@@ -126,6 +129,119 @@ class DatabaseManager:
         if "content_hash" not in existing:
             cursor.execute("ALTER TABLE observations ADD COLUMN content_hash TEXT")
             self.conn.commit()
+
+    def _ensure_asset_table(self) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observation_assets (
+                id TEXT PRIMARY KEY,
+                observation_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                name TEXT,
+                path TEXT,
+                content TEXT,
+                metadata TEXT,
+                created_at REAL NOT NULL,
+                FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_observation ON observation_assets(observation_id)"
+        )
+        self.conn.commit()
+
+    def add_asset(
+        self,
+        observation_id: str,
+        asset_type: str,
+        name: Optional[str] = None,
+        path: Optional[str] = None,
+        content: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        asset_id: Optional[str] = None,
+        created_at: Optional[float] = None,
+    ) -> None:
+        cursor = self.conn.cursor()
+        if not asset_id:
+            asset_id = str(uuid.uuid4())
+        timestamp = created_at or time.time()
+        metadata_value = json.dumps(metadata or {})
+        cursor.execute(
+            """
+            INSERT OR REPLACE INTO observation_assets (
+                id,
+                observation_id,
+                type,
+                name,
+                path,
+                content,
+                metadata,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                asset_id,
+                observation_id,
+                asset_type,
+                name,
+                path,
+                content,
+                metadata_value,
+                timestamp,
+            ),
+        )
+        self.conn.commit()
+
+    def get_assets_for_observation(self, observation_id: str) -> List[Dict[str, Any]]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM observation_assets
+            WHERE observation_id = ?
+            ORDER BY created_at ASC
+            """,
+            (observation_id,),
+        )
+        rows = cursor.fetchall()
+        return [self._row_to_asset(row) for row in rows]
+
+    def _row_to_asset(self, row: sqlite3.Row) -> Dict[str, Any]:
+        metadata = json.loads(row["metadata"] or "{}")
+        return {
+            "id": row["id"],
+            "observation_id": row["observation_id"],
+            "type": row["type"],
+            "name": row["name"],
+            "path": row["path"],
+            "content": row["content"],
+            "metadata": metadata,
+            "created_at": row["created_at"],
+        }
+
+    def _ensure_asset_table(self) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observation_assets (
+                id TEXT PRIMARY KEY,
+                observation_id TEXT NOT NULL,
+                type TEXT NOT NULL,
+                name TEXT,
+                path TEXT,
+                content TEXT,
+                metadata TEXT,
+                created_at REAL NOT NULL,
+                FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE CASCADE
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_assets_observation ON observation_assets(observation_id)"
+        )
+        self.conn.commit()
 
     def add_session(self, session: Session) -> None:
         cursor = self.conn.cursor()
@@ -996,6 +1112,7 @@ class DatabaseManager:
             "importance_score": row["importance_score"],
             "tags": json.loads(row["tags"] or "[]"),
             "metadata": json.loads(row["metadata"] or "{}"),
+            "assets": self.get_assets_for_observation(row["id"]),
         }
 
     def _row_to_session(self, row: sqlite3.Row) -> Dict[str, Any]:

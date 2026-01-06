@@ -17,6 +17,17 @@ ObservationType = Literal[
     "summary",
 ]
 
+class ObservationAsset(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    observation_id: Optional[str] = None
+    type: str = "file"
+    name: Optional[str] = None
+    path: Optional[str] = None
+    content: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    created_at: float = Field(default_factory=time.time)
+
+
 class Observation(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str
@@ -30,6 +41,7 @@ class Observation(BaseModel):
     tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
     content_hash: Optional[str] = None
+    assets: List[ObservationAsset] = Field(default_factory=list)
 
 class ObservationIndex(BaseModel):
     id: str

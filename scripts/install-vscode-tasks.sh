@@ -119,6 +119,14 @@ tasks = [
         "problemMatcher": [],
         "isBackground": True,
     },
+    {
+        "label": "ai-mem: Start Bedrock Proxy",
+        "type": "shell",
+        "command": bin_path,
+        "args": ["bedrock-proxy", "--port", "8094"],
+        "problemMatcher": [],
+        "isBackground": True,
+    },
 ]
 
 data = {"version": "2.0.0", "tasks": []}
