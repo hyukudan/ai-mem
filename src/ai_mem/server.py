@@ -5006,6 +5006,7 @@ def search_memories(
             session_id=session_id,
             date_start=date_start,
             date_end=date_end,
+            since=since,
             tag_filters=_parse_list_param(tags),
         )
         return [item.model_dump() for item in results]
@@ -5042,6 +5043,7 @@ def get_timeline(
             session_id=session_id,
             date_start=date_start,
             date_end=date_end,
+            since=since,
             tag_filters=_parse_list_param(tags),
         )
         return [item.model_dump() for item in results]
@@ -5332,6 +5334,7 @@ def get_stats(
         session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        since=since,
         tag_filters=_parse_list_param(tags),
         tag_limit=tag_limit if tag_limit is not None else 10,
         day_limit=day_limit if day_limit is not None else 14,

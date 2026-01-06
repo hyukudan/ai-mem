@@ -227,10 +227,12 @@ ai-mem add "We decided to use Redis for session cache." --obs-type decision --ta
 
 # Search
 ai-mem search "Redis session cache" --limit 10
+ai-mem search "Redis session cache" --since 24h
 ai-mem mem-search "Redis session cache" --limit 10
 
 # Timeline
 ai-mem timeline --query "Redis" --depth-before 3 --depth-after 3
+ai-mem timeline --query "Redis" --since 7d
 
 # Full observation details
 ai-mem get <observation_id>
@@ -241,6 +243,7 @@ ai-mem update-tags <observation_id> --clear
 
 # Stats
 ai-mem stats --tag infra
+ai-mem stats --since 30d
 
 # Tags
 ai-mem tags
@@ -322,7 +325,6 @@ Viewer features:
 - Export JSON/JSONL/CSV and import JSON/JSONL/CSV from the viewer.
 - Export since (relative) for incremental snapshots.
 - Date since (relative) filter for search, timeline, and stats in the viewer.
-- Relative date filters (since) for search, timeline, and stats.
 - Stream view for new observations.
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.

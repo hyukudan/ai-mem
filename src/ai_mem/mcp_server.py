@@ -28,17 +28,17 @@ class MCPServer:
             },
             {
                 "name": "search",
-                "description": "Search memory index. Params: query, limit, project, session_id, obs_type, date_start, date_end, tags.",
+                "description": "Search memory index. Params: query, limit, project, session_id, obs_type, date_start, date_end, since, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
                 "name": "mem-search",
-                "description": "Alias for search (natural language memory lookup). Params: query, limit, project, session_id, obs_type, date_start, date_end, tags.",
+                "description": "Alias for search (natural language memory lookup). Params: query, limit, project, session_id, obs_type, date_start, date_end, since, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
                 "name": "timeline",
-                "description": "Timeline around an observation. Params: anchor or query, depth_before, depth_after, project, session_id, obs_type, date_start, date_end, tags.",
+                "description": "Timeline around an observation. Params: anchor or query, depth_before, depth_after, project, session_id, obs_type, date_start, date_end, since, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
@@ -119,6 +119,7 @@ class MCPServer:
         obs_type = args.get("obs_type") or args.get("type")
         date_start = args.get("date_start")
         date_end = args.get("date_end")
+        since = args.get("since")
         tags = self._parse_tags(args.get("tags") or args.get("tag"))
         if session_id:
             project = None
@@ -130,6 +131,7 @@ class MCPServer:
             obs_type=obs_type,
             date_start=date_start,
             date_end=date_end,
+            since=since,
             tag_filters=tags,
         )
         payload = [item.model_dump() for item in results]
@@ -145,6 +147,7 @@ class MCPServer:
         obs_type = args.get("obs_type") or args.get("type")
         date_start = args.get("date_start")
         date_end = args.get("date_end")
+        since = args.get("since")
         tags = self._parse_tags(args.get("tags") or args.get("tag"))
         if session_id:
             project = None
@@ -158,6 +161,7 @@ class MCPServer:
             obs_type=obs_type,
             date_start=date_start,
             date_end=date_end,
+            since=since,
             tag_filters=tags,
         )
         payload = [item.model_dump() for item in results]

@@ -359,8 +359,11 @@ class MemoryManager:
         session_id: Optional[str] = None,
         date_start: Optional[str] = None,
         date_end: Optional[str] = None,
+        since: Optional[str] = None,
         tag_filters: Optional[List[str]] = None,
     ) -> List[ObservationIndex]:
+        if date_start is None and since is not None:
+            date_start = since
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
         tags = _normalize_tags(tag_filters)
@@ -485,9 +488,12 @@ class MemoryManager:
         session_id: Optional[str] = None,
         date_start: Optional[str] = None,
         date_end: Optional[str] = None,
+        since: Optional[str] = None,
         tag_filters: Optional[List[str]] = None,
     ) -> List[ObservationIndex]:
         tags = _normalize_tags(tag_filters)
+        if date_start is None and since is not None:
+            date_start = since
         if not anchor_id and query:
             results = self.search(
                 query,
@@ -497,6 +503,7 @@ class MemoryManager:
                 session_id=session_id,
                 date_start=date_start,
                 date_end=date_end,
+                since=since,
                 tag_filters=tags,
             )
             if results:
@@ -583,11 +590,14 @@ class MemoryManager:
         session_id: Optional[str] = None,
         date_start: Optional[str] = None,
         date_end: Optional[str] = None,
+        since: Optional[str] = None,
         tag_filters: Optional[List[str]] = None,
         tag_limit: int = 10,
         day_limit: int = 14,
         type_tag_limit: int = 3,
     ) -> Dict[str, Any]:
+        if date_start is None and since is not None:
+            date_start = since
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
         return self.db.get_stats(

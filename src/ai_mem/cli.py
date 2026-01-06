@@ -212,6 +212,7 @@ def search(
     all_projects: bool = typer.Option(False, help="Search across all projects"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
@@ -231,6 +232,7 @@ def search(
         session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        since=since,
         tag_filters=tag,
     )
     if output == "json":
@@ -257,6 +259,7 @@ def mem_search(
     all_projects: bool = typer.Option(False, help="Search across all projects"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
@@ -270,6 +273,7 @@ def mem_search(
         all_projects=all_projects,
         date_start=date_start,
         date_end=date_end,
+        since=since,
         tag=tag,
         output=output,
     )
@@ -287,6 +291,7 @@ def timeline(
     session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
@@ -308,6 +313,7 @@ def timeline(
         session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        since=since,
         tag_filters=tag,
     )
     if output == "json":
@@ -378,6 +384,7 @@ def stats(
     session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     tag_limit: int = typer.Option(10, help="Max tags to include"),
     day_limit: int = typer.Option(14, help="Max days to include"),
@@ -398,6 +405,7 @@ def stats(
         session_id=session_id,
         date_start=date_start,
         date_end=date_end,
+        since=since,
         tag_filters=tag,
         tag_limit=tag_limit,
         day_limit=day_limit,
