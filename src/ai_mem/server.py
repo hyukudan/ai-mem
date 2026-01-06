@@ -1301,7 +1301,8 @@ def read_root():
                     : '';
                 let timelineBadge = '';
                 if (lastMode === 'timeline' || anchorSummary) {
-                    const suffix = anchorSummary ? '' : ' (no anchor)';
+                    const compact = window.innerWidth <= 960;
+                    const suffix = anchorSummary ? '' : (compact ? ' (no)' : ' (no anchor)');
                     const title = anchorSummary ? 'Timeline mode' : 'Timeline mode without an anchor';
                     timelineBadge = `<span class="timeline-badge" title="${title}">Timeline${suffix}</span>`;
                 }
