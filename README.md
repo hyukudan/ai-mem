@@ -5,7 +5,7 @@
 ![Python](https://img.shields.io/badge/python-3.10+-blue)
 ![Status](https://img.shields.io/badge/status-active-success)
 
-ai-mem is a local-first memory layer that serves **any large language model**, whether it's Gemini nativo, Claude, ChatGPT, Anthropic, Azure OpenAI, AWS Bedrock, or another vLLM setup. Observations live in SQLite (with FTS5) + a vector store, memory context is generated on demand, and the same context feeds every client through CLI, REST, or the MCP protocol.
+ ai-mem is a local-first memory layer that serves **any large language model**, whether it's Gemini (CLI/proxy), Claude, ChatGPT, Anthropic, Azure OpenAI, AWS Bedrock, or another vLLM setup. Observations live in SQLite (with FTS5) + a vector store, memory context is generated on demand, and the same context feeds every client through CLI, REST, or the MCP protocol.
 
 ## Why ai-mem matters
 
