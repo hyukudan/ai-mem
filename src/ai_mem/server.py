@@ -1398,6 +1398,10 @@ def read_root():
                         <label for="dateEnd">Date end</label>
                         <input type="date" id="dateEnd">
                     </div>
+                    <div>
+                        <label for="exportSince">Export since (relative)</label>
+                        <input type="text" id="exportSince" placeholder="e.g. 24h, 7d">
+                    </div>
                     <div class="quick-row">
                         <button class="chip" onclick="setLastDays(7)">Last 7</button>
                         <button class="chip" onclick="setLastDays(30)">Last 30</button>
@@ -2335,7 +2339,11 @@ def read_root():
 
             async function exportSession(id, format = 'json') {
                 if (!id) return;
+                const exportSince = getExportSinceValue();
                 const params = new URLSearchParams({ session_id: id, format });
+                if (exportSince) {
+                    params.append('since', exportSince);
+                }
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
                 if (!response.ok) {
@@ -3808,6 +3816,14 @@ def read_root():
                 updateLimitWarning();
             }
 
+            function loadExportSince() {
+                const stored = localStorage.getItem('ai-mem-export-since') || '';
+                const input = document.getElementById('exportSince');
+                if (input) {
+                    input.value = stored;
+                }
+            }
+
             function loadSelectedProject() {
                 selectedProject = localStorage.getItem('ai-mem-selected-project') || '';
             }
@@ -4201,6 +4217,10 @@ def read_root():
                 search();
             }
 
+            function getExportSinceValue() {
+                return (document.getElementById('exportSince')?.value || '').trim();
+            }
+
             async function exportData(format = 'json') {
                 const project = document.getElementById('project').value;
                 const sessionId = (document.getElementById('sessionId')?.value || '').trim();
@@ -4208,6 +4228,7 @@ def read_root():
                 const tags = (document.getElementById('tagsFilter').value || '').trim();
                 const dateStart = document.getElementById('dateStart').value;
                 const dateEnd = document.getElementById('dateEnd').value;
+                const exportSince = getExportSinceValue();
                 const params = new URLSearchParams();
                 if (sessionId) {
                     params.append('session_id', sessionId);
@@ -4218,6 +4239,7 @@ def read_root():
                 if (tags) params.append('tags', tags);
                 if (dateStart) params.append('date_start', dateStart);
                 if (dateEnd) params.append('date_end', dateEnd);
+                if (exportSince && !dateStart) params.append('since', exportSince);
                 params.append('format', format);
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
@@ -4464,6 +4486,13 @@ def read_root():
                     loadTagManager();
                     refreshResultsForFilters();
                 });
+                const exportSinceInput = document.getElementById('exportSince');
+                if (exportSinceInput) {
+                    exportSinceInput.addEventListener('change', () => {
+                        const value = exportSinceInput.value || '';
+                        localStorage.setItem('ai-mem-export-since', value);
+                    });
+                }
                 document.getElementById('autoRefresh').addEventListener('change', updateAutoRefresh);
                 document.getElementById('refreshInterval').addEventListener('change', updateAutoRefresh);
                 document.getElementById('pulseToggle').addEventListener('change', updatePulseToggle);
@@ -4565,6 +4594,7 @@ def read_root():
             loadTimelineAnchor();
             loadTimelineDepth();
             loadListLimit();
+            loadExportSince();
             loadSelectedProject();
             loadLastMode();
             loadSelectedFilters();

@@ -320,6 +320,7 @@ Viewer features:
 - Search, timeline, stats, and context preview.
 - Session start/end, summaries, and export.
 - Export JSON/JSONL/CSV and import JSON/JSONL/CSV from the viewer.
+- Export since (relative) for incremental snapshots.
 - Stream view for new observations.
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.
@@ -331,6 +332,7 @@ Viewer features:
 - Save and re-apply search filters in the viewer UI (stored locally in the browser).
 - Tag management panel to list, rename, and delete tags.
 - Context presets per project in the viewer UI.
+- Export "since" field in the viewer for incremental exports.
 
 ## Hooks (Model Agnostic)
 
