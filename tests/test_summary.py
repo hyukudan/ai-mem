@@ -1,7 +1,6 @@
+import pytest
 import tempfile
-import unittest
 from unittest import mock
-
 from ai_mem.config import AppConfig, EmbeddingConfig, LLMConfig, StorageConfig
 from ai_mem.memory import MemoryManager
 
@@ -28,49 +27,47 @@ class DummyVectorStore:
         return None
 
 
-class SummaryTests(unittest.TestCase):
-    def test_summarize_project_stores_summary(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = AppConfig(
-                llm=LLMConfig(provider="none"),
-                embeddings=EmbeddingConfig(provider="fastembed"),
-                storage=StorageConfig(data_dir=tmpdir),
-            )
-            with mock.patch("ai_mem.memory._build_embedding_provider", return_value=DummyEmbeddingProvider()), \
-                mock.patch("ai_mem.memory.build_vector_store", return_value=DummyVectorStore()):
-                manager = MemoryManager(config)
-                manager.add_observation(content="First note", obs_type="note", project="proj", summarize=False)
-                manager.add_observation(content="Second note", obs_type="note", project="proj", summarize=False)
-                result = manager.summarize_project(project="proj", limit=5, store=True)
-                self.assertIsNotNone(result)
-                self.assertIn("First note", result["summary"])
-                obs = result["observation"]
-                self.assertIsNotNone(obs)
-                self.assertEqual(obs.type, "summary")
-
-    def test_summarize_session(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = AppConfig(
-                llm=LLMConfig(provider="none"),
-                embeddings=EmbeddingConfig(provider="fastembed"),
-                storage=StorageConfig(data_dir=tmpdir),
-            )
-            with mock.patch("ai_mem.memory._build_embedding_provider", return_value=DummyEmbeddingProvider()), \
-                mock.patch("ai_mem.memory.build_vector_store", return_value=DummyVectorStore()):
-                manager = MemoryManager(config)
-                session = manager.start_session(project="proj")
-                manager.add_observation(content="Session note", obs_type="note", project="proj", summarize=False)
-                manager.add_observation(content="Other note", obs_type="note", project="proj", summarize=False)
-                result = manager.summarize_project(session_id=session.id, limit=5, store=True)
-                self.assertIsNotNone(result)
-                self.assertIn("Session note", result["summary"])
-                obs = result["observation"]
-                self.assertIsNotNone(obs)
-                self.assertEqual(obs.session_id, session.id)
-                stored_session = manager.get_session(session.id)
-                self.assertIsNotNone(stored_session)
-                self.assertIn("Session note", stored_session.get("summary") or "")
+@pytest.fixture
+async def manager():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = AppConfig(
+            llm=LLMConfig(provider="none"),
+            embeddings=EmbeddingConfig(provider="fastembed"),
+            storage=StorageConfig(data_dir=tmpdir),
+        )
+        with mock.patch("ai_mem.memory._build_embedding_provider", return_value=DummyEmbeddingProvider()), \
+            mock.patch("ai_mem.memory.build_vector_store", return_value=DummyVectorStore()):
+            manager = MemoryManager(config)
+            await manager.initialize()
+            yield manager
+            await manager.close()
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.asyncio
+async def test_summarize_project_stores_summary(manager):
+    await manager.add_observation(content="First note", obs_type="note", project="proj", summarize=False)
+    await manager.add_observation(content="Second note", obs_type="note", project="proj", summarize=False)
+    result = await manager.summarize_project(project="proj", limit=5, store=True)
+
+    assert result is not None
+    assert "First note" in result["summary"]
+    obs = result["observation"]
+    assert obs is not None
+    assert obs.type == "summary"
+
+
+@pytest.mark.asyncio
+async def test_summarize_session(manager):
+    session = await manager.start_session(project="proj")
+    await manager.add_observation(content="Session note", obs_type="note", project="proj", summarize=False)
+    await manager.add_observation(content="Other note", obs_type="note", project="proj", summarize=False)
+    result = await manager.summarize_project(session_id=session.id, limit=5, store=True)
+
+    assert result is not None
+    assert "Session note" in result["summary"]
+    obs = result["observation"]
+    assert obs is not None
+    assert obs.session_id == session.id
+    stored_session = await manager.get_session(session.id)
+    assert stored_session is not None
+    assert "Session note" in (stored_session.get("summary") or "")

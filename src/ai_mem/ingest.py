@@ -45,6 +45,14 @@ def ingest_project(root_path: str, manager: MemoryManager, dry_run: bool = False
             
             if spec.match_file(str(rel_path)):
                 continue
+            
+            # Security: Ensure resolved path stays within root (prevent symlink attacks)
+            try:
+                resolved_path = file_path.resolve()
+                if not str(resolved_path).startswith(str(root)):
+                    continue
+            except (OSError, ValueError):
+                continue
                 
             if not is_text_file(file_path):
                 continue

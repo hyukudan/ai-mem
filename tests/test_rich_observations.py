@@ -6,7 +6,7 @@ from ai_mem.memory import MemoryManager
 from ai_mem.config import AppConfig
 
 @pytest.fixture
-def test_manager():
+async def test_manager():
     # Use a temporary directory for testing
     test_dir = "/tmp/ai_mem_rich_test_" + str(time.time())
     config = AppConfig()
@@ -15,14 +15,16 @@ def test_manager():
     config.storage.vector_dir = os.path.join(test_dir, "test_vector")
     
     manager = MemoryManager(config)
+    await manager.initialize()
     yield manager
     
     # Cleanup
     if os.path.exists(test_dir):
         shutil.rmtree(test_dir)
 
-def test_observation_with_diff(test_manager):
-    obs = test_manager.add_observation(
+@pytest.mark.asyncio
+async def test_observation_with_diff(test_manager):
+    obs = await test_manager.add_observation(
         content="Refactored the login function",
         obs_type="refactor",
         project="test-project",
@@ -34,11 +36,12 @@ def test_observation_with_diff(test_manager):
     assert "print('logging in')" in obs.diff
     
     # Verify retrieval from DB
-    retrieved = test_manager.db.get_observation(obs.id)
+    retrieved = await test_manager.db.get_observation(obs.id)
     assert retrieved is not None
     assert retrieved["diff"] == obs.diff
 
-def test_observation_with_assets(test_manager):
+@pytest.mark.asyncio
+async def test_observation_with_assets(test_manager):
     assets = [
         {
             "type": "file",
@@ -56,7 +59,7 @@ def test_observation_with_assets(test_manager):
         }
     ]
     
-    obs = test_manager.add_observation(
+    obs = await test_manager.add_observation(
         content="Analyzed crash logs",
         obs_type="bugfix",
         project="test-project",
@@ -69,7 +72,7 @@ def test_observation_with_assets(test_manager):
     assert obs.assets[0].content == "Error: Connection refused"
     
     # Verify retrieval
-    retrieved = test_manager.db.get_observation(obs.id)
+    retrieved = await test_manager.db.get_observation(obs.id)
     assert retrieved is not None
     retrieved_assets = retrieved["assets"]
     assert len(retrieved_assets) == 2
@@ -79,8 +82,9 @@ def test_observation_with_assets(test_manager):
     assert log_asset["content"] == "Error: Connection refused"
     assert log_asset["metadata"]["size"] == 1024
 
-def test_observation_with_diff_and_assets(test_manager):
-    obs = test_manager.add_observation(
+@pytest.mark.asyncio
+async def test_observation_with_diff_and_assets(test_manager):
+    obs = await test_manager.add_observation(
         content="Complex change",
         obs_type="feature",
         project="test-project",
@@ -88,6 +92,6 @@ def test_observation_with_diff_and_assets(test_manager):
         assets=[{"type": "file", "name": "spec.md"}]
     )
     
-    retrieved = test_manager.db.get_observation(obs.id)
+    retrieved = await test_manager.db.get_observation(obs.id)
     assert retrieved["diff"] == "diff --git a/file b/file"
     assert len(retrieved["assets"]) == 1

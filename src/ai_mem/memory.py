@@ -266,6 +266,13 @@ class MemoryManager:
         self._search_cache_hits: int = 0
         self._search_cache_misses: int = 0
 
+    async def initialize(self) -> None:
+        await self.db.connect()
+        await self.db.create_tables()
+
+    async def close(self) -> None:
+        await self.db.close()
+
     def add_listener(self, listener: Callable[[Observation], None]) -> Callable[[], None]:
         with self._listener_lock:
             self._listeners.append(listener)
@@ -390,52 +397,52 @@ class MemoryManager:
             "recency_weight": self.config.search.recency_weight,
         }
 
-    def start_session(
+    async def start_session(
         self,
         project: str,
         goal: str = "",
         session_id: Optional[str] = None,
     ) -> Session:
         if self.current_session:
-            self.close_session()
+            await self.close_session()
         if session_id:
-            existing = self.db.get_session(session_id)
+            existing = await self.db.get_session(session_id)
             if existing:
                 session = Session.model_validate(existing)
                 if goal and goal != session.goal:
                     session.goal = goal
-                    self.db.add_session(session)
+                    await self.db.add_session(session)
                 self.current_session = session
                 return session
             self.current_session = Session(id=session_id, project=project, goal=goal)
         else:
             self.current_session = Session(project=project, goal=goal)
-        self.db.add_session(self.current_session)
+        await self.db.add_session(self.current_session)
         return self.current_session
 
-    def _ensure_session(self, project: str) -> Session:
+    async def _ensure_session(self, project: str) -> Session:
         if self.current_session:
             if self.current_session.project == project:
                 return self.current_session
-            self.close_session()
-        existing = self.db.list_sessions(project=project, active_only=True, limit=1)
+            await self.close_session()
+        existing = await self.db.list_sessions(project=project, active_only=True, limit=1)
         if existing:
             self.current_session = Session.model_validate(existing[0])
             return self.current_session
-        return self.start_session(project=project, goal="Auto-started session")
+        return await self.start_session(project=project, goal="Auto-started session")
 
-    def close_session(self) -> None:
+    async def close_session(self) -> None:
         if not self.current_session:
             return
         import time
 
         self.current_session.end_time = time.time()
-        self.db.add_session(self.current_session)
+        await self.db.add_session(self.current_session)
         self.current_session = None
 
-    def end_session(self, session_id: Optional[str] = None) -> Optional[Session]:
+    async def end_session(self, session_id: Optional[str] = None) -> Optional[Session]:
         if session_id:
-            data = self.db.get_session(session_id)
+            data = await self.db.get_session(session_id)
             if not data:
                 return None
             session = Session.model_validate(data)
@@ -444,26 +451,26 @@ class MemoryManager:
             if not session:
                 return None
         session.end_time = time.time()
-        self.db.add_session(session)
+        await self.db.add_session(session)
         if self.current_session and self.current_session.id == session.id:
             self.current_session = None
         return session
 
-    def end_latest_session(self, project: Optional[str] = None) -> Optional[Session]:
+    async def end_latest_session(self, project: Optional[str] = None) -> Optional[Session]:
         project_name = project or (self.current_session.project if self.current_session else None)
         if not project_name:
             return None
-        sessions = self.db.list_sessions(project=project_name, active_only=True, limit=1)
+        sessions = await self.db.list_sessions(project=project_name, active_only=True, limit=1)
         if not sessions:
             return None
         session = Session.model_validate(sessions[0])
         session.end_time = time.time()
-        self.db.add_session(session)
+        await self.db.add_session(session)
         if self.current_session and self.current_session.id == session.id:
             self.current_session = None
         return session
 
-    def add_observation(
+    async def add_observation(
         self,
         content: str,
         obs_type: str,
@@ -482,7 +489,7 @@ class MemoryManager:
     ) -> Optional[Observation]:
         session = None
         if session_id:
-            session_data = self.db.get_session(session_id)
+            session_data = await self.db.get_session(session_id)
             if session_data:
                 session = Session.model_validate(session_data)
         if session:
@@ -491,7 +498,7 @@ class MemoryManager:
             project_name = project or (os.getcwd() if session_id else (self.current_session.project if self.current_session else os.getcwd()))
             if session_id:
                 session = Session(id=session_id, project=project_name)
-                self.db.add_session(session)
+                await self.db.add_session(session)
         cleaned_content, stripped = strip_memory_tags(content)
         if not cleaned_content:
             return None
@@ -502,20 +509,21 @@ class MemoryManager:
 
         content_hash = hashlib.sha256(cleaned_content.encode("utf-8")).hexdigest()
         if dedupe:
-            existing = self.db.find_observation_by_hash(content_hash, project_name)
+            existing = await self.db.find_observation_by_hash(content_hash, project_name)
             if existing:
                 return Observation.model_validate(existing)
 
         if not session_id:
             if not self.current_session:
-                self._ensure_session(project_name)
+                await self._ensure_session(project_name)
             session = self.current_session
 
         summary_text = summary if summary is not None else cleaned_content
         if summary is None and len(cleaned_content) > 500:
             if summarize and self.allow_llm_summaries:
                 try:
-                    summary_text = self.chat_provider.summarize(cleaned_content)
+                    # TODO: Make chat_provider async in future refactor
+                    summary_text = await asyncio.to_thread(self.chat_provider.summarize, cleaned_content)
                 except Exception:
                     summary_text = cleaned_content[:500] + "..."
             else:
@@ -552,9 +560,9 @@ class MemoryManager:
                 )
                 for asset in normalized_assets
             ]
-        self.db.add_observation(obs)
+        await self.db.add_observation(obs)
         if obs.assets:
-            self._store_assets(obs.id, obs.assets)
+            await self._store_assets(obs.id, obs.assets)
         self._index_observation(obs)
         self._notify_listeners(obs)
         return obs
@@ -582,9 +590,9 @@ class MemoryManager:
             )
         return normalized
 
-    def _store_assets(self, observation_id: str, assets: List[ObservationAsset]) -> None:
+    async def _store_assets(self, observation_id: str, assets: List[ObservationAsset]) -> None:
         for asset in assets:
-            self.db.add_asset(
+            await self.db.add_asset(
                 observation_id=observation_id,
                 asset_type=asset.type,
                 name=asset.name,
@@ -623,7 +631,7 @@ class MemoryManager:
             ids=ids,
         )
 
-    def search(
+    async def search(
         self,
         query: str,
         limit: int = 10,
@@ -642,7 +650,7 @@ class MemoryManager:
         tags = _normalize_tags(tag_filters)
         query_str = (query or "").strip()
         if not query_str:
-            return self.db.get_recent_observations(
+            return await self.db.get_recent_observations(
                 project,
                 limit,
                 obs_type=obs_type,
@@ -672,7 +680,7 @@ class MemoryManager:
                 self._last_search_cache_hit = True
                 return cached
 
-        fts_results = self.db.search_observations_fts(
+        fts_results = await self.db.search_observations_fts(
             query_str,
             project=project,
             obs_type=obs_type,
@@ -682,7 +690,7 @@ class MemoryManager:
             tag_filters=tags,
             limit=self.config.search.fts_top_k,
         )
-        vector_hits = self._vector_search(
+        vector_hits = await self._vector_search(
             query_str,
             project=project,
             session_id=session_id,
@@ -703,7 +711,7 @@ class MemoryManager:
                 existing = obs_map[obs_id]
                 existing.vector_score = max(existing.vector_score or 0.0, score)
             else:
-                obs = self.db.get_observation(obs_id)
+                obs = await self.db.get_observation(obs_id)
                 if obs:
                     obs_map[obs_id] = ObservationIndex(
                         id=obs["id"],
@@ -735,7 +743,7 @@ class MemoryManager:
             self._set_search_cache(cache_key, final_results)
         return final_results
 
-    def _vector_search(
+    async def _vector_search(
         self,
         query: str,
         project: Optional[str],
@@ -766,7 +774,7 @@ class MemoryManager:
                     continue
                 obs = None
                 if tags:
-                    obs = self.db.get_observation(obs_id)
+                    obs = await self.db.get_observation(obs_id)
                     if not obs:
                         continue
                     if not _match_tags(obs.get("tags") or [], tags):
@@ -778,7 +786,7 @@ class MemoryManager:
                             if meta_session != session_id:
                                 continue
                         else:
-                            obs = self.db.get_observation(obs_id)
+                            obs = await self.db.get_observation(obs_id)
                             if not obs or obs.get("session_id") != session_id:
                                 continue
                     elif obs.get("session_id") != session_id:
@@ -790,7 +798,7 @@ class MemoryManager:
                 scores[obs_id] = max(scores.get(obs_id, 0.0), score)
         return scores
 
-    def timeline(
+    async def timeline(
         self,
         anchor_id: Optional[str] = None,
         query: Optional[str] = None,
@@ -809,7 +817,7 @@ class MemoryManager:
         if date_start is None and since is not None:
             date_start = since
         if not anchor_id and query:
-            search_results = self.search(
+            search_results = await self.search(
                 query,
                 limit=max(1, depth_before + depth_after + 5),
                 project=project,
@@ -833,7 +841,7 @@ class MemoryManager:
         if not anchor_id:
             return []
 
-        anchor = self.db.get_observation(anchor_id)
+        anchor = await self.db.get_observation(anchor_id)
         if not anchor:
             return []
         if tags and not _match_tags(anchor.get("tags") or [], tags):
@@ -844,7 +852,7 @@ class MemoryManager:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
         project_name = project or anchor["project"]
-        before = self.db.get_observations_before(
+        before = await self.db.get_observations_before(
             project=project_name,
             anchor_time=anchor["created_at"],
             limit=depth_before,
@@ -854,7 +862,7 @@ class MemoryManager:
             date_start=start_ts,
             date_end=end_ts,
         )
-        after = self.db.get_observations_after(
+        after = await self.db.get_observations_after(
             project=project_name,
             anchor_time=anchor["created_at"],
             limit=depth_after,
@@ -891,16 +899,16 @@ class MemoryManager:
         timeline = list(reversed(before)) + [anchor_index] + after
         return timeline
 
-    def get_observations(self, ids: List[str]) -> List[Dict[str, object]]:
-        return self.db.get_observations(ids)
+    async def get_observations(self, ids: List[str]) -> List[Dict[str, object]]:
+        return await self.db.get_observations(ids)
 
-    def list_projects(self) -> List[str]:
-        return self.db.list_projects()
+    async def list_projects(self) -> List[str]:
+        return await self.db.list_projects()
 
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        return self.db.get_session(session_id)
+    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        return await self.db.get_session(session_id)
 
-    def list_sessions(
+    async def list_sessions(
         self,
         project: Optional[str] = None,
         active_only: bool = False,
@@ -911,7 +919,7 @@ class MemoryManager:
     ) -> List[Dict[str, Any]]:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
-        return self.db.list_sessions(
+        return await self.db.list_sessions(
             project=project,
             active_only=active_only,
             goal_query=goal_query,
@@ -920,7 +928,7 @@ class MemoryManager:
             limit=limit,
         )
 
-    def get_stats(
+    async def get_stats(
         self,
         project: Optional[str] = None,
         obs_type: Optional[str] = None,
@@ -937,7 +945,7 @@ class MemoryManager:
             date_start = since
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
-        return self.db.get_stats(
+        return await self.db.get_stats(
             project=project,
             obs_type=obs_type,
             session_id=session_id,
@@ -949,7 +957,7 @@ class MemoryManager:
             type_tag_limit=type_tag_limit,
         )
 
-    def list_tags(
+    async def list_tags(
         self,
         project: Optional[str] = None,
         obs_type: Optional[str] = None,
@@ -961,7 +969,7 @@ class MemoryManager:
     ) -> List[Dict[str, Any]]:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
-        return self.db.get_tag_counts(
+        return await self.db.get_tag_counts(
             project=project,
             obs_type=obs_type,
             session_id=session_id,
@@ -971,7 +979,7 @@ class MemoryManager:
             limit=limit,
         )
 
-    def rename_tag(
+    async def rename_tag(
         self,
         old_tag: str,
         new_tag: str,
@@ -984,7 +992,7 @@ class MemoryManager:
     ) -> int:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
-        return self.db.replace_tag(
+        return await self.db.replace_tag(
             old_tag=old_tag,
             new_tag=new_tag,
             project=project,
@@ -995,7 +1003,7 @@ class MemoryManager:
             tag_filters=_normalize_tags(tag_filters),
         )
 
-    def delete_tag(
+    async def delete_tag(
         self,
         tag: str,
         project: Optional[str] = None,
@@ -1007,7 +1015,7 @@ class MemoryManager:
     ) -> int:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
-        return self.db.replace_tag(
+        return await self.db.replace_tag(
             old_tag=tag,
             new_tag=None,
             project=project,
@@ -1018,7 +1026,7 @@ class MemoryManager:
             tag_filters=_normalize_tags(tag_filters),
         )
 
-    def add_tag(
+    async def add_tag(
         self,
         tag: str,
         project: Optional[str] = None,
@@ -1030,7 +1038,7 @@ class MemoryManager:
     ) -> int:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
-        return self.db.add_tag(
+        return await self.db.add_tag(
             tag=tag,
             project=project,
             obs_type=obs_type,
@@ -1040,7 +1048,7 @@ class MemoryManager:
             tag_filters=_normalize_tags(tag_filters),
         )
 
-    def export_observations(
+    async def export_observations(
         self,
         project: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1052,7 +1060,7 @@ class MemoryManager:
     ) -> List[Dict[str, object]]:
         start_ts = _parse_date(date_start)
         end_ts = _parse_date(date_end)
-        return self.db.list_observations(
+        results = await self.db.list_observations(
             project=project,
             session_id=session_id,
             obs_type=obs_type,
@@ -1061,8 +1069,9 @@ class MemoryManager:
             tag_filters=_normalize_tags(tag_filters),
             limit=limit,
         )
+        return [obs.model_dump() for obs in results]
 
-    def summarize_project(
+    async def summarize_project(
         self,
         project: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1073,7 +1082,7 @@ class MemoryManager:
     ) -> Optional[Dict[str, object]]:
         session = None
         if session_id:
-            session_data = self.db.get_session(session_id)
+            session_data = await self.db.get_session(session_id)
             if not session_data:
                 return None
             session = Session.model_validate(session_data)
@@ -1082,20 +1091,20 @@ class MemoryManager:
             if session
             else project or (self.current_session.project if self.current_session else os.getcwd())
         )
-        observations = self.db.list_observations(
+        observations = await self.db.list_observations(
             project=project_name if not session_id else None,
             session_id=session_id,
             limit=limit,
         )
         if obs_type:
-            observations = [obs for obs in observations if obs.get("type") == obs_type]
+            observations = [obs for obs in observations if obs.type == obs_type]
         if not observations:
             return None
 
         observations = list(reversed(observations))
         lines = []
         for obs in observations:
-            summary = obs.get("summary") or obs.get("content") or ""
+            summary = obs.summary or ""
             summary = summary.strip()
             if summary:
                 lines.append(f"- {summary}")
@@ -1109,7 +1118,9 @@ class MemoryManager:
                 f"Observations:\n{source_text}"
             )
             try:
-                summary_text = self.chat_provider.chat(
+                # TODO: Make chat_provider async in future refactor
+                summary_text = await asyncio.to_thread(
+                    self.chat_provider.chat,
                     [ChatMessage(role="user", content=prompt)],
                     temperature=0.2,
                 )
@@ -1123,7 +1134,7 @@ class MemoryManager:
 
         metadata = {
             "source_count": len(observations),
-            "source_ids": [obs.get("id") for obs in observations if obs.get("id")],
+            "source_ids": [obs.id for obs in observations if obs.id],
         }
         if session_id:
             metadata["session_id"] = session_id
@@ -1132,7 +1143,7 @@ class MemoryManager:
             summary_tags = list(tags or [])
             if session_id and "session-summary" not in summary_tags:
                 summary_tags.append("session-summary")
-            obs = self.add_observation(
+            obs = await self.add_observation(
                 content=summary_text,
                 obs_type="summary",
                 project=project_name,
@@ -1146,26 +1157,26 @@ class MemoryManager:
                 return None
             if session_id and session:
                 session.summary = summary_text
-                self.db.add_session(session)
+                await self.db.add_session(session)
             return {"summary": summary_text, "observation": obs, "metadata": metadata}
 
         return {"summary": summary_text, "metadata": metadata}
 
-    def delete_observation(self, obs_id: str) -> bool:
-        deleted = self.db.delete_observation(obs_id)
+    async def delete_observation(self, obs_id: str) -> bool:
+        deleted = await self.db.delete_observation(obs_id)
         if deleted:
             self.vector_store.delete_where({"observation_id": obs_id})
         return bool(deleted)
 
-    def update_observation_tags(self, obs_id: str, tags: Optional[List[str]]) -> bool:
+    async def update_observation_tags(self, obs_id: str, tags: Optional[List[str]]) -> bool:
         if tags is None:
             return False
         normalized = _normalize_tags(tags)
-        updated = self.db.update_observation_tags(obs_id, normalized)
+        updated = await self.db.update_observation_tags(obs_id, normalized)
         return bool(updated)
 
-    def delete_project(self, project: str) -> int:
-        deleted = self.db.delete_project(project)
+    async def delete_project(self, project: str) -> int:
+        deleted = await self.db.delete_project(project)
         if deleted:
             self.vector_store.delete_where({"project": project})
         return deleted

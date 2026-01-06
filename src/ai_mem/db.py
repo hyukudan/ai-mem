@@ -1,5 +1,6 @@
 import json
-import sqlite3
+import aiosqlite
+import sqlite3 # keep for Row type if needed, or row_factory logic
 import time
 import uuid
 from collections import Counter
@@ -13,21 +14,30 @@ class DatabaseManager:
     def __init__(self, db_path: str):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.conn.row_factory = sqlite3.Row
-        self._configure()
-        self.create_tables()
+        self.conn: Optional[aiosqlite.Connection] = None
 
-    def _configure(self) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute("PRAGMA foreign_keys = ON")
-        cursor.execute("PRAGMA journal_mode = WAL")
-        cursor.execute("PRAGMA busy_timeout = 5000")
-        self.conn.commit()
+    async def connect(self) -> None:
+        self.conn = await aiosqlite.connect(self.db_path, check_same_thread=False)
+        self.conn.row_factory = aiosqlite.Row
+        await self._configure()
+        await self.create_tables()
 
-    def create_tables(self) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
+    async def close(self) -> None:
+        if self.conn:
+            await self.conn.close()
+
+    async def _configure(self) -> None:
+        if not self.conn:
+            return
+        await self.conn.execute("PRAGMA foreign_keys = ON")
+        await self.conn.execute("PRAGMA journal_mode = WAL")
+        await self.conn.execute("PRAGMA busy_timeout = 5000")
+        await self.conn.commit()
+
+    async def create_tables(self) -> None:
+        if not self.conn:
+            return
+        await self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS sessions (
                 id TEXT PRIMARY KEY,
@@ -39,7 +49,7 @@ class DatabaseManager:
             )
             """
         )
-        cursor.execute(
+        await self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS observations (
                 id TEXT PRIMARY KEY,
@@ -58,7 +68,7 @@ class DatabaseManager:
             )
             """
         )
-        cursor.execute(
+        await self.conn.execute(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
                 title,
@@ -70,7 +80,7 @@ class DatabaseManager:
             )
             """
         )
-        cursor.executescript(
+        await self.conn.executescript(
             """
             CREATE TRIGGER IF NOT EXISTS observations_ai AFTER INSERT ON observations BEGIN
                 INSERT INTO observations_fts(rowid, title, summary, content, tags)
@@ -89,33 +99,33 @@ class DatabaseManager:
             """
         )
         # Indexes for optimization
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_project ON observations(project)"
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(type)"
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_created ON observations(created_at)"
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_hash ON observations(content_hash)"
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_session ON observations(session_id)"
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_project_created ON observations(project, created_at)"
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project)"
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time)"
         )
-        self.conn.commit()
-        self._ensure_columns()
-        self._ensure_asset_table()
+        await self.conn.commit()
+        await self._ensure_columns()
+        await self._ensure_asset_table()
 
     def _tag_clause(
         self,
@@ -129,15 +139,21 @@ class DatabaseManager:
         if not valid_tags:
             return None
 
-        if column == "tags":
+        if column in {"tags", "observations.tags"}:
             # Optimization: Use FTS index for faster tag filtering
             # We construct a MATCH query like: "tag1" OR "tag2"
-            quoted_tags = [f'"{tag}"' for tag in valid_tags]
+            # We wrap tags in double quotes for phrase matching to be safe
+            quoted_tags = [f'"{tag.replace("\"", "\"\"")}"' for tag in valid_tags]
             match_query = " OR ".join(quoted_tags)
             params.append(match_query)
-            return "rowid IN (SELECT rowid FROM observations_fts WHERE tags MATCH ?)"
+            return "observations.rowid IN (SELECT rowid FROM observations_fts WHERE tags MATCH ?)"
 
-        # Fallback for non-FTS columns
+        # Fallback for non-FTS columns (requires explicit validation to avoid SQL injection)
+        allowed_columns = {"project", "session_id", "type", "observations.project", "observations.session_id", "observations.type"}
+        if column not in allowed_columns:
+             # If it's not a known column, we don't trust it for direct inclusion
+             return None
+
         clauses = []
         for tag in valid_tags:
             clauses.append(f"{column} LIKE ?")
@@ -147,20 +163,24 @@ class DatabaseManager:
             return None
         return "(" + " OR ".join(clauses) + ")"
 
-    def _ensure_columns(self) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute("PRAGMA table_info(observations)")
-        existing = {row["name"] for row in cursor.fetchall()}
+    async def _ensure_columns(self) -> None:
+        if not self.conn:
+            return
+        async with self.conn.execute("PRAGMA table_info(observations)") as cursor:
+            rows = await cursor.fetchall()
+            existing = {row["name"] for row in rows}
+        
         if "content_hash" not in existing:
-            cursor.execute("ALTER TABLE observations ADD COLUMN content_hash TEXT")
-            self.conn.commit()
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN content_hash TEXT")
+            await self.conn.commit()
         if "diff" not in existing:
-            cursor.execute("ALTER TABLE observations ADD COLUMN diff TEXT")
-            self.conn.commit()
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN diff TEXT")
+            await self.conn.commit()
 
-    def _ensure_asset_table(self) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
+    async def _ensure_asset_table(self) -> None:
+        if not self.conn:
+            return
+        await self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS observation_assets (
                 id TEXT PRIMARY KEY,
@@ -175,12 +195,12 @@ class DatabaseManager:
             )
             """
         )
-        cursor.execute(
+        await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_assets_observation ON observation_assets(observation_id)"
         )
-        self.conn.commit()
+        await self.conn.commit()
 
-    def add_asset(
+    async def add_asset(
         self,
         observation_id: str,
         asset_type: str,
@@ -191,12 +211,13 @@ class DatabaseManager:
         asset_id: Optional[str] = None,
         created_at: Optional[float] = None,
     ) -> None:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return
         if not asset_id:
             asset_id = str(uuid.uuid4())
         timestamp = created_at or time.time()
         metadata_value = json.dumps(metadata or {})
-        cursor.execute(
+        await self.conn.execute(
             """
             INSERT OR REPLACE INTO observation_assets (
                 id,
@@ -221,20 +242,22 @@ class DatabaseManager:
                 timestamp,
             ),
         )
-        self.conn.commit()
+        await self.conn.commit()
 
-    def get_assets_for_observations(self, observation_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+    async def get_assets_for_observations(self, observation_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not observation_ids:
             return {}
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return {}
+        
         # Handle large lists by chunking if necessary, but sqlite limit is typically high (999 default variables)
-        # For simplicity, assuming chunking not strictly needed for page size < 100
         placeholders = ",".join("?" for _ in observation_ids)
-        cursor.execute(
+        async with self.conn.execute(
             f"SELECT * FROM observation_assets WHERE observation_id IN ({placeholders})",
             observation_ids,
-        )
-        rows = cursor.fetchall()
+        ) as cursor:
+            rows = await cursor.fetchall()
+            
         assets_map: Dict[str, List[Dict[str, Any]]] = {oid: [] for oid in observation_ids}
         for row in rows:
             obs_id = row["observation_id"]
@@ -252,9 +275,10 @@ class DatabaseManager:
                 )
         return assets_map
 
-    def get_assets_for_observation(self, observation_id: str) -> List[Dict[str, Any]]:
+    async def get_assets_for_observation(self, observation_id: str) -> List[Dict[str, Any]]:
         # Use the batch method for consistency
-        return self.get_assets_for_observations([observation_id]).get(observation_id, [])
+        assets_map = await self.get_assets_for_observations([observation_id])
+        return assets_map.get(observation_id, [])
 
     def _row_to_asset(self, row: sqlite3.Row) -> Dict[str, Any]:
         metadata = json.loads(row["metadata"] or "{}")
@@ -269,31 +293,12 @@ class DatabaseManager:
             "created_at": row["created_at"],
         }
 
-    def _ensure_asset_table(self) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS observation_assets (
-                id TEXT PRIMARY KEY,
-                observation_id TEXT NOT NULL,
-                type TEXT NOT NULL,
-                name TEXT,
-                path TEXT,
-                content TEXT,
-                metadata TEXT,
-                created_at REAL NOT NULL,
-                FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE CASCADE
-            )
-            """
-        )
-        cursor.execute(
-            "CREATE INDEX IF NOT EXISTS idx_assets_observation ON observation_assets(observation_id)"
-        )
-        self.conn.commit()
 
-    def add_session(self, session: Session) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
+
+    async def add_session(self, session: Session) -> None:
+        if not self.conn:
+            return
+        await self.conn.execute(
             """
             INSERT OR REPLACE INTO sessions (id, project, goal, summary, start_time, end_time)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -307,11 +312,12 @@ class DatabaseManager:
                 session.end_time,
             ),
         )
-        self.conn.commit()
+        await self.conn.commit()
 
-    def add_observation(self, obs: Observation) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
+    async def add_observation(self, obs: Observation) -> None:
+        if not self.conn:
+            return
+        await self.conn.execute(
             """
             INSERT OR REPLACE INTO observations (
                 id,
@@ -346,15 +352,16 @@ class DatabaseManager:
                 obs.diff,
             ),
         )
-        self.conn.commit()
+        await self.conn.commit()
 
-    def find_observation_by_hash(
+    async def find_observation_by_hash(
         self,
         content_hash: str,
         project: str,
     ) -> Optional[Dict[str, Any]]:
-        cursor = self.conn.cursor()
-        cursor.execute(
+        if not self.conn:
+            return None
+        async with self.conn.execute(
             """
             SELECT * FROM observations
             WHERE content_hash = ? AND project = ?
@@ -362,45 +369,58 @@ class DatabaseManager:
             LIMIT 1
             """,
             (content_hash, project),
-        )
-        row = cursor.fetchone()
+        ) as cursor:
+            row = await cursor.fetchone()
+            
         if not row:
             return None
-        return self._row_to_observation(row)
+        # _row_to_observation expects assets or fetches them.
+        # It's an internal helper. But _row_to_observation is sync if I didn't change it.
+        # Wait, _row_to_observation calls self.get_assets_for_observation if assets is None.
+        # But get_assets_for_observation is now ASYNC!
+        # So _row_to_observation MUST be async OR I must fetch assets here.
+        # I should fetch assets here.
+        
+        assets_map = await self.get_assets_for_observations([row["id"]])
+        return self._row_to_observation(row, assets=assets_map.get(row["id"]))
 
-    def get_observation(self, obs_id: str) -> Optional[Dict[str, Any]]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM observations WHERE id = ?", (obs_id,))
-        row = cursor.fetchone()
+    async def get_observation(self, obs_id: str) -> Optional[Dict[str, Any]]:
+        if not self.conn:
+            return None
+        async with self.conn.execute("SELECT * FROM observations WHERE id = ?", (obs_id,)) as cursor:
+            row = await cursor.fetchone()
         if not row:
             return None
-        return self._row_to_observation(row)
+        assets_map = await self.get_assets_for_observations([obs_id])
+        return self._row_to_observation(row, assets=assets_map.get(obs_id))
 
-    def get_observations(self, ids: List[str]) -> List[Dict[str, Any]]:
+    async def get_observations(self, ids: List[str]) -> List[Dict[str, Any]]:
         if not ids:
             return []
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         placeholders = ",".join("?" for _ in ids)
-        cursor.execute(
+        async with self.conn.execute(
             f"SELECT * FROM observations WHERE id IN ({placeholders})", ids
-        )
-        rows = cursor.fetchall()
+        ) as cursor:
+            rows = await cursor.fetchall()
         
         # Batch fetch assets
         found_ids = [row["id"] for row in rows]
-        assets_map = self.get_assets_for_observations(found_ids)
+        assets_map = await self.get_assets_for_observations(found_ids)
         
         return [self._row_to_observation(row, assets=assets_map.get(row["id"])) for row in rows]
 
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
-        row = cursor.fetchone()
+    async def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        if not self.conn:
+            return None
+        async with self.conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)) as cursor:
+            row = await cursor.fetchone()
         if not row:
             return None
         return self._row_to_session(row)
 
-    def list_sessions(
+    async def list_sessions(
         self,
         project: Optional[str] = None,
         active_only: bool = False,
@@ -409,7 +429,8 @@ class DatabaseManager:
         date_end: Optional[float] = None,
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         params: List[Any] = []
         sql = "SELECT * FROM sessions"
         conditions: List[str] = []
@@ -433,11 +454,12 @@ class DatabaseManager:
         if limit is not None:
             sql += " LIMIT ?"
             params.append(limit)
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
+        
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
         return [self._row_to_session(row) for row in rows]
 
-    def list_observations(
+    async def list_observations(
         self,
         project: Optional[str] = None,
         limit: int = 50,
@@ -447,7 +469,8 @@ class DatabaseManager:
         date_end: Optional[float] = None,
         tag_filters: Optional[List[str]] = None,
     ) -> List[ObservationIndex]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         params: List[Any] = []
         conditions: List[str] = []
         if project:
@@ -477,8 +500,9 @@ class DatabaseManager:
             sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
+        
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
         
         return [
             ObservationIndex(
@@ -492,13 +516,14 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def list_projects(self) -> List[str]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT DISTINCT project FROM observations ORDER BY project")
-        rows = cursor.fetchall()
+    async def list_projects(self) -> List[str]:
+        if not self.conn:
+            return []
+        async with self.conn.execute("SELECT DISTINCT project FROM observations ORDER BY project") as cursor:
+            rows = await cursor.fetchall()
         return [row["project"] for row in rows]
 
-    def get_stats(
+    async def get_stats(
         self,
         project: Optional[str] = None,
         obs_type: Optional[str] = None,
@@ -510,7 +535,8 @@ class DatabaseManager:
         day_limit: int = 14,
         type_tag_limit: int = 3,
     ) -> Dict[str, Any]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return {}
         params: List[Any] = []
         conditions: List[str] = []
         if project:
@@ -533,21 +559,21 @@ class DatabaseManager:
             conditions.append(tag_clause)
         where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 
-        cursor.execute(f"SELECT COUNT(*) AS count FROM observations {where_clause}", params)
-        total_row = cursor.fetchone()
+        async with self.conn.execute(f"SELECT COUNT(*) AS count FROM observations {where_clause}", params) as cursor:
+            total_row = await cursor.fetchone()
         total = int(total_row["count"]) if total_row else 0
 
         end_ts = date_end
         if end_ts is None:
-            cursor.execute(
+            async with self.conn.execute(
                 f"SELECT MAX(created_at) AS max_time FROM observations {where_clause}",
                 params,
-            )
-            max_row = cursor.fetchone()
+            ) as cursor:
+                max_row = await cursor.fetchone()
             if max_row and max_row["max_time"] is not None:
                 end_ts = float(max_row["max_time"])
 
-        cursor.execute(
+        async with self.conn.execute(
             f"""
             SELECT type, COUNT(*) AS count
             FROM observations
@@ -556,11 +582,11 @@ class DatabaseManager:
             ORDER BY count DESC, type ASC
             """,
             params,
-        )
-        by_type = [
-            {"type": row["type"], "count": int(row["count"])}
-            for row in cursor.fetchall()
-        ]
+        ) as cursor:
+            by_type = [
+                {"type": row["type"], "count": int(row["count"])}
+                for row in await cursor.fetchall()
+            ]
 
         if project:
             by_project = [{"project": project, "count": total}] if total else []
@@ -585,7 +611,7 @@ class DatabaseManager:
             project_where = (
                 f"WHERE {' AND '.join(project_conditions)}" if project_conditions else ""
             )
-            cursor.execute(
+            async with self.conn.execute(
                 f"""
                 SELECT project, COUNT(*) AS count
                 FROM observations
@@ -594,11 +620,11 @@ class DatabaseManager:
                 ORDER BY count DESC, project ASC
                 """,
                 project_params,
-            )
-            by_project = [
-                {"project": row["project"], "count": int(row["count"])}
-                for row in cursor.fetchall()
-            ]
+            ) as cursor:
+                by_project = [
+                    {"project": row["project"], "count": int(row["count"])}
+                    for row in await cursor.fetchall()
+                ]
 
         by_day: List[Dict[str, Any]] = []
         recent_start: Optional[float] = None
@@ -612,7 +638,7 @@ class DatabaseManager:
             day_params.append(end_ts)
             day_where = f"WHERE {' AND '.join(day_conditions)}" if day_conditions else ""
             day_params.append(day_limit)
-            cursor.execute(
+            async with self.conn.execute(
                 f"""
                 SELECT strftime('%Y-%m-%d', created_at, 'unixepoch') AS day,
                        COUNT(*) AS count
@@ -623,11 +649,11 @@ class DatabaseManager:
                 LIMIT ?
                 """,
                 day_params,
-            )
-            by_day = [
-                {"day": row["day"], "count": int(row["count"])}
-                for row in cursor.fetchall()
-            ]
+            ) as cursor:
+                by_day = [
+                    {"day": row["day"], "count": int(row["count"])}
+                    for row in await cursor.fetchall()
+                ]
         recent_total = sum(item["count"] for item in by_day)
         previous_total = 0
         trend_delta = 0
@@ -641,11 +667,11 @@ class DatabaseManager:
             prev_conditions.append("created_at < ?")
             prev_params.append(recent_start)
             prev_where = f"WHERE {' AND '.join(prev_conditions)}" if prev_conditions else ""
-            cursor.execute(
+            async with self.conn.execute(
                 f"SELECT COUNT(*) AS count FROM observations {prev_where}",
                 prev_params,
-            )
-            prev_row = cursor.fetchone()
+            ) as cursor:
+                prev_row = await cursor.fetchone()
             previous_total = int(prev_row["count"]) if prev_row else 0
             trend_delta = recent_total - previous_total
             if previous_total > 0:
@@ -653,12 +679,13 @@ class DatabaseManager:
 
         top_tags: List[Dict[str, Any]] = []
         if tag_limit > 0 and total:
-            cursor.execute(
+            async with self.conn.execute(
                 f"SELECT tags FROM observations {where_clause}",
                 params,
-            )
+            ) as cursor:
+                rows = await cursor.fetchall()
             counter: Counter[str] = Counter()
-            for row in cursor.fetchall():
+            for row in rows:
                 raw = row["tags"]
                 if not raw:
                     continue
@@ -679,9 +706,10 @@ class DatabaseManager:
 
         top_tags_by_type: List[Dict[str, Any]] = []
         if not obs_type and type_tag_limit > 0 and total:
-            cursor.execute(f"SELECT type, tags FROM observations {where_clause}", params)
+            async with self.conn.execute(f"SELECT type, tags FROM observations {where_clause}", params) as cursor:
+                rows = await cursor.fetchall()
             per_type: Dict[str, Counter[str]] = {}
-            for row in cursor.fetchall():
+            for row in rows:
                 obs_type_value = row["type"]
                 raw = row["tags"]
                 if not raw:
@@ -723,28 +751,31 @@ class DatabaseManager:
             "day_limit": day_limit,
         }
 
-    def delete_observation(self, obs_id: str) -> int:
-        cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM observations WHERE id = ?", (obs_id,))
-        self.conn.commit()
-        return cursor.rowcount
+    async def delete_observation(self, obs_id: str) -> int:
+        if not self.conn:
+            return 0
+        async with self.conn.execute("DELETE FROM observations WHERE id = ?", (obs_id,)) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
 
-    def update_observation_tags(self, obs_id: str, tags: List[str]) -> int:
-        cursor = self.conn.cursor()
-        cursor.execute(
+    async def update_observation_tags(self, obs_id: str, tags: List[str]) -> int:
+        if not self.conn:
+            return 0
+        async with self.conn.execute(
             "UPDATE observations SET tags = ? WHERE id = ?",
             (json.dumps(tags), obs_id),
-        )
-        self.conn.commit()
-        return cursor.rowcount
+        ) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
 
-    def delete_project(self, project: str) -> int:
-        cursor = self.conn.cursor()
-        cursor.execute("DELETE FROM observations WHERE project = ?", (project,))
-        self.conn.commit()
-        return cursor.rowcount
+    async def delete_project(self, project: str) -> int:
+        if not self.conn:
+            return 0
+        async with self.conn.execute("DELETE FROM observations WHERE project = ?", (project,)) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
 
-    def get_tag_counts(
+    async def get_tag_counts(
         self,
         project: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -754,7 +785,8 @@ class DatabaseManager:
         tag_filters: Optional[List[str]] = None,
         limit: Optional[int] = 50,
     ) -> List[Dict[str, Any]]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         params: List[Any] = []
         conditions: List[str] = []
         if project:
@@ -776,9 +808,12 @@ class DatabaseManager:
         if tag_clause:
             conditions.append(tag_clause)
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-        cursor.execute(f"SELECT tags FROM observations {where_clause}", params)
+        
+        async with self.conn.execute(f"SELECT tags FROM observations {where_clause}", params) as cursor:
+            rows = await cursor.fetchall()
+            
         counter = Counter()
-        for row in cursor.fetchall():
+        for row in rows:
             raw = row["tags"]
             try:
                 tags = json.loads(raw) if raw else []
@@ -795,7 +830,7 @@ class DatabaseManager:
             return items[:limit]
         return items
 
-    def replace_tag(
+    async def replace_tag(
         self,
         old_tag: str,
         new_tag: Optional[str] = None,
@@ -806,10 +841,11 @@ class DatabaseManager:
         date_end: Optional[float] = None,
         tag_filters: Optional[List[str]] = None,
     ) -> int:
+        if not self.conn:
+            return 0
         value = str(old_tag or "").strip()
         if not value:
             return 0
-        cursor = self.conn.cursor()
         params: List[Any] = []
         conditions: List[str] = []
         if project:
@@ -834,10 +870,13 @@ class DatabaseManager:
         if extra_clause:
             conditions.append(extra_clause)
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-        cursor.execute(f"SELECT id, tags FROM observations {where_clause}", params)
+        
+        async with self.conn.execute(f"SELECT id, tags FROM observations {where_clause}", params) as cursor:
+            rows = await cursor.fetchall()
+            
         updated = 0
         replacement = str(new_tag or "").strip() or None
-        for row in cursor.fetchall():
+        for row in rows:
             raw = row["tags"]
             try:
                 tags = json.loads(raw) if raw else []
@@ -861,16 +900,16 @@ class DatabaseManager:
                 deduped.append(tag_str)
             if deduped == tags:
                 continue
-            cursor.execute(
+            await self.conn.execute(
                 "UPDATE observations SET tags = ? WHERE id = ?",
                 (json.dumps(deduped), row["id"]),
             )
             updated += 1
         if updated:
-            self.conn.commit()
+            await self.conn.commit()
         return updated
 
-    def add_tag(
+    async def add_tag(
         self,
         tag: str,
         project: Optional[str] = None,
@@ -880,10 +919,11 @@ class DatabaseManager:
         date_end: Optional[float] = None,
         tag_filters: Optional[List[str]] = None,
     ) -> int:
+        if not self.conn:
+            return 0
         value = str(tag or "").strip()
         if not value:
             return 0
-        cursor = self.conn.cursor()
         params: List[Any] = []
         conditions: List[str] = []
         if project:
@@ -905,9 +945,12 @@ class DatabaseManager:
         if tag_clause:
             conditions.append(tag_clause)
         where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
-        cursor.execute(f"SELECT id, tags FROM observations {where_clause}", params)
+        
+        async with self.conn.execute(f"SELECT id, tags FROM observations {where_clause}", params) as cursor:
+            rows = await cursor.fetchall()
+            
         updated = 0
-        for row in cursor.fetchall():
+        for row in rows:
             raw = row["tags"]
             try:
                 tags = json.loads(raw) if raw else []
@@ -926,16 +969,16 @@ class DatabaseManager:
                     continue
                 seen.add(tag_str)
                 deduped.append(tag_str)
-            cursor.execute(
+            await self.conn.execute(
                 "UPDATE observations SET tags = ? WHERE id = ?",
                 (json.dumps(deduped), row["id"]),
             )
             updated += 1
         if updated:
-            self.conn.commit()
+            await self.conn.commit()
         return updated
 
-    def search_observations_fts(
+    async def search_observations_fts(
         self,
         query: str,
         project: Optional[str] = None,
@@ -946,12 +989,14 @@ class DatabaseManager:
         tag_filters: Optional[List[str]] = None,
         limit: int = 20,
     ) -> List[ObservationIndex]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         conditions = []
         params: List[Any] = []
 
         if query.strip():
-            safe_query = query.replace('"', '""')
+            # Escape double quotes and wrap in phrase markers to avoid FTS operator injection
+            safe_query = '"' + query.replace('"', '""') + '"'
             conditions.append("observations_fts MATCH ?")
             params.append(safe_query)
 
@@ -975,7 +1020,7 @@ class DatabaseManager:
             conditions.append("observations.created_at <= ?")
             params.append(date_end)
 
-        tag_clause = self._tag_clause(tag_filters, params, column="observations.tags")
+        tag_clause = self._tag_clause(tag_filters, params, column="tags")
         if tag_clause:
             conditions.append(tag_clause)
 
@@ -995,8 +1040,10 @@ class DatabaseManager:
             LIMIT ?
         """
         params.append(limit)
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
+        
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+            
         return [
             ObservationIndex(
                 id=row["id"],
@@ -1009,7 +1056,7 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def get_recent_observations(
+    async def get_recent_observations(
         self,
         project: Optional[str],
         limit: int,
@@ -1019,7 +1066,8 @@ class DatabaseManager:
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         params: List[Any] = []
         sql = """
             SELECT id, summary, project, type, created_at
@@ -1048,8 +1096,10 @@ class DatabaseManager:
             sql += " WHERE " + " AND ".join(conditions)
         sql += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
+        
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+            
         return [
             ObservationIndex(
                 id=row["id"],
@@ -1062,7 +1112,7 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def get_observations_before(
+    async def get_observations_before(
         self,
         project: str,
         anchor_time: float,
@@ -1073,7 +1123,8 @@ class DatabaseManager:
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         params: List[Any] = [project, anchor_time]
         conditions = ["project = ?", "created_at < ?"]
         if obs_type:
@@ -1099,8 +1150,8 @@ class DatabaseManager:
             LIMIT ?
         """.format(conditions=" AND ".join(conditions))
         params.append(limit)
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
         return [
             ObservationIndex(
                 id=row["id"],
@@ -1113,7 +1164,7 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def get_observations_after(
+    async def get_observations_after(
         self,
         project: str,
         anchor_time: float,
@@ -1124,7 +1175,8 @@ class DatabaseManager:
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
     ) -> List[ObservationIndex]:
-        cursor = self.conn.cursor()
+        if not self.conn:
+            return []
         params: List[Any] = [project, anchor_time]
         conditions = ["project = ?", "created_at > ?"]
         if obs_type:
@@ -1150,8 +1202,8 @@ class DatabaseManager:
             LIMIT ?
         """.format(conditions=" AND ".join(conditions))
         params.append(limit)
-        cursor.execute(sql, params)
-        rows = cursor.fetchall()
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
         return [
             ObservationIndex(
                 id=row["id"],
@@ -1167,6 +1219,9 @@ class DatabaseManager:
     def _row_to_observation(
         self, row: sqlite3.Row, assets: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
+        # NOTE: This method is synchronous but kept mainly as helper when assets are provided.
+        # If assets are missing, we return empty list to avoid async complexity in row mapping for now,
+        # relying on callers to pre-fetch assets.
         return {
             "id": row["id"],
             "session_id": row["session_id"],
@@ -1181,9 +1236,7 @@ class DatabaseManager:
             "tags": json.loads(row["tags"] or "[]"),
             "metadata": json.loads(row["metadata"] or "{}"),
             "diff": row["diff"] if "diff" in row.keys() else None,
-            "assets": assets
-            if assets is not None
-            else self.get_assets_for_observation(row["id"]),
+            "assets": assets if assets is not None else [],
         }
 
     def _row_to_session(self, row: sqlite3.Row) -> Dict[str, Any]:
@@ -1196,8 +1249,9 @@ class DatabaseManager:
             "end_time": row["end_time"],
         }
 
-    def get_session_stats(self, project: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        cursor = self.conn.cursor()
+    async def get_session_stats(self, project: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        if not self.conn:
+            return []
         query = """
             SELECT 
                 s.id, 
@@ -1210,7 +1264,7 @@ class DatabaseManager:
             FROM sessions s
             LEFT JOIN observations o ON s.id = o.session_id
         """
-        params = []
+        params: List[Any] = []
         if project:
             query += " WHERE s.project = ?"
             params.append(project)
@@ -1218,16 +1272,11 @@ class DatabaseManager:
         query += " GROUP BY s.id ORDER BY s.start_time DESC LIMIT ?"
         params.append(limit)
         
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
+        async with self.conn.execute(query, params) as cursor:
+            rows = await cursor.fetchall()
         
         stats = []
         for row in rows:
-            # simple type breakdown requires another query or complex SQL. 
-            # For now let's stick to basics + a separate query for types per session might be too slow for many sessions.
-            # Let's do a subquery for types if possible, or just load basics.
-            # actually, let's just return basic stats first.
-            
             # Calculate duration
             start = row["start_time"]
             end = row["end_time"] or row["last_activity"] or start

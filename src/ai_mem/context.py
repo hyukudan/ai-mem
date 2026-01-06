@@ -77,7 +77,7 @@ def _render_header(
     return lines
 
 
-def build_context(
+async def build_context(
     manager: MemoryManager,
     project: Optional[str] = None,
     query: Optional[str] = None,
@@ -116,7 +116,7 @@ def build_context(
     scoreboard: Dict[str, Dict[str, Optional[float]]] = {}
 
     if query:
-        index_items = manager.search(
+        index_items = await manager.search(
             query,
             limit=total_count,
             project=project,
@@ -126,7 +126,7 @@ def build_context(
         )
         if index_items:
             ids = [item.id for item in index_items]
-            details = {item["id"]: item for item in manager.get_observations(ids)}
+            details = {item["id"]: item for item in await manager.get_observations(ids)}
             scoreboard = {
                 item.id: {
                     "fts_score": item.fts_score,
@@ -144,11 +144,15 @@ def build_context(
                     detail["_scoreboard"] = scoreboard[item.id]
                 observations.append(detail)
     else:
-        observations = manager.db.list_observations(
+        index_items = await manager.db.list_observations(
             project=project if not session_id else None,
             session_id=session_id,
             limit=total_count,
+            tag_filters=tag_filters,
         )
+        if index_items:
+             ids = [item.id for item in index_items]
+             observations = await manager.get_observations(ids)
 
     observations = _filter_observations(observations, obs_type_filters, tag_filters)
     index_observations = observations[:total_count]

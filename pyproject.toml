@@ -21,6 +21,8 @@ dependencies = [
     "fastembed>=0.4.0",
     "psycopg[binary]>=3.2.0",
     "pgvector>=0.4.2",
+    "aiosqlite>=0.19.0",
+    "pytest-asyncio>=0.23.0",
 ]
 requires-python = ">=3.10"
 readme = "README.md"
@@ -32,3 +34,12 @@ ai-mem = "ai_mem.cli:app"
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = "test_*.py"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::pytest.PytestRemovedIn9Warning",
+]

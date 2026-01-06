@@ -6,7 +6,7 @@ from ai_mem.memory import MemoryManager
 from ai_mem.config import AppConfig
 
 @pytest.fixture
-def test_manager():
+async def test_manager():
     test_dir = "/tmp/ai_mem_ui_test_" + str(time.time())
     config = AppConfig()
     config.storage.data_dir = test_dir
@@ -14,25 +14,28 @@ def test_manager():
     config.storage.vector_dir = os.path.join(test_dir, "test_vector")
     
     manager = MemoryManager(config)
+    await manager.initialize()
     yield manager
     
+    await manager.close()
     if os.path.exists(test_dir):
         shutil.rmtree(test_dir)
 
-def test_session_stats(test_manager):
+@pytest.mark.asyncio
+async def test_session_stats(test_manager):
     # Create sessions and observations
-    session1 = test_manager.start_session(project="proj1", goal="Goal 1")
-    test_manager.add_observation("Obs 1", "note", session_id=session1.id)
-    test_manager.add_observation("Obs 2", "note", session_id=session1.id)
+    session1 = await test_manager.start_session(project="proj1", goal="Goal 1")
+    await test_manager.add_observation("Obs 1", "note", session_id=session1.id)
+    await test_manager.add_observation("Obs 2", "note", session_id=session1.id)
     time.sleep(0.1)
-    test_manager.end_session()
+    await test_manager.end_session()
     
-    session2 = test_manager.start_session(project="proj1", goal="Goal 2")
-    test_manager.add_observation("Obs 3", "note", session_id=session2.id)
-    test_manager.end_session()
+    session2 = await test_manager.start_session(project="proj1", goal="Goal 2")
+    await test_manager.add_observation("Obs 3", "note", session_id=session2.id)
+    await test_manager.end_session()
     
     # Get stats
-    stats = test_manager.db.get_session_stats(project="proj1")
+    stats = await test_manager.db.get_session_stats(project="proj1")
     
     assert len(stats) >= 2
     s1_stat = next(s for s in stats if s["id"] == session1.id)

@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import json
 import os
@@ -487,31 +488,41 @@ def add(
     attach_diff: Optional[List[str]] = typer.Option(None, "--diff", help="Attach diff/patch asset paths"),
 ):
     """Store a new memory observation."""
-    manager = get_memory_manager()
-    if session_id and not project:
-        project = None
-    metadata_payload: Dict[str, Any] = {}
-    for item in metadata or []:
-        metadata_payload.update(_parse_metadata_pair(item))
-    if metadata_file:
-        metadata_payload.update(_load_json_file(metadata_file))
-    assets: List[Dict[str, Any]] = []
-    assets.extend(_build_asset_entries(attach_file, "file"))
-    assets.extend(_build_asset_entries(attach_diff, "diff"))
-    obs = manager.add_observation(
-        content=content,
-        obs_type=obs_type,
-        project=project,
-        session_id=session_id,
-        tags=tag or [],
-        summarize=not no_summary,
-        metadata=metadata_payload or None,
-        assets=assets or None,
-    )
-    if not obs:
-        console.print("[yellow]Skipped: content marked as private.[/yellow]")
-        return
-    console.print(f"[green]Memory stored![/green] (ID: {obs.id})")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if session_id and not project:
+                current_project = None
+            else:
+                current_project = project
+
+            metadata_payload: Dict[str, Any] = {}
+            for item in metadata or []:
+                metadata_payload.update(_parse_metadata_pair(item))
+            if metadata_file:
+                metadata_payload.update(_load_json_file(metadata_file))
+            assets: List[Dict[str, Any]] = []
+            assets.extend(_build_asset_entries(attach_file, "file"))
+            assets.extend(_build_asset_entries(attach_diff, "diff"))
+            obs = await manager.add_observation(
+                content=content,
+                obs_type=obs_type,
+                project=current_project,
+                session_id=session_id,
+                tags=tag or [],
+                summarize=not no_summary,
+                metadata=metadata_payload or None,
+                assets=assets or None,
+            )
+            if not obs:
+                console.print("[yellow]Skipped: content marked as private.[/yellow]")
+                return
+            console.print(f"[green]Memory stored![/green] (ID: {obs.id})")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -530,46 +541,56 @@ def search(
     show_tokens: bool = typer.Option(False, "--show-tokens/--hide-tokens", help="Show token estimates"),
 ):
     """Search memory index (compact results)."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    results = manager.search(
-        query,
-        limit=limit,
-        project=project,
-        obs_type=obs_type,
-        session_id=session_id,
-        date_start=date_start,
-        date_end=date_end,
-        since=since,
-        tag_filters=tag,
-    )
-    if output == "json":
-        payload = [item.model_dump() for item in results]
-        if show_tokens:
-            for row, item in zip(payload, results):
-                row["token_estimate"] = estimate_tokens(item.summary or "")
-        print(json.dumps(payload, indent=2))
-        return
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if session_id:
+                current_project = None
+            elif not project and not all_projects:
+                current_project = os.getcwd()
+            else:
+                current_project = project
 
-    table = Table(title=f"Search results for: {query}")
-    table.add_column("ID", style="dim")
-    table.add_column("Summary", style="cyan")
-    if show_tokens:
-        table.add_column("Tokens", style="dim", justify="right")
-    table.add_column("Type", style="magenta")
-    table.add_column("Project", style="green")
-    for item in results:
-        row = [item.id, item.summary]
-        if show_tokens:
-            row.append(str(estimate_tokens(item.summary or "")))
-        row.extend([item.type or "-", item.project])
-        table.add_row(*row)
-    console.print(table)
+            if all_projects:
+                current_project = None
+            results = await manager.search(
+                query,
+                limit=limit,
+                project=current_project,
+                obs_type=obs_type,
+                session_id=session_id,
+                date_start=date_start,
+                date_end=date_end,
+                since=since,
+                tag_filters=tag,
+            )
+            if output == "json":
+                payload = [item.model_dump() for item in results]
+                if show_tokens:
+                    for row, item in zip(payload, results):
+                        row["token_estimate"] = estimate_tokens(item.summary or "")
+                print(json.dumps(payload, indent=2))
+                return
+
+            table = Table(title=f"Search results for: {query}")
+            table.add_column("ID", style="dim")
+            table.add_column("Summary", style="cyan")
+            if show_tokens:
+                table.add_column("Tokens", style="dim", justify="right")
+            table.add_column("Type", style="magenta")
+            table.add_column("Project", style="green")
+            for item in results:
+                row = [item.id, item.summary]
+                if show_tokens:
+                    row.append(str(estimate_tokens(item.summary or "")))
+                row.extend([item.type or "-", item.project])
+                table.add_row(*row)
+            console.print(table)
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command(name="mem-search")
@@ -622,48 +643,58 @@ def timeline(
     show_tokens: bool = typer.Option(False, "--show-tokens/--hide-tokens", help="Show token estimates"),
 ):
     """Get chronological context around an observation."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    results = manager.timeline(
-        anchor_id=anchor_id,
-        query=query,
-        depth_before=depth_before,
-        depth_after=depth_after,
-        project=project,
-        obs_type=obs_type,
-        session_id=session_id,
-        date_start=date_start,
-        date_end=date_end,
-        since=since,
-        tag_filters=tag,
-    )
-    if output == "json":
-        payload = [item.model_dump() for item in results]
-        if show_tokens:
-            for row, item in zip(payload, results):
-                row["token_estimate"] = estimate_tokens(item.summary or "")
-        print(json.dumps(payload, indent=2))
-        return
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if session_id:
+                current_project = None
+            elif not project and not all_projects:
+                current_project = os.getcwd()
+            else:
+                current_project = project
 
-    table = Table(title="Timeline")
-    table.add_column("ID", style="dim")
-    table.add_column("Summary", style="cyan")
-    if show_tokens:
-        table.add_column("Tokens", style="dim", justify="right")
-    table.add_column("Type", style="magenta")
-    table.add_column("Project", style="green")
-    for item in results:
-        row = [item.id, item.summary]
-        if show_tokens:
-            row.append(str(estimate_tokens(item.summary or "")))
-        row.extend([item.type or "-", item.project])
-        table.add_row(*row)
-    console.print(table)
+            if all_projects:
+                current_project = None
+            results = await manager.timeline(
+                anchor_id=anchor_id,
+                query=query,
+                depth_before=depth_before,
+                depth_after=depth_after,
+                project=current_project,
+                obs_type=obs_type,
+                session_id=session_id,
+                date_start=date_start,
+                date_end=date_end,
+                since=since,
+                tag_filters=tag,
+            )
+            if output == "json":
+                payload = [item.model_dump() for item in results]
+                if show_tokens:
+                    for row, item in zip(payload, results):
+                        row["token_estimate"] = estimate_tokens(item.summary or "")
+                print(json.dumps(payload, indent=2))
+                return
+
+            table = Table(title="Timeline")
+            table.add_column("ID", style="dim")
+            table.add_column("Summary", style="cyan")
+            if show_tokens:
+                table.add_column("Tokens", style="dim", justify="right")
+            table.add_column("Type", style="magenta")
+            table.add_column("Project", style="green")
+            for item in results:
+                row = [item.id, item.summary]
+                if show_tokens:
+                    row.append(str(estimate_tokens(item.summary or "")))
+                row.extend([item.type or "-", item.project])
+                table.add_row(*row)
+            console.print(table)
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -685,31 +716,41 @@ def context(
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """Generate formatted context for injection into other LLMs."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    context_text, meta = build_context(
-        manager,
-        project=project,
-        session_id=session_id,
-        query=query,
-        obs_type=obs_type,
-        obs_types=[item.strip() for item in obs_types.split(",") if item.strip()] if obs_types else None,
-        tag_filters=tag,
-        total_count=total,
-        full_count=full,
-        full_field=full_field,
-        show_tokens=show_tokens,
-        wrap=not no_wrap,
-    )
-    if output == "json":
-        print(json.dumps({"context": context_text, "metadata": meta}, indent=2))
-        return
-    console.print(context_text)
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if session_id:
+                current_project = None
+            elif not project and not all_projects:
+                current_project = os.getcwd()
+            else:
+                current_project = project
+
+            if all_projects:
+                current_project = None
+            context_text, meta = await build_context(
+                manager,
+                project=current_project,
+                session_id=session_id,
+                query=query,
+                obs_type=obs_type,
+                obs_types=[item.strip() for item in obs_types.split(",") if item.strip()] if obs_types else None,
+                tag_filters=tag,
+                total_count=total,
+                full_count=full,
+                full_field=full_field,
+                show_tokens=show_tokens,
+                wrap=not no_wrap,
+            )
+            if output == "json":
+                print(json.dumps({"context": context_text, "metadata": meta}, indent=2))
+                return
+            console.print(context_text)
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -729,64 +770,76 @@ def endless(
     json_output: bool = typer.Option(False, "--json", help="Print JSON per iteration"),
 ):
     """Run Endless Mode: auto-refresh context with rolling window control."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project:
-        project = os.getcwd()
-    console.print("[cyan]Starting Endless Mode (Ctrl+C to stop)[/cyan]")
-    current_total = total if total is not None else manager.config.context.total_observation_count
-    full_count = full if full is not None else manager.config.context.full_observation_count
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        
+        nonlocal project
+        if session_id:
+            project = None
+        elif not project:
+            project = os.getcwd()
+            
+        console.print("[cyan]Starting Endless Mode (Ctrl+C to stop)[/cyan]")
+        current_total = total if total is not None else manager.config.context.total_observation_count
+        full_count = full if full is not None else manager.config.context.full_observation_count
+        try:
+            while True:
+                context_text, meta = await build_context(
+                    manager,
+                    project=project,
+                    session_id=session_id,
+                    query=query,
+                    obs_type=obs_type,
+                    tag_filters=tag,
+                    total_count=current_total,
+                    full_count=full_count,
+                    full_field=full_field,
+                    show_tokens=show_tokens,
+                    wrap=not no_wrap,
+                )
+                tokens = meta.get("tokens", {})
+                total_tokens = tokens.get("total") or 0
+                scoreboard = meta.get("scoreboard") or {}
+                cache = manager.search_cache_summary()
+                if json_output:
+                    payload = {
+                        "context": context_text,
+                        "metadata": meta,
+                        "cache": cache,
+                    }
+                    console.print(json.dumps(payload, indent=2))
+                else:
+                    console.print(context_text)
+                    console.print(f"[green]Total tokens: {total_tokens} (index {tokens.get('index', 0)} + full {tokens.get('full', 0)})[/green]")
+                    if scoreboard:
+                        table = Table(title="Scoreboard (top 5)")
+                        table.add_column("ID", style="dim")
+                        table.add_column("FTS", justify="right")
+                        table.add_column("Vec", justify="right")
+                        table.add_column("Rec", justify="right")
+                        for obs_id, data in list(scoreboard.items())[:5]:
+                            table.add_row(
+                                obs_id,
+                                f"{(data.get('fts_score') or 0):.3f}",
+                                f"{(data.get('vector_score') or 0):.3f}",
+                                f"{(data.get('recency_factor') or 0):.3f}",
+                            )
+                        console.print(table)
+                    console.print(f"[yellow]Cache hits: {cache.get('hits')} misses: {cache.get('misses')} (hit rate {round(((cache.get('hits') or 0) / max(1, (cache.get('hits', 0) + cache.get('misses', 0))))*100, 1)}%)[/yellow]")
+                if token_limit:
+                    if total_tokens > token_limit:
+                        current_total = max(1, current_total - 1)
+                    elif total_tokens < token_limit * 0.9:
+                        current_total += 1
+                await asyncio.sleep(max(5, interval))
+        except asyncio.CancelledError:
+             pass
+        finally:
+             await manager.close()
+
     try:
-        while True:
-            context_text, meta = build_context(
-                manager,
-                project=project,
-                session_id=session_id,
-                query=query,
-                obs_type=obs_type,
-                tag_filters=tag,
-                total_count=current_total,
-                full_count=full_count,
-                full_field=full_field,
-                show_tokens=show_tokens,
-                wrap=not no_wrap,
-            )
-            tokens = meta.get("tokens", {})
-            total_tokens = tokens.get("total") or 0
-            scoreboard = meta.get("scoreboard") or {}
-            cache = manager.search_cache_summary()
-            if json_output:
-                payload = {
-                    "context": context_text,
-                    "metadata": meta,
-                    "cache": cache,
-                }
-                console.print(json.dumps(payload, indent=2))
-            else:
-                console.print(context_text)
-                console.print(f"[green]Total tokens: {total_tokens} (index {tokens.get('index', 0)} + full {tokens.get('full', 0)})[/green]")
-                if scoreboard:
-                    table = Table(title="Scoreboard (top 5)")
-                    table.add_column("ID", style="dim")
-                    table.add_column("FTS", justify="right")
-                    table.add_column("Vec", justify="right")
-                    table.add_column("Rec", justify="right")
-                    for obs_id, data in list(scoreboard.items())[:5]:
-                        table.add_row(
-                            obs_id,
-                            f"{(data.get('fts_score') or 0):.3f}",
-                            f"{(data.get('vector_score') or 0):.3f}",
-                            f"{(data.get('recency_factor') or 0):.3f}",
-                        )
-                    console.print(table)
-                console.print(f"[yellow]Cache hits: {cache.get('hits')} misses: {cache.get('misses')} (hit rate {round(((cache.get('hits') or 0) / max(1, (cache.get('hits', 0) + cache.get('misses', 0))))*100, 1)}%)[/yellow]")
-            if token_limit:
-                if total_tokens > token_limit:
-                    current_total = max(1, current_total - 1)
-                elif total_tokens < token_limit * 0.9:
-                    current_total += 1
-            time.sleep(max(5, interval))
+        asyncio.run(_run())
     except KeyboardInterrupt:
         console.print("[yellow]\nEndless Mode stopped.[/yellow]")
 
@@ -828,130 +881,137 @@ def hook(
     summary_obs_type: Optional[str] = typer.Option(None, help="Summary observation type filter"),
 ):
     """Run hook logic without shell scripts."""
-    manager = get_memory_manager()
-    normalized = event.strip().lower().replace("-", "_")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            normalized = event.strip().lower().replace("-", "_")
 
-    project_name = project or os.environ.get("AI_MEM_PROJECT") or os.getcwd()
-    session_value = session_id or os.environ.get("AI_MEM_SESSION_ID") or None
-    tags = tag if tag is not None else _env_list("AI_MEM_TAGS")
+            project_name = project or os.environ.get("AI_MEM_PROJECT") or os.getcwd()
+            session_value = session_id or os.environ.get("AI_MEM_SESSION_ID") or None
+            tags = tag if tag is not None else _env_list("AI_MEM_TAGS")
 
-    env_tracking = _env_bool("AI_MEM_SESSION_TRACKING") or False
-    track_sessions = session_tracking if session_tracking is not None else env_tracking
+            env_tracking = _env_bool("AI_MEM_SESSION_TRACKING") or False
+            track_sessions = session_tracking if session_tracking is not None else env_tracking
 
-    if normalized == "session_start":
-        if track_sessions:
-            manager.start_session(project=project_name, goal="", session_id=session_value)
+            if normalized == "session_start":
+                if track_sessions:
+                    await manager.start_session(project=project_name, goal="", session_id=session_value)
 
-        query_value = query or os.environ.get("AI_MEM_QUERY") or None
-        total_value = total if total is not None else _env_int("AI_MEM_CONTEXT_TOTAL")
-        full_value = full if full is not None else _env_int("AI_MEM_CONTEXT_FULL")
-        full_field_value = full_field or os.environ.get("AI_MEM_CONTEXT_FULL_FIELD") or None
-        context_tags = context_tag if context_tag is not None else _env_list("AI_MEM_CONTEXT_TAGS")
-        if context_tag is None and not context_tags:
-            context_tags = None
-        env_no_wrap = _env_bool("AI_MEM_CONTEXT_NO_WRAP") or False
-        wrap = not (no_wrap or env_no_wrap)
+                query_value = query or os.environ.get("AI_MEM_QUERY") or None
+                total_value = total if total is not None else _env_int("AI_MEM_CONTEXT_TOTAL")
+                full_value = full if full is not None else _env_int("AI_MEM_CONTEXT_FULL")
+                full_field_value = full_field or os.environ.get("AI_MEM_CONTEXT_FULL_FIELD") or None
+                context_tags = context_tag if context_tag is not None else _env_list("AI_MEM_CONTEXT_TAGS")
+                if context_tag is None and not context_tags:
+                    context_tags = None
+                env_no_wrap = _env_bool("AI_MEM_CONTEXT_NO_WRAP") or False
+                wrap = not (no_wrap or env_no_wrap)
 
-        context_text, _ = build_context(
-            manager,
-            project=None if session_value else project_name,
-            session_id=session_value,
-            query=query_value,
-            obs_type=obs_type,
-            tag_filters=context_tags,
-            total_count=total_value,
-            full_count=full_value,
-            full_field=full_field_value,
-            wrap=wrap,
-        )
-        sys.stdout.write(context_text)
-        return
+                context_text, _ = await build_context(
+                    manager,
+                    project=None if session_value else project_name,
+                    session_id=session_value,
+                    query=query_value,
+                    obs_type=obs_type,
+                    tag_filters=context_tags,
+                    total_count=total_value,
+                    full_count=full_value,
+                    full_field=full_field_value,
+                    wrap=wrap,
+                )
+                sys.stdout.write(context_text)
+                return
 
-    content_text = _read_content(content, content_file)
-    if not content_text.strip():
-        return
+            content_text = _read_content(content, content_file)
+            if not content_text.strip():
+                return
 
-    default_types = {
-        "user_prompt": "interaction",
-        "assistant_response": "interaction",
-        "tool_output": "tool_output",
-        "session_end": "note",
-    }
-    default_tags = {
-        "user_prompt": "user",
-        "assistant_response": "assistant",
-        "tool_output": "tool",
-        "session_end": "session_end",
-    }
-    if normalized not in default_types:
-        console.print(f"[red]Unknown hook event: {event}[/red]")
-        raise typer.Exit(1)
+            default_types = {
+                "user_prompt": "interaction",
+                "assistant_response": "interaction",
+                "tool_output": "tool_output",
+                "session_end": "note",
+            }
+            default_tags = {
+                "user_prompt": "user",
+                "assistant_response": "assistant",
+                "tool_output": "tool",
+                "session_end": "session_end",
+            }
+            if normalized not in default_types:
+                console.print(f"[red]Unknown hook event: {event}[/red]")
+                raise typer.Exit(1)
 
-    obs_type_value = obs_type or os.environ.get("AI_MEM_OBS_TYPE") or default_types[normalized]
-    env_no_summary = _env_bool("AI_MEM_NO_SUMMARY")
-    if no_summary is None:
-        if env_no_summary is None:
-            no_summary_value = normalized == "tool_output"
-        else:
-            no_summary_value = env_no_summary
-    else:
-        no_summary_value = no_summary
-
-    event_tag = default_tags[normalized]
-    all_tags = [event_tag] if event_tag else []
-    all_tags.extend(tags or [])
-    deduped_tags = []
-    seen = set()
-    for item in all_tags:
-        if item not in seen:
-            seen.add(item)
-            deduped_tags.append(item)
-
-    env_metadata = _parse_metadata_value(os.environ.get("AI_MEM_METADATA"))
-    metadata_payload: Dict[str, Any] = {}
-    metadata_payload.update(env_metadata)
-    for item in metadata or []:
-        metadata_payload.update(_parse_metadata_pair(item))
-    if metadata_file:
-        metadata_payload.update(_load_json_file(metadata_file))
-    assets: List[Dict[str, Any]] = []
-    assets.extend(_build_asset_entries(_env_list("AI_MEM_ASSET_FILES"), "file"))
-    assets.extend(_build_asset_entries(_env_list("AI_MEM_ASSET_DIFFS"), "diff"))
-    assets.extend(_build_asset_entries(asset_file, "file"))
-    assets.extend(_build_asset_entries(asset_diff, "diff"))
-
-    manager.add_observation(
-        content=content_text,
-        obs_type=obs_type_value,
-        project=None if session_value else project_name,
-        session_id=session_value,
-        tags=deduped_tags,
-        summarize=not no_summary_value,
-        metadata=metadata_payload or None,
-        assets=assets or None,
-    )
-
-    if normalized == "session_end":
-        if track_sessions:
-            if session_value:
-                manager.end_session(session_value)
+            obs_type_value = obs_type or os.environ.get("AI_MEM_OBS_TYPE") or default_types[normalized]
+            env_no_summary = _env_bool("AI_MEM_NO_SUMMARY")
+            if no_summary is None:
+                if env_no_summary is None:
+                    no_summary_value = normalized == "tool_output"
+                else:
+                    no_summary_value = env_no_summary
             else:
-                manager.end_latest_session(project_name)
+                no_summary_value = no_summary
 
-        env_summary_on_end = _env_bool("AI_MEM_SUMMARY_ON_END") or False
-        should_summarize = summary_on_end if summary_on_end is not None else env_summary_on_end
-        if should_summarize:
-            env_summary_count = _env_int("AI_MEM_SUMMARY_COUNT")
-            if env_summary_count is not None and summary_count == 20:
-                summary_count = env_summary_count
-            summary_type = summary_obs_type or os.environ.get("AI_MEM_SUMMARY_OBS_TYPE")
-            manager.summarize_project(
+            event_tag = default_tags[normalized]
+            all_tags = [event_tag] if event_tag else []
+            all_tags.extend(tags or [])
+            deduped_tags = []
+            seen = set()
+            for item in all_tags:
+                if item not in seen:
+                    seen.add(item)
+                    deduped_tags.append(item)
+
+            env_metadata = _parse_metadata_value(os.environ.get("AI_MEM_METADATA"))
+            metadata_payload: Dict[str, Any] = {}
+            metadata_payload.update(env_metadata)
+            for item in metadata or []:
+                metadata_payload.update(_parse_metadata_pair(item))
+            if metadata_file:
+                metadata_payload.update(_load_json_file(metadata_file))
+            assets: List[Dict[str, Any]] = []
+            assets.extend(_build_asset_entries(_env_list("AI_MEM_ASSET_FILES"), "file"))
+            assets.extend(_build_asset_entries(_env_list("AI_MEM_ASSET_DIFFS"), "diff"))
+            assets.extend(_build_asset_entries(asset_file, "file"))
+            assets.extend(_build_asset_entries(asset_diff, "diff"))
+
+            await manager.add_observation(
+                content=content_text,
+                obs_type=obs_type_value,
                 project=None if session_value else project_name,
                 session_id=session_value,
-                limit=summary_count,
-                obs_type=summary_type,
-                store=True,
+                tags=deduped_tags,
+                summarize=not no_summary_value,
+                metadata=metadata_payload or None,
+                assets=assets or None,
             )
+
+            if normalized == "session_end":
+                if track_sessions:
+                    if session_value:
+                        await manager.end_session(session_value)
+                    else:
+                        await manager.end_latest_session(project_name)
+
+                env_summary_on_end = _env_bool("AI_MEM_SUMMARY_ON_END") or False
+                should_summarize = summary_on_end if summary_on_end is not None else env_summary_on_end
+                if should_summarize:
+                    env_summary_count = _env_int("AI_MEM_SUMMARY_COUNT")
+                    if env_summary_count is not None and summary_count == 20:
+                        summary_count = env_summary_count
+                    summary_type = summary_obs_type or os.environ.get("AI_MEM_SUMMARY_OBS_TYPE")
+                    await manager.summarize_project(
+                        project=None if session_value else project_name,
+                        session_id=session_value,
+                        limit=summary_count,
+                        obs_type=summary_type,
+                        store=True,
+                    )
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -970,88 +1030,96 @@ def stats(
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """Show observation counts grouped by type and project."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    data = manager.get_stats(
-        project=project,
-        obs_type=obs_type,
-        session_id=session_id,
-        date_start=date_start,
-        date_end=date_end,
-        since=since,
-        tag_filters=tag,
-        tag_limit=tag_limit,
-        day_limit=day_limit,
-        type_tag_limit=type_tag_limit,
-    )
-    if output == "json":
-        print(json.dumps(data, indent=2))
-        return
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            nonlocal project
+            if session_id:
+                project = None
+            elif not project and not all_projects:
+                project = os.getcwd()
+            if all_projects:
+                project = None
+            data = await manager.get_stats(
+                project=project,
+                obs_type=obs_type,
+                session_id=session_id,
+                date_start=date_start,
+                date_end=date_end,
+                since=since,
+                tag_filters=tag,
+                tag_limit=tag_limit,
+                day_limit=day_limit,
+                type_tag_limit=type_tag_limit,
+            )
+            if output == "json":
+                print(json.dumps(data, indent=2))
+                return
 
-    console.print(f"[bold]Total observations:[/bold] {data.get('total', 0)}")
-    console.print(
-        f"[bold]Recent (last {data.get('day_limit', day_limit)} days):[/bold] "
-        f"{data.get('recent_total', 0)}"
-    )
-    trend_delta = data.get("trend_delta", 0)
-    trend_pct = data.get("trend_pct")
-    if trend_pct is None:
-        trend_label = f"{trend_delta:+d}" if isinstance(trend_delta, int) else f"{trend_delta:+}"
-    else:
-        trend_label = f"{trend_delta:+} ({trend_pct:+.1f}%)"
-    console.print(f"[bold]Change vs previous:[/bold] {trend_label}")
-    by_type = data.get("by_type", [])
-    if by_type:
-        table = Table(title="By type")
-        table.add_column("Type", style="magenta")
-        table.add_column("Count", style="green")
-        for item in by_type:
-            table.add_row(item.get("type", "-"), str(item.get("count", 0)))
-        console.print(table)
+            console.print(f"[bold]Total observations:[/bold] {data.get('total', 0)}")
+            console.print(
+                f"[bold]Recent (last {data.get('day_limit', day_limit)} days):[/bold] "
+                f"{data.get('recent_total', 0)}"
+            )
+            trend_delta = data.get("trend_delta", 0)
+            trend_pct = data.get("trend_pct")
+            if trend_pct is None:
+                trend_label = f"{trend_delta:+d}" if isinstance(trend_delta, int) else f"{trend_delta:+}"
+            else:
+                trend_label = f"{trend_delta:+} ({trend_pct:+.1f}%)"
+            console.print(f"[bold]Change vs previous:[/bold] {trend_label}")
+            by_type = data.get("by_type", [])
+            if by_type:
+                table = Table(title="By type")
+                table.add_column("Type", style="magenta")
+                table.add_column("Count", style="green")
+                for item in by_type:
+                    table.add_row(item.get("type", "-"), str(item.get("count", 0)))
+                console.print(table)
 
-    if all_projects or not project:
-        by_project = data.get("by_project", [])
-        if by_project:
-            table = Table(title="By project")
-            table.add_column("Project", style="cyan")
-            table.add_column("Count", style="green")
-            for item in by_project:
-                table.add_row(item.get("project", "-"), str(item.get("count", 0)))
-            console.print(table)
+            if all_projects or not project:
+                by_project = data.get("by_project", [])
+                if by_project:
+                    table = Table(title="By project")
+                    table.add_column("Project", style="cyan")
+                    table.add_column("Count", style="green")
+                    for item in by_project:
+                        table.add_row(item.get("project", "-"), str(item.get("count", 0)))
+                    console.print(table)
 
-    top_tags = data.get("top_tags", [])
-    if top_tags:
-        table = Table(title="Top tags")
-        table.add_column("Tag", style="cyan")
-        table.add_column("Count", style="green")
-        for item in top_tags:
-            table.add_row(item.get("tag", "-"), str(item.get("count", 0)))
-        console.print(table)
+            top_tags = data.get("top_tags", [])
+            if top_tags:
+                table = Table(title="Top tags")
+                table.add_column("Tag", style="cyan")
+                table.add_column("Count", style="green")
+                for item in top_tags:
+                    table.add_row(item.get("tag", "-"), str(item.get("count", 0)))
+                console.print(table)
 
-    by_day = data.get("by_day", [])
-    if by_day:
-        table = Table(title="Recent days")
-        table.add_column("Day", style="cyan")
-        table.add_column("Count", style="green")
-        for item in by_day:
-            table.add_row(item.get("day", "-"), str(item.get("count", 0)))
-        console.print(table)
+            by_day = data.get("by_day", [])
+            if by_day:
+                table = Table(title="Recent days")
+                table.add_column("Day", style="cyan")
+                table.add_column("Count", style="green")
+                for item in by_day:
+                    table.add_row(item.get("day", "-"), str(item.get("count", 0)))
+                console.print(table)
 
-    top_tags_by_type = data.get("top_tags_by_type", [])
-    if top_tags_by_type and not obs_type:
-        table = Table(title="Top tags by type")
-        table.add_column("Type", style="magenta")
-        table.add_column("Tag", style="cyan")
-        table.add_column("Count", style="green")
-        for group in top_tags_by_type:
-            for item in group.get("tags", []):
-                table.add_row(group.get("type", "-"), item.get("tag", "-"), str(item.get("count", 0)))
-        console.print(table)
+            top_tags_by_type = data.get("top_tags_by_type", [])
+            if top_tags_by_type and not obs_type:
+                table = Table(title="Top tags by type")
+                table.add_column("Type", style="magenta")
+                table.add_column("Tag", style="cyan")
+                table.add_column("Count", style="green")
+                for group in top_tags_by_type:
+                    for item in group.get("tags", []):
+                        table.add_row(group.get("type", "-"), item.get("tag", "-"), str(item.get("count", 0)))
+                console.print(table)
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -1067,34 +1135,42 @@ def tags(
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """List tags with usage counts."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    tags_list = manager.list_tags(
-        project=project,
-        session_id=session_id,
-        obs_type=obs_type,
-        date_start=date_start,
-        date_end=date_end,
-        tag_filters=tag,
-        limit=limit,
-    )
-    if output == "json":
-        print(json.dumps(tags_list, indent=2))
-        return
-    if not tags_list:
-        console.print("[yellow]No tags found.[/yellow]")
-        return
-    table = Table(title="Tags")
-    table.add_column("Tag", style="cyan")
-    table.add_column("Count", style="green")
-    for item in tags_list:
-        table.add_row(item.get("tag", "-"), str(item.get("count", 0)))
-    console.print(table)
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            nonlocal project
+            if session_id:
+                project = None
+            elif not project and not all_projects:
+                project = os.getcwd()
+            if all_projects:
+                project = None
+            tags_list = await manager.list_tags(
+                project=project,
+                session_id=session_id,
+                obs_type=obs_type,
+                date_start=date_start,
+                date_end=date_end,
+                tag_filters=tag,
+                limit=limit,
+            )
+            if output == "json":
+                print(json.dumps(tags_list, indent=2))
+                return
+            if not tags_list:
+                console.print("[yellow]No tags found.[/yellow]")
+                return
+            table = Table(title="Tags")
+            table.add_column("Tag", style="cyan")
+            table.add_column("Count", style="green")
+            for item in tags_list:
+                table.add_row(item.get("tag", "-"), str(item.get("count", 0)))
+            console.print(table)
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command(name="tag-add")
@@ -1109,23 +1185,31 @@ def tag_add(
     filter_tag: Optional[List[str]] = typer.Option(None, "--filter-tag", help="Additional tag filter (any match)"),
 ):
     """Add a tag across matching observations."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    updated = manager.add_tag(
-        tag=tag_value,
-        project=project,
-        session_id=session_id,
-        obs_type=obs_type,
-        date_start=date_start,
-        date_end=date_end,
-        tag_filters=filter_tag,
-    )
-    console.print(f"[green]Added tag to {updated} observations[/green]")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            nonlocal project
+            if session_id:
+                project = None
+            elif not project and not all_projects:
+                project = os.getcwd()
+            if all_projects:
+                project = None
+            updated = await manager.add_tag(
+                tag=tag_value,
+                project=project,
+                session_id=session_id,
+                obs_type=obs_type,
+                date_start=date_start,
+                date_end=date_end,
+                tag_filters=filter_tag,
+            )
+            console.print(f"[green]Added tag to {updated} observations[/green]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command(name="tag-rename")
@@ -1141,24 +1225,32 @@ def tag_rename(
     filter_tag: Optional[List[str]] = typer.Option(None, "--filter-tag", help="Additional tag filter (any match)"),
 ):
     """Rename a tag across matching observations."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    updated = manager.rename_tag(
-        old_tag=old_tag,
-        new_tag=new_tag,
-        project=project,
-        session_id=session_id,
-        obs_type=obs_type,
-        date_start=date_start,
-        date_end=date_end,
-        tag_filters=filter_tag,
-    )
-    console.print(f"[green]Renamed tag in {updated} observations[/green]")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            nonlocal project
+            if session_id:
+                project = None
+            elif not project and not all_projects:
+                project = os.getcwd()
+            if all_projects:
+                project = None
+            updated = await manager.rename_tag(
+                old_tag=old_tag,
+                new_tag=new_tag,
+                project=project,
+                session_id=session_id,
+                obs_type=obs_type,
+                date_start=date_start,
+                date_end=date_end,
+                tag_filters=filter_tag,
+            )
+            console.print(f"[green]Renamed tag in {updated} observations[/green]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command(name="tag-delete")
@@ -1178,23 +1270,31 @@ def tag_delete(
         confirm = typer.confirm(f"Delete tag '{tag_value}' from matching observations?")
         if not confirm:
             raise typer.Exit(1)
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    updated = manager.delete_tag(
-        tag=tag_value,
-        project=project,
-        session_id=session_id,
-        obs_type=obs_type,
-        date_start=date_start,
-        date_end=date_end,
-        tag_filters=filter_tag,
-    )
-    console.print(f"[green]Removed tag from {updated} observations[/green]")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            nonlocal project
+            if session_id:
+                project = None
+            elif not project and not all_projects:
+                project = os.getcwd()
+            if all_projects:
+                project = None
+            updated = await manager.delete_tag(
+                tag=tag_value,
+                project=project,
+                session_id=session_id,
+                obs_type=obs_type,
+                date_start=date_start,
+                date_end=date_end,
+                tag_filters=filter_tag,
+            )
+            console.print(f"[green]Removed tag from {updated} observations[/green]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -1209,36 +1309,44 @@ def summarize(
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """Summarize recent observations into a session summary."""
-    manager = get_memory_manager()
-    if session_id:
-        project = None
-    elif not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    result = manager.summarize_project(
-        project=project,
-        session_id=session_id,
-        limit=count,
-        obs_type=obs_type,
-        store=not dry_run,
-        tags=tag,
-    )
-    if not result:
-        console.print("[yellow]No observations found to summarize.[/yellow]")
-        return
-    summary = result.get("summary", "")
-    if output == "json":
-        payload = {"summary": summary, "metadata": result.get("metadata")}
-        obs = result.get("observation")
-        if obs:
-            payload["observation"] = obs.model_dump()
-        print(json.dumps(payload, indent=2))
-        return
-    console.print(summary)
-    obs = result.get("observation")
-    if obs:
-        console.print(f"[green]Stored summary:[/green] {obs.id}")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            nonlocal project
+            if session_id:
+                project = None
+            elif not project and not all_projects:
+                project = os.getcwd()
+            if all_projects:
+                project = None
+            result = await manager.summarize_project(
+                project=project,
+                session_id=session_id,
+                limit=count,
+                obs_type=obs_type,
+                store=not dry_run,
+                tags=tag,
+            )
+            if not result:
+                console.print("[yellow]No observations found to summarize.[/yellow]")
+                return
+            summary = result.get("summary", "")
+            if output == "json":
+                payload = {"summary": summary, "metadata": result.get("metadata")}
+                obs = result.get("observation")
+                if obs:
+                    payload["observation"] = obs.model_dump()
+                print(json.dumps(payload, indent=2))
+                return
+            console.print(summary)
+            obs = result.get("observation")
+            if obs:
+                console.print(f"[green]Stored summary:[/green] {obs.id}")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -1247,16 +1355,23 @@ def get(
     output: str = typer.Option("json", "--format", "-f", help="Output format: text, json"),
 ):
     """Fetch full observation details by ID."""
-    manager = get_memory_manager()
-    results = manager.get_observations(ids)
-    if output == "json":
-        print(json.dumps(results, indent=2))
-        return
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            results = await manager.get_observations(ids)
+            if output == "json":
+                print(json.dumps(results, indent=2))
+                return
 
-    for obs in results:
-        console.print(f"[bold]{obs['id']}[/bold] {obs['summary']}")
-        console.print(obs["content"])
-        console.print("")
+            for obs in results:
+                console.print(f"[bold]{obs['id']}[/bold] {obs['summary']}")
+                console.print(obs["content"])
+                console.print("")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -1282,35 +1397,43 @@ def list_sessions(
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """List known sessions."""
-    manager = get_memory_manager()
-    if not project and not all_projects:
-        project = os.getcwd()
-    if all_projects:
-        project = None
-    sessions = manager.list_sessions(
-        project=project,
-        active_only=active_only,
-        goal_query=goal,
-        date_start=date_start,
-        date_end=date_end,
-        limit=limit,
-    )
-    if output == "json":
-        print(json.dumps(sessions, indent=2))
-        return
-    table = Table(title="Sessions")
-    table.add_column("ID", style="dim")
-    table.add_column("Project", style="green")
-    table.add_column("Start", style="cyan")
-    table.add_column("End", style="magenta")
-    for item in sessions:
-        table.add_row(
-            item.get("id", "-"),
-            item.get("project", "-"),
-            str(item.get("start_time", "-")),
-            str(item.get("end_time", "-")),
-        )
-    console.print(table)
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            nonlocal project
+            if not project and not all_projects:
+                project = os.getcwd()
+            if all_projects:
+                project = None
+            sessions = await manager.list_sessions(
+                project=project,
+                active_only=active_only,
+                goal_query=goal,
+                date_start=date_start,
+                date_end=date_end,
+                limit=limit,
+            )
+            if output == "json":
+                print(json.dumps(sessions, indent=2))
+                return
+            table = Table(title="Sessions")
+            table.add_column("ID", style="dim")
+            table.add_column("Project", style="green")
+            table.add_column("Start", style="cyan")
+            table.add_column("End", style="magenta")
+            for item in sessions:
+                table.add_row(
+                    item.get("id", "-"),
+                    item.get("project", "-"),
+                    str(item.get("start_time", "-")),
+                    str(item.get("end_time", "-")),
+                )
+            console.print(table)
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command(name="session-start")
@@ -1320,14 +1443,21 @@ def session_start(
     session_id: Optional[str] = typer.Option(None, "--id", "-i", help="Session ID override"),
 ):
     """Start a new session for a project."""
-    manager = get_memory_manager()
-    project_name = project or os.getcwd()
-    session = manager.start_session(
-        project=project_name,
-        goal=goal or "",
-        session_id=session_id,
-    )
-    console.print(f"[green]Session started:[/green] {session.id}")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            project_name = project or os.getcwd()
+            session = await manager.start_session(
+                project=project_name,
+                goal=goal or "",
+                session_id=session_id,
+            )
+            console.print(f"[green]Session started:[/green] {session.id}")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command(name="session-end")
@@ -1336,16 +1466,23 @@ def session_end(
     project: Optional[str] = typer.Option(None, help="Project path (used when no ID is provided)"),
 ):
     """End a session by ID (or close the current one)."""
-    manager = get_memory_manager()
-    if session_id:
-        session = manager.end_session(session_id)
-    else:
-        project_name = project or os.getcwd()
-        session = manager.end_latest_session(project_name)
-    if not session:
-        console.print("[yellow]No matching session found.[/yellow]")
-        raise typer.Exit(1)
-    console.print(f"[green]Session ended:[/green] {session.id}")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if session_id:
+                session = await manager.end_session(session_id)
+            else:
+                project_name = project or os.getcwd()
+                session = await manager.end_latest_session(project_name)
+            if not session:
+                console.print("[yellow]No matching session found.[/yellow]")
+                raise typer.Exit(1)
+            console.print(f"[green]Session ended:[/green] {session.id}")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
@@ -1770,11 +1907,12 @@ def watch(
                         flush(buffer)
         else:
             import subprocess
+            import shlex
 
             console.print(f"[green]Running and watching:[/green] {command}")
             process = subprocess.Popen(
-                command,
-                shell=True,
+                shlex.split(command),
+                shell=False,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,

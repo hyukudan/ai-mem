@@ -26,7 +26,8 @@ def test_build_pgvector(mock_storage):
     config.vector.pgvector_dsn = "postgresql://user:pass@localhost:5432/db"
 
     with patch("ai_mem.vector_stores.pgvector.psycopg.connect"), \
-         patch("ai_mem.vector_stores.pgvector.register_vector"):
+         patch("ai_mem.vector_stores.pgvector.register_vector"), \
+         patch("ai_mem.vector_stores.pgvector.ConnectionPool"):
         store = build_vector_store(config, mock_storage)
         assert isinstance(store, PGVectorStore)
 

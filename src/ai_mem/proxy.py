@@ -8,6 +8,10 @@ from fastapi.responses import StreamingResponse
 
 from .context import build_context
 from .memory import MemoryManager
+from fastapi.middleware.cors import CORSMiddleware
+import logging
+
+logger = logging.getLogger("ai_mem.proxy")
 
 
 def _stringify_content(content: Any) -> str:
@@ -165,6 +169,19 @@ def _context_overrides(request: Request) -> Dict[str, Any]:
     }
 
 
+def _check_token(request: Request, api_token: Optional[str]) -> None:
+    if not api_token:
+        return
+    auth = request.headers.get("authorization") or ""
+    token = ""
+    if auth.lower().startswith("bearer "):
+        token = auth.split(" ", 1)[1].strip()
+    if not token:
+        token = request.headers.get("x-ai-mem-token", "")
+    if token != api_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 def create_app(
     upstream_base_url: str,
     upstream_api_key: Optional[str] = None,
@@ -174,21 +191,41 @@ def create_app(
     summarize: bool = True,
 ) -> FastAPI:
     app = FastAPI(title="ai-mem Proxy")
+    
+    # Load settings from environment for proxy hardening
+    api_token = os.environ.get("AI_MEM_API_TOKEN")
+    allowed_origins = os.environ.get("AI_MEM_ALLOWED_ORIGINS", "*").split(",")
+    allowed_origins = [o.strip() for o in allowed_origins if o.strip()]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.state.manager = MemoryManager()
     app.state.upstream_base_url = upstream_base_url.rstrip("/")
     app.state.upstream_api_key = upstream_api_key
+    app.state.api_token = api_token
     app.state.inject_context = inject_context
     app.state.store_interactions = store_interactions
     app.state.default_project = default_project
     app.state.summarize = summarize
     app.state.client = None
 
+    if not api_token:
+        logger.warning("SECURITY WARNING: AI_MEM_API_TOKEN is not set for proxy. It is accessible without authentication.")
+
     @app.on_event("startup")
     async def _startup() -> None:
+        await app.state.manager.initialize()
         app.state.client = httpx.AsyncClient(timeout=120.0)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        await app.state.manager.close()
         client = app.state.client
         if client:
             await client.aclose()
@@ -215,7 +252,7 @@ def create_app(
             return
         manager: MemoryManager = app.state.manager
         if user_text.strip():
-            manager.add_observation(
+            await manager.add_observation(
                 content=user_text,
                 obs_type="interaction",
                 project=project,
@@ -225,7 +262,7 @@ def create_app(
                 summarize=app.state.summarize,
             )
         if assistant_text.strip():
-            manager.add_observation(
+            await manager.add_observation(
                 content=assistant_text,
                 obs_type="interaction",
                 project=project,
@@ -237,6 +274,7 @@ def create_app(
 
     @app.get("/v1/models")
     async def list_models(request: Request) -> Response:
+        _check_token(request, app.state.api_token)
         url = f"{app.state.upstream_base_url}/v1/models"
         client: httpx.AsyncClient = app.state.client
         if not client:
@@ -250,6 +288,7 @@ def create_app(
 
     @app.post("/v1/responses")
     async def responses(request: Request) -> Response:
+        _check_token(request, app.state.api_token)
         client: httpx.AsyncClient = app.state.client
         if not client:
             raise HTTPException(status_code=500, detail="Proxy not ready")
@@ -273,7 +312,7 @@ def create_app(
             overrides = _context_overrides(request)
             if overrides.get("wrap") is None:
                 overrides["wrap"] = True
-            context_text, _ = build_context(
+            context_text, _ = await build_context(
                 app.state.manager,
                 project=context_project,
                 session_id=session_id,
@@ -343,6 +382,7 @@ def create_app(
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request) -> Response:
+        _check_token(request, app.state.api_token)
         client: httpx.AsyncClient = app.state.client
         if not client:
             raise HTTPException(status_code=500, detail="Proxy not ready")
@@ -367,7 +407,7 @@ def create_app(
             overrides = _context_overrides(request)
             if overrides.get("wrap") is None:
                 overrides["wrap"] = True
-            context_text, _ = build_context(
+            context_text, _ = await build_context(
                 app.state.manager,
                 project=context_project,
                 session_id=session_id,
@@ -443,6 +483,7 @@ def create_app(
 
     @app.post("/v1/completions")
     async def completions(request: Request) -> Response:
+        _check_token(request, app.state.api_token)
         client: httpx.AsyncClient = app.state.client
         if not client:
             raise HTTPException(status_code=500, detail="Proxy not ready")
@@ -465,7 +506,7 @@ def create_app(
             overrides = _context_overrides(request)
             if overrides.get("wrap") is None:
                 overrides["wrap"] = True
-            context_text, _ = build_context(
+            context_text, _ = await build_context(
                 app.state.manager,
                 project=context_project,
                 session_id=session_id,

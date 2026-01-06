@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import pytest
 from unittest import mock
 
 from ai_mem.config import AppConfig, EmbeddingConfig, LLMConfig, StorageConfig
@@ -29,34 +30,33 @@ class DummyVectorStore:
         return None
 
 
-class PrivacyTagTests(unittest.TestCase):
-    def test_strip_private_tag(self):
-        cleaned, stripped = strip_memory_tags("Hello<private>secret</private>world")
-        self.assertEqual(cleaned, "Helloworld")
-        self.assertTrue(stripped)
+@pytest.mark.asyncio
+async def test_strip_private_tag():
+    cleaned, stripped = strip_memory_tags("Hello<private>secret</private>world")
+    assert cleaned == "Helloworld"
+    assert stripped
 
-    def test_strip_context_tag(self):
-        cleaned, stripped = strip_memory_tags("<ai-mem-context>ctx</ai-mem-context>after")
-        self.assertEqual(cleaned, "after")
-        self.assertTrue(stripped)
+@pytest.mark.asyncio
+async def test_strip_context_tag():
+    cleaned, stripped = strip_memory_tags("<ai-mem-context>ctx</ai-mem-context>after")
+    assert cleaned == "after"
+    assert stripped
 
-    def test_skip_private_only_observation(self):
-        with tempfile.TemporaryDirectory() as tmpdir:
-            config = AppConfig(
-                llm=LLMConfig(provider="none"),
-                embeddings=EmbeddingConfig(provider="fastembed"),
-                storage=StorageConfig(data_dir=tmpdir),
+@pytest.mark.asyncio
+async def test_skip_private_only_observation():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = AppConfig(
+            llm=LLMConfig(provider="none"),
+            embeddings=EmbeddingConfig(provider="fastembed"),
+            storage=StorageConfig(data_dir=tmpdir),
+        )
+        with mock.patch("ai_mem.memory._build_embedding_provider", return_value=DummyEmbeddingProvider()), \
+             mock.patch("ai_mem.memory.build_vector_store", return_value=DummyVectorStore()):
+            manager = MemoryManager(config)
+            await manager.initialize()
+            obs = await manager.add_observation(
+                content="<private>secret</private>",
+                obs_type="note",
+                project="proj",
             )
-            with mock.patch("ai_mem.memory._build_embedding_provider", return_value=DummyEmbeddingProvider()), \
-                mock.patch("ai_mem.memory.build_vector_store", return_value=DummyVectorStore()):
-                manager = MemoryManager(config)
-                obs = manager.add_observation(
-                    content="<private>secret</private>",
-                    obs_type="note",
-                    project="proj",
-                )
-                self.assertIsNone(obs)
-
-
-if __name__ == "__main__":
-    unittest.main()
+            assert obs is None

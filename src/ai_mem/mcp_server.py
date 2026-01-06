@@ -1,4 +1,5 @@
 import json
+import asyncio
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -92,29 +93,29 @@ class MCPServer:
             },
         ]
 
-    def call_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def call_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
         if name == "__IMPORTANT":
             return self._wrap_text(_tool_instructions())
         if name in {"search", "mem-search"}:
-            return self._search(args)
+            return await self._search(args)
         if name == "timeline":
-            return self._timeline(args)
+            return await self._timeline(args)
         if name == "get_observations":
-            return self._get_observations(args)
+            return await self._get_observations(args)
         if name == "summarize":
-            return self._summarize(args)
+            return await self._summarize(args)
         if name == "context":
-            return self._context(args)
+            return await self._context(args)
         if name == "stats":
-            return self._stats(args)
+            return await self._stats(args)
         if name == "tags":
-            return self._tags(args)
+            return await self._tags(args)
         if name == "tag-add":
-            return self._tag_add(args)
+            return await self._tag_add(args)
         if name == "tag-rename":
-            return self._tag_rename(args)
+            return await self._tag_rename(args)
         if name == "tag-delete":
-            return self._tag_delete(args)
+            return await self._tag_delete(args)
         return self._wrap_text(f"Unknown tool: {name}", is_error=True)
 
     @staticmethod
@@ -155,7 +156,7 @@ class MCPServer:
             return items or None
         return None
 
-    def _search(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _search(self, args: Dict[str, Any]) -> Dict[str, Any]:
         query = str(args.get("query", "")).strip()
         limit = int(args.get("limit", 10))
         project = args.get("project")
@@ -168,7 +169,7 @@ class MCPServer:
         show_tokens = self._parse_bool(args.get("show_tokens"))
         if session_id:
             project = None
-        results = self.manager.search(
+        results = await self.manager.search(
             query,
             limit=limit,
             project=project,
@@ -198,7 +199,7 @@ class MCPServer:
         }
         return self._wrap_text(json.dumps(response, indent=2))
 
-    def _timeline(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _timeline(self, args: Dict[str, Any]) -> Dict[str, Any]:
         anchor = args.get("anchor") or args.get("anchor_id")
         query = args.get("query")
         depth_before = int(args.get("depth_before", 3))
@@ -213,7 +214,7 @@ class MCPServer:
         show_tokens = self._parse_bool(args.get("show_tokens"))
         if session_id:
             project = None
-        results = self.manager.timeline(
+        results = await self.manager.timeline(
             anchor_id=anchor,
             query=query,
             depth_before=depth_before,
@@ -240,12 +241,12 @@ class MCPServer:
             }
         return self._wrap_text(json.dumps({"timeline": payload, "scoreboard": scoreboard}, indent=2))
 
-    def _get_observations(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _get_observations(self, args: Dict[str, Any]) -> Dict[str, Any]:
         ids = args.get("ids") or []
-        results = self.manager.get_observations(ids)
+        results = await self.manager.get_observations(ids)
         return self._wrap_text(json.dumps(results, indent=2))
 
-    def _summarize(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _summarize(self, args: Dict[str, Any]) -> Dict[str, Any]:
         project = args.get("project")
         session_id = args.get("session_id")
         count = int(args.get("count", 20))
@@ -254,7 +255,7 @@ class MCPServer:
         if isinstance(store, str):
             store = store.strip().lower() not in {"false", "0", "no"}
         tags = args.get("tags")
-        result = self.manager.summarize_project(
+        result = await self.manager.summarize_project(
             project=project,
             session_id=session_id,
             limit=count,
@@ -264,7 +265,7 @@ class MCPServer:
         )
         return self._wrap_text(json.dumps(result or {}, indent=2))
 
-    def _context(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _context(self, args: Dict[str, Any]) -> Dict[str, Any]:
         project = args.get("project")
         session_id = args.get("session_id")
         query = args.get("query")
@@ -279,7 +280,7 @@ class MCPServer:
         output = str(args.get("output") or args.get("format") or "text").strip().lower()
         if session_id:
             project = None
-        context_text, meta = build_context(
+        context_text, meta = await build_context(
             self.manager,
             project=project,
             session_id=session_id,
@@ -298,7 +299,7 @@ class MCPServer:
             return self._wrap_text(json.dumps(payload, indent=2))
         return self._wrap_text(context_text)
 
-    def _stats(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _stats(self, args: Dict[str, Any]) -> Dict[str, Any]:
         project = args.get("project")
         session_id = args.get("session_id")
         obs_type = args.get("obs_type") or args.get("type")
@@ -311,7 +312,7 @@ class MCPServer:
         type_tag_limit = int(args.get("type_tag_limit", 3))
         if session_id:
             project = None
-        results = self.manager.get_stats(
+        results = await self.manager.get_stats(
             project=project,
             session_id=session_id,
             obs_type=obs_type,
@@ -325,7 +326,7 @@ class MCPServer:
         )
         return self._wrap_text(json.dumps(results, indent=2))
 
-    def _tags(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _tags(self, args: Dict[str, Any]) -> Dict[str, Any]:
         project = args.get("project")
         session_id = args.get("session_id")
         obs_type = args.get("obs_type") or args.get("type")
@@ -335,7 +336,7 @@ class MCPServer:
         limit = int(args.get("limit", 50))
         if session_id:
             project = None
-        results = self.manager.list_tags(
+        results = await self.manager.list_tags(
             project=project,
             session_id=session_id,
             obs_type=obs_type,
@@ -346,7 +347,7 @@ class MCPServer:
         )
         return self._wrap_text(json.dumps(results, indent=2))
 
-    def _tag_add(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _tag_add(self, args: Dict[str, Any]) -> Dict[str, Any]:
         value = str(args.get("tag") or args.get("value") or "").strip()
         if not value:
             return self._wrap_text("tag is required", is_error=True)
@@ -358,7 +359,7 @@ class MCPServer:
         tags = self._parse_tags(args.get("tags") or args.get("filter_tags") or args.get("filter_tag"))
         if session_id:
             project = None
-        updated = self.manager.add_tag(
+        updated = await self.manager.add_tag(
             tag=value,
             project=project,
             session_id=session_id,
@@ -369,7 +370,7 @@ class MCPServer:
         )
         return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
 
-    def _tag_rename(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _tag_rename(self, args: Dict[str, Any]) -> Dict[str, Any]:
         old_tag = str(args.get("old_tag") or args.get("from") or "").strip()
         new_tag = str(args.get("new_tag") or args.get("to") or "").strip()
         if not old_tag or not new_tag:
@@ -382,7 +383,7 @@ class MCPServer:
         tags = self._parse_tags(args.get("tags") or args.get("filter_tags") or args.get("filter_tag"))
         if session_id:
             project = None
-        updated = self.manager.rename_tag(
+        updated = await self.manager.rename_tag(
             old_tag=old_tag,
             new_tag=new_tag,
             project=project,
@@ -394,7 +395,7 @@ class MCPServer:
         )
         return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
 
-    def _tag_delete(self, args: Dict[str, Any]) -> Dict[str, Any]:
+    async def _tag_delete(self, args: Dict[str, Any]) -> Dict[str, Any]:
         value = str(args.get("tag") or args.get("value") or "").strip()
         if not value:
             return self._wrap_text("tag is required", is_error=True)
@@ -406,7 +407,7 @@ class MCPServer:
         tags = self._parse_tags(args.get("tags") or args.get("filter_tags") or args.get("filter_tag"))
         if session_id:
             project = None
-        updated = self.manager.delete_tag(
+        updated = await self.manager.delete_tag(
             tag=value,
             project=project,
             session_id=session_id,
@@ -425,49 +426,57 @@ class MCPServer:
         return payload
 
 
-def run_stdio() -> None:
+async def run_stdio() -> None:
     server = MCPServer()
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            request = json.loads(line)
-        except json.JSONDecodeError:
-            continue
+    await server.manager.initialize()
+    try:
+        loop = asyncio.get_event_loop()
+        while True:
+            line = await loop.run_in_executor(None, sys.stdin.readline)
+            if not line:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+            except json.JSONDecodeError:
+                continue
 
-        request_id = request.get("id")
-        method = request.get("method")
-        params = request.get("params") or {}
+            request_id = request.get("id")
+            method = request.get("method")
+            params = request.get("params") or {}
 
-        if method in {"initialize"}:
-            result = {
-                "protocolVersion": params.get("protocolVersion", "2024-11-05"),
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "ai-mem-mcp", "version": "0.1.0"},
-            }
-            _send_response(request_id, result=result)
-            continue
+            if method in {"initialize"}:
+                result = {
+                    "protocolVersion": params.get("protocolVersion", "2024-11-05"),
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "ai-mem-mcp", "version": "0.1.0"},
+                }
+                _send_response(request_id, result=result)
+                continue
 
-        if method in {"tools/list", "list_tools"}:
-            _send_response(request_id, result={"tools": server.list_tools()})
-            continue
+            if method in {"tools/list", "list_tools"}:
+                _send_response(request_id, result={"tools": server.list_tools()})
+                continue
 
-        if method in {"tools/call", "call_tool"}:
-            name = params.get("name", "")
-            args = params.get("arguments") or {}
-            result = server.call_tool(name, args)
-            _send_response(request_id, result=result)
-            continue
+            if method in {"tools/call", "call_tool"}:
+                name = params.get("name", "")
+                args = params.get("arguments") or {}
+                result = await server.call_tool(name, args)
+                _send_response(request_id, result=result)
+                continue
 
-        if method in {"shutdown"}:
-            _send_response(request_id, result={})
-            break
+            if method in {"shutdown"}:
+                _send_response(request_id, result={})
+                break
 
-        _send_response(
-            request_id,
-            error={"code": -32601, "message": f"Unknown method: {method}"},
-        )
+            _send_response(
+                request_id,
+                error={"code": -32601, "message": f"Unknown method: {method}"},
+            )
+    finally:
+        await server.manager.close()
 
 
 def _send_response(
@@ -487,4 +496,4 @@ def _send_response(
 
 
 if __name__ == "__main__":
-    run_stdio()
+    asyncio.run(run_stdio())

@@ -23,11 +23,15 @@ class GeminiProvider(ChatProvider):
         temperature: float = 0.2,
     ) -> str:
         prompt = self._format_messages(messages)
-        response = self.model.generate_content(
-            prompt,
-            generation_config={"temperature": temperature},
-        )
-        return (response.text or "").strip()
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config={"temperature": temperature},
+            )
+            return (response.text or "").strip()
+        except Exception as e:
+            # Sanitize error to avoid leaking API key
+            raise RuntimeError(f"Gemini API error: {type(e).__name__}") from None
 
     def get_name(self) -> str:
         return "gemini"

@@ -2,6 +2,7 @@ import json
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg
+from psycopg_pool import ConnectionPool
 from pgvector.psycopg import register_vector
 from psycopg import sql
 from pgvector import Vector
@@ -25,8 +26,10 @@ class PGVectorStore(VectorStoreProvider):
         if self._index_type not in {"ivfflat", "hnsw"}:
             raise ValueError("pgvector index type must be 'ivfflat' or 'hnsw'.")
         self._lists = max(1, lists)
-        self._conn = psycopg.connect(dsn, autocommit=True)
-        register_vector(self._conn)
+        
+        self._pool = ConnectionPool(dsn, min_size=1, max_size=10, kwargs={"autocommit": True})
+        with self._pool.connection() as conn:
+            register_vector(conn)
         self._ensure_table()
 
     def _ensure_table(self) -> None:
@@ -46,24 +49,26 @@ class PGVectorStore(VectorStoreProvider):
             )
             """
         ).format(table=self._table, dimension=sql.SQL(str(self._dimension)))
-        with self._conn.cursor() as cursor:
-            cursor.execute(create_table)
-            if self._index_type == "ivfflat":
-                idx_sql = sql.SQL(
-                    "CREATE INDEX IF NOT EXISTS {index} ON {table} USING ivfflat (embedding vector_l2_ops) WITH (lists = {lists})"
-                ).format(
-                index=sql.Identifier(f"{self._table_name}_embedding_idx"),
-                    table=self._table,
-                    lists=sql.Literal(self._lists),
-                )
-            else:
-                idx_sql = sql.SQL(
-                    "CREATE INDEX IF NOT EXISTS {index} ON {table} USING hnsw (embedding vector_cosine_ops)"
-                ).format(
-                index=sql.Identifier(f"{self._table_name}_embedding_idx"),
-                    table=self._table,
-                )
-            cursor.execute(idx_sql)
+        
+        with self._pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(create_table)
+                if self._index_type == "ivfflat":
+                    idx_sql = sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {index} ON {table} USING ivfflat (embedding vector_l2_ops) WITH (lists = {lists})"
+                    ).format(
+                    index=sql.Identifier(f"{self._table_name}_embedding_idx"),
+                        table=self._table,
+                        lists=sql.Literal(self._lists),
+                    )
+                else:
+                    idx_sql = sql.SQL(
+                        "CREATE INDEX IF NOT EXISTS {index} ON {table} USING hnsw (embedding vector_cosine_ops)"
+                    ).format(
+                    index=sql.Identifier(f"{self._table_name}_embedding_idx"),
+                        table=self._table,
+                    )
+                cursor.execute(idx_sql)
 
     def _build_where_clause(
         self, where: Optional[Dict[str, Any]]
@@ -131,8 +136,10 @@ class PGVectorStore(VectorStoreProvider):
                 embedding = EXCLUDED.embedding
             """
         ).format(table=self._table)
-        with self._conn.cursor() as cursor:
-            cursor.executemany(insert_sql, rows)
+        
+        with self._pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.executemany(insert_sql, rows)
 
     def query(
         self,
@@ -153,9 +160,12 @@ class PGVectorStore(VectorStoreProvider):
         args: List[Any] = [Vector(embedding)]
         args.extend(params)
         args.append(n_results)
-        with self._conn.cursor() as cursor:
-            cursor.execute(query_sql, args)
-            rows = cursor.fetchall()
+        
+        with self._pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query_sql, args)
+                rows = cursor.fetchall()
+        
         ids: List[str] = []
         metadatas: List[Dict[str, Any]] = []
         distances: List[float] = []
@@ -179,13 +189,15 @@ class PGVectorStore(VectorStoreProvider):
         if not ids:
             return
         delete_sql = sql.SQL("DELETE FROM {table} WHERE id = ANY(%s)").format(table=self._table)
-        with self._conn.cursor() as cursor:
-            cursor.execute(delete_sql, (ids,))
+        with self._pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(delete_sql, (ids,))
 
     def delete_where(self, where: Dict[str, Any]) -> None:
         where_clause, params = self._build_where_clause(where)
         delete_sql = sql.SQL("DELETE FROM {table} {where_clause}").format(
             table=self._table, where_clause=where_clause or sql.SQL("")
         )
-        with self._conn.cursor() as cursor:
-            cursor.execute(delete_sql, params)
+        with self._pool.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(delete_sql, params)

@@ -53,13 +53,19 @@ class AnthropicProvider(ChatProvider):
             "x-api-key": self.api_key,
             "anthropic-version": self.anthropic_version,
         }
-        response = self.client.post(
-            f"{self.base_url}/v1/messages",
-            json=payload,
-            headers=headers,
-        )
-        response.raise_for_status()
-        return _extract_text(response.json())
+        try:
+            response = self.client.post(
+                f"{self.base_url}/v1/messages",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return _extract_text(response.json())
+        except httpx.HTTPStatusError as e:
+            # Sanitize error to avoid leaking API key
+            raise RuntimeError(f"Anthropic API error: {e.response.status_code}") from None
+        except httpx.RequestError as e:
+            raise RuntimeError(f"Anthropic request failed: {type(e).__name__}") from None
 
     def get_name(self) -> str:
         return "anthropic"

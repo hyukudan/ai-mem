@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import boto3
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from .context import build_context
 from .memory import MemoryManager
@@ -284,7 +285,37 @@ def create_app(
     app.state.inject_context = inject_context
     app.state.store_interactions = store_interactions
     app.state.default_project = default_project
+    app.state.default_project = default_project
     app.state.summarize = summarize
+
+    _allowed_origins = os.environ.get("AI_MEM_ALLOWED_ORIGINS", "*").split(",")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.middleware("http")
+    async def check_auth(request: Request, call_next):
+        if request.url.path == "/health":
+            return await call_next(request)
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        
+        api_token = os.environ.get("AI_MEM_API_TOKEN")
+        if api_token:
+            auth = request.headers.get("authorization") or ""
+            token = ""
+            if auth.lower().startswith("bearer "):
+                token = auth.split(" ", 1)[1].strip()
+            if not token:
+                token = request.headers.get("x-ai-mem-token", "")
+            if token != api_token:
+                return Response(content="Unauthorized", status_code=401)
+        
+        return await call_next(request)
 
     session = boto3.Session(profile_name=profile) if profile else boto3.Session()
     app.state.client = session.client(
@@ -292,6 +323,14 @@ def create_app(
         region_name=region,
         endpoint_url=endpoint_url,
     )
+
+    @app.on_event("startup")
+    async def _startup() -> None:
+        await app.state.manager.initialize()
+
+    @app.on_event("shutdown")
+    async def _shutdown() -> None:
+        await app.state.manager.close()
 
     def _invoke(payload: Dict[str, Any], model: str) -> Dict[str, Any]:
         response = app.state.client.invoke_model(
@@ -330,7 +369,7 @@ def create_app(
             return
         manager: MemoryManager = app.state.manager
         if user_text.strip():
-            manager.add_observation(
+            await manager.add_observation(
                 content=user_text,
                 obs_type="interaction",
                 project=project,
@@ -340,7 +379,7 @@ def create_app(
                 summarize=app.state.summarize,
             )
         if assistant_text.strip():
-            manager.add_observation(
+            await manager.add_observation(
                 content=assistant_text,
                 obs_type="interaction",
                 project=project,
@@ -372,7 +411,7 @@ def create_app(
             overrides = _context_overrides(request)
             if overrides.get("wrap") is None:
                 overrides["wrap"] = True
-            context_text, _ = build_context(
+            context_text, _ = await build_context(
                 app.state.manager,
                 project=context_project,
                 session_id=session_id,
@@ -473,7 +512,7 @@ def create_app(
             overrides = _context_overrides(request)
             if overrides.get("wrap") is None:
                 overrides["wrap"] = True
-            context_text, _ = build_context(
+            context_text, _ = await build_context(
                 app.state.manager,
                 project=context_project,
                 session_id=session_id,

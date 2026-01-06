@@ -7,7 +7,8 @@ CONTEXT_TAGS = ("ai-mem-context", "claude-mem-context")
 
 
 def _count_tags(content: str) -> int:
-    return sum(content.count(f"<{tag}>") for tag in (PRIVATE_TAG, *CONTEXT_TAGS))
+    lower_content = content.lower()
+    return sum(lower_content.count(f"<{tag}>") for tag in (PRIVATE_TAG, *CONTEXT_TAGS))
 
 
 def strip_memory_tags(content: str) -> Tuple[str, bool]:
@@ -18,8 +19,7 @@ def strip_memory_tags(content: str) -> Tuple[str, bool]:
     tag_count = _count_tags(text)
     stripped = False
     if tag_count > MAX_TAG_COUNT:
-        # Best-effort stripping even if tag count is unusually large.
-        pass
+        raise ValueError(f"Too many tags ({tag_count}) found in content. Max is {MAX_TAG_COUNT}.")
 
     for tag in CONTEXT_TAGS + (PRIVATE_TAG,):
         pattern = re.compile(rf"<{tag}>[\s\S]*?</{tag}>", re.IGNORECASE)
