@@ -1298,7 +1298,7 @@ def read_root():
                 const pulseStatus = live && !pulseOn
                     ? '<span class="pulse-status">Pulse disabled</span>'
                     : '';
-                const timelineBadge = lastMode === 'timeline'
+                const timelineBadge = lastMode === 'timeline' || anchorSummary
                     ? '<span class="timeline-badge">Timeline</span>'
                     : '';
                 const autoBadge = live
