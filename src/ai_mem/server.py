@@ -105,6 +105,25 @@ class SessionEndRequest(BaseModel):
     project: Optional[str] = None
 
 
+class TagRenameRequest(BaseModel):
+    old_tag: str
+    new_tag: str
+    project: Optional[str] = None
+    session_id: Optional[str] = None
+    obs_type: Optional[str] = None
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
+
+
+class TagDeleteRequest(BaseModel):
+    tag: str
+    project: Optional[str] = None
+    session_id: Optional[str] = None
+    obs_type: Optional[str] = None
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
+
+
 class ContextRequest(BaseModel):
     project: Optional[str] = None
     session_id: Optional[str] = None
@@ -628,6 +647,55 @@ def read_root():
                 flex: 1;
                 min-width: 120px;
             }
+            .tag-card {
+                padding: 12px;
+                border-radius: 12px;
+                background: #f7f1e6;
+                display: grid;
+                gap: 10px;
+            }
+            .tag-header {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .tag-title {
+                font-weight: 600;
+                color: var(--muted);
+                text-transform: uppercase;
+                font-size: 12px;
+                letter-spacing: 0.08em;
+            }
+            .tag-meta {
+                font-size: 11px;
+                color: var(--muted);
+            }
+            .tag-list {
+                display: grid;
+                gap: 6px;
+                max-height: 140px;
+                overflow: auto;
+            }
+            .tag-item {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+            }
+            .tag-count {
+                font-size: 11px;
+                color: var(--muted);
+            }
+            .tag-editor {
+                display: grid;
+                gap: 8px;
+            }
+            .tag-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
             .session-card {
                 padding: 12px;
                 border-radius: 12px;
@@ -1111,6 +1179,22 @@ def read_root():
                             <button class="secondary" onclick="deleteSavedFilter()">Delete</button>
                         </div>
                     </div>
+                    <div class="tag-card" id="tagCard">
+                        <div class="tag-header">
+                            <div class="tag-title">Tags</div>
+                            <button class="chip" onclick="loadTagManager()">Refresh</button>
+                        </div>
+                        <div class="tag-meta" id="tagMeta">Scope: current filters</div>
+                        <div class="tag-list" id="tagList"></div>
+                        <div class="tag-editor">
+                            <input type="text" id="tagOld" placeholder="tag">
+                            <input type="text" id="tagNew" placeholder="rename to">
+                        </div>
+                        <div class="tag-row">
+                            <button class="secondary" onclick="renameTag()">Rename</button>
+                            <button class="secondary" onclick="deleteTag()">Delete</button>
+                        </div>
+                    </div>
                     <div class="context-card" id="contextCard">
                         <div class="context-title">Context</div>
                         <div class="context-grid">
@@ -1383,6 +1467,7 @@ def read_root():
                     select.value = current;
                 }
                 await loadStats();
+                await loadTagManager();
                 loadAutoRefresh();
                 loadPulseToggle();
                 loadLastMode();
@@ -2681,6 +2766,7 @@ def read_root():
                 document.getElementById('dateStart').value = formatLocalDate(start);
                 persistFilters();
                 loadStats();
+                loadTagManager();
                 search();
             }
 
@@ -2709,6 +2795,7 @@ def read_root():
                 document.getElementById('dateEnd').value = '';
                 persistFilters();
                 loadStats();
+                loadTagManager();
                 search();
             }
 
@@ -2776,6 +2863,7 @@ def read_root():
                 updateResultsHeader();
                 updateFiltersPill();
                 loadStats();
+                loadTagManager();
                 search();
                 restartStreamIfActive();
             }
@@ -2816,6 +2904,10 @@ def read_root():
                         if (!value) return;
                         const tag = decodeURIComponent(value);
                         applyTagFilter(tag, event.shiftKey);
+                        const tagOld = document.getElementById('tagOld');
+                        if (tagOld) {
+                            tagOld.value = tag;
+                        }
                     });
                 });
             }
@@ -2919,6 +3011,7 @@ def read_root():
                 updateResultsHeader();
                 updateFiltersPill();
                 await loadStats();
+                await loadTagManager();
                 if (state.mode === 'timeline') {
                     lastMode = 'timeline';
                     persistLastMode('timeline');
@@ -2968,6 +3061,148 @@ def read_root():
                 persistSavedFilters();
                 if (select) {
                     select.value = '';
+                }
+            }
+
+            function buildTagScopeParams() {
+                const params = new URLSearchParams();
+                const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                const type = document.getElementById('type').value;
+                const dateStart = document.getElementById('dateStart').value;
+                const dateEnd = document.getElementById('dateEnd').value;
+                if (sessionId) {
+                    params.append('session_id', sessionId);
+                } else if (project) {
+                    params.append('project', project);
+                }
+                if (type) params.append('obs_type', type);
+                if (dateStart) params.append('date_start', dateStart);
+                if (dateEnd) params.append('date_end', dateEnd);
+                params.append('limit', '50');
+                return params;
+            }
+
+            function buildTagScopePayload() {
+                const payload = {};
+                const project = document.getElementById('project').value;
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                const type = document.getElementById('type').value;
+                const dateStart = document.getElementById('dateStart').value;
+                const dateEnd = document.getElementById('dateEnd').value;
+                if (sessionId) {
+                    payload.session_id = sessionId;
+                } else if (project) {
+                    payload.project = project;
+                }
+                if (type) payload.obs_type = type;
+                if (dateStart) payload.date_start = dateStart;
+                if (dateEnd) payload.date_end = dateEnd;
+                return payload;
+            }
+
+            async function loadTagManager() {
+                const params = buildTagScopeParams();
+                const response = await fetch(`/api/tags?${params.toString()}`, { headers: getAuthHeaders() });
+                if (await handleAuthError(response)) return;
+                const data = response.ok ? await response.json() : [];
+                const list = document.getElementById('tagList');
+                const meta = document.getElementById('tagMeta');
+                if (!list || !meta) return;
+                const scopeParts = [];
+                const sessionId = (document.getElementById('sessionId')?.value || '').trim();
+                const project = document.getElementById('project').value;
+                const type = document.getElementById('type').value;
+                const dateStart = document.getElementById('dateStart').value;
+                const dateEnd = document.getElementById('dateEnd').value;
+                if (sessionId) {
+                    scopeParts.push(`session ${sessionId}`);
+                } else if (project) {
+                    scopeParts.push(project);
+                } else {
+                    scopeParts.push('all projects');
+                }
+                if (type) scopeParts.push(type);
+                if (dateStart || dateEnd) {
+                    scopeParts.push(`${dateStart || '...'} → ${dateEnd || '...'}`);
+                }
+                meta.textContent = `Scope: ${scopeParts.join(' • ')}`;
+                if (!data || !data.length) {
+                    list.innerHTML = '<div class="subtitle">No tags found.</div>';
+                    return;
+                }
+                list.innerHTML = data.map(item => {
+                    const tag = item.tag || '-';
+                    const encoded = encodeURIComponent(tag);
+                    return `
+                        <div class="tag-item">
+                            <span class="pill clickable" data-tag="${encoded}" title="Filter by tag (shift+click to add)">${escapeHtml(tag)}</span>
+                            <span class="tag-count">${item.count || 0}</span>
+                        </div>
+                    `;
+                }).join('');
+                bindTagPills(list);
+            }
+
+            async function renameTag() {
+                const oldInput = document.getElementById('tagOld');
+                const newInput = document.getElementById('tagNew');
+                const oldTag = (oldInput?.value || '').trim();
+                const newTag = (newInput?.value || '').trim();
+                if (!oldTag || !newTag) {
+                    alert('Provide both a tag and a new value.');
+                    return;
+                }
+                if (!confirm(`Rename tag "${oldTag}" to "${newTag}"?`)) return;
+                const payload = buildTagScopePayload();
+                payload.old_tag = oldTag;
+                payload.new_tag = newTag;
+                const response = await fetch('/api/tags/rename', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify(payload),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to rename tag');
+                    return;
+                }
+                if (newInput) newInput.value = '';
+                await loadTagManager();
+                await loadStats();
+                if (lastMode === 'timeline') {
+                    timeline({ useInput: false });
+                } else {
+                    search();
+                }
+            }
+
+            async function deleteTag() {
+                const oldInput = document.getElementById('tagOld');
+                const tag = (oldInput?.value || '').trim();
+                if (!tag) {
+                    alert('Provide a tag to delete.');
+                    return;
+                }
+                if (!confirm(`Remove tag "${tag}" from matching observations?`)) return;
+                const payload = buildTagScopePayload();
+                payload.tag = tag;
+                const response = await fetch('/api/tags/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                    body: JSON.stringify(payload),
+                });
+                if (await handleAuthError(response)) return;
+                if (!response.ok) {
+                    alert('Failed to delete tag');
+                    return;
+                }
+                await loadTagManager();
+                await loadStats();
+                if (lastMode === 'timeline') {
+                    timeline({ useInput: false });
+                } else {
+                    search();
                 }
             }
 
@@ -3582,6 +3817,7 @@ def read_root():
                 }
                 await loadDetail(currentObservationId);
                 await loadStats();
+                await loadTagManager();
                 if (lastMode === 'timeline') {
                     timeline({ useInput: false });
                 } else {
@@ -3601,6 +3837,7 @@ def read_root():
                     currentObservationId = null;
                     document.getElementById('detail').innerHTML = '<div class="subtitle">Select a result to view details.</div>';
                     await loadStats();
+                    await loadTagManager();
                     search();
                 } else {
                     alert('Failed to delete observation');
@@ -3635,6 +3872,7 @@ def read_root():
                 currentObservationId = null;
                 document.getElementById('detail').innerHTML = '<div class="subtitle">Select a result to view details.</div>';
                 await loadProjects();
+                await loadTagManager();
                 search();
             }
 
@@ -3774,6 +4012,7 @@ def read_root():
                     const result = await response.json();
                     alert(`Imported ${result.imported} observations`);
                     await loadProjects();
+                    await loadTagManager();
                     search();
                 } catch (error) {
                     alert('Failed to import file.');
@@ -3840,29 +4079,34 @@ def read_root():
                 document.getElementById('type').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    loadTagManager();
                     refreshResultsForFilters();
                     restartStreamIfActive();
                 });
                 document.getElementById('sessionId').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    loadTagManager();
                     refreshResultsForFilters();
                     restartStreamIfActive();
                 });
                 document.getElementById('tagsFilter').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    loadTagManager();
                     refreshResultsForFilters();
                     restartStreamIfActive();
                 });
                 document.getElementById('dateStart').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    loadTagManager();
                     refreshResultsForFilters();
                 });
                 document.getElementById('dateEnd').addEventListener('change', () => {
                     persistFilters();
                     loadStats();
+                    loadTagManager();
                     refreshResultsForFilters();
                 });
                 document.getElementById('autoRefresh').addEventListener('change', updateAutoRefresh);
@@ -4365,6 +4609,65 @@ def get_stats(
         day_limit=day_limit if day_limit is not None else 14,
         type_tag_limit=type_tag_limit if type_tag_limit is not None else 3,
     )
+
+
+@app.get("/api/tags")
+def list_tags(
+    request: Request,
+    project: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    session_id: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    tags: Optional[str] = None,
+    limit: Optional[int] = 50,
+):
+    _check_token(request)
+    return get_manager().list_tags(
+        project=project,
+        obs_type=obs_type,
+        session_id=session_id,
+        date_start=date_start,
+        date_end=date_end,
+        tag_filters=_parse_list_param(tags),
+        limit=limit,
+    )
+
+
+@app.post("/api/tags/rename")
+def rename_tag(payload: TagRenameRequest, request: Request):
+    _check_token(request)
+    old_tag = payload.old_tag.strip()
+    new_tag = payload.new_tag.strip()
+    if not old_tag or not new_tag:
+        raise HTTPException(status_code=400, detail="Both old_tag and new_tag are required")
+    updated = get_manager().rename_tag(
+        old_tag=old_tag,
+        new_tag=new_tag,
+        project=payload.project,
+        obs_type=payload.obs_type,
+        session_id=payload.session_id,
+        date_start=payload.date_start,
+        date_end=payload.date_end,
+    )
+    return {"success": True, "updated": updated}
+
+
+@app.post("/api/tags/delete")
+def delete_tag(payload: TagDeleteRequest, request: Request):
+    _check_token(request)
+    value = payload.tag.strip()
+    if not value:
+        raise HTTPException(status_code=400, detail="tag is required")
+    updated = get_manager().delete_tag(
+        tag=value,
+        project=payload.project,
+        obs_type=payload.obs_type,
+        session_id=payload.session_id,
+        date_start=payload.date_start,
+        date_end=payload.date_end,
+    )
+    return {"success": True, "updated": updated}
 
 
 @app.get("/api/observations")

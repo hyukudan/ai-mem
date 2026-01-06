@@ -469,6 +469,114 @@ def stats(
 
 
 @app.command()
+def tags(
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Include all projects"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tags to filter by (any match)"),
+    limit: int = typer.Option(50, help="Limit number of tags returned"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """List tags with usage counts."""
+    manager = get_memory_manager()
+    if session_id:
+        project = None
+    elif not project and not all_projects:
+        project = os.getcwd()
+    if all_projects:
+        project = None
+    tags_list = manager.list_tags(
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
+        tag_filters=tag,
+        limit=limit,
+    )
+    if output == "json":
+        print(json.dumps(tags_list, indent=2))
+        return
+    if not tags_list:
+        console.print("[yellow]No tags found.[/yellow]")
+        return
+    table = Table(title="Tags")
+    table.add_column("Tag", style="cyan")
+    table.add_column("Count", style="green")
+    for item in tags_list:
+        table.add_row(item.get("tag", "-"), str(item.get("count", 0)))
+    console.print(table)
+
+
+@app.command(name="tag-rename")
+def tag_rename(
+    old_tag: str = typer.Argument(..., help="Tag to rename"),
+    new_tag: str = typer.Argument(..., help="New tag value"),
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Include all projects"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+):
+    """Rename a tag across matching observations."""
+    manager = get_memory_manager()
+    if session_id:
+        project = None
+    elif not project and not all_projects:
+        project = os.getcwd()
+    if all_projects:
+        project = None
+    updated = manager.rename_tag(
+        old_tag=old_tag,
+        new_tag=new_tag,
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
+    )
+    console.print(f"[green]Renamed tag in {updated} observations[/green]")
+
+
+@app.command(name="tag-delete")
+def tag_delete(
+    tag_value: str = typer.Argument(..., help="Tag to delete"),
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Include all projects"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID filter"),
+    obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
+    date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
+    date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    force: bool = typer.Option(False, help="Skip confirmation prompt"),
+):
+    """Delete a tag across matching observations."""
+    if not force:
+        confirm = typer.confirm(f"Delete tag '{tag_value}' from matching observations?")
+        if not confirm:
+            raise typer.Exit(1)
+    manager = get_memory_manager()
+    if session_id:
+        project = None
+    elif not project and not all_projects:
+        project = os.getcwd()
+    if all_projects:
+        project = None
+    updated = manager.delete_tag(
+        tag=tag_value,
+        project=project,
+        session_id=session_id,
+        obs_type=obs_type,
+        date_start=date_start,
+        date_end=date_end,
+    )
+    console.print(f"[green]Removed tag from {updated} observations[/green]")
+
+
+@app.command()
 def summarize(
     project: Optional[str] = typer.Option(None, help="Project path filter"),
     all_projects: bool = typer.Option(False, help="Include all projects"),

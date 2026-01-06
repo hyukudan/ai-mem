@@ -546,6 +546,128 @@ class DatabaseManager:
         self.conn.commit()
         return cursor.rowcount
 
+    def get_tag_counts(
+        self,
+        project: Optional[str] = None,
+        session_id: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
+        tag_filters: Optional[List[str]] = None,
+        limit: Optional[int] = 50,
+    ) -> List[Dict[str, Any]]:
+        cursor = self.conn.cursor()
+        params: List[Any] = []
+        conditions: List[str] = []
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if date_start is not None:
+            conditions.append("created_at >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("created_at <= ?")
+            params.append(date_end)
+        tag_clause = self._tag_clause(tag_filters, params)
+        if tag_clause:
+            conditions.append(tag_clause)
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        cursor.execute(f"SELECT tags FROM observations {where_clause}", params)
+        counter = Counter()
+        for row in cursor.fetchall():
+            raw = row["tags"]
+            try:
+                tags = json.loads(raw) if raw else []
+            except json.JSONDecodeError:
+                tags = []
+            if not isinstance(tags, list):
+                continue
+            for tag in tags:
+                if not tag:
+                    continue
+                counter[str(tag)] += 1
+        items = [{"tag": tag, "count": count} for tag, count in counter.most_common()]
+        if limit is not None and limit > 0:
+            return items[:limit]
+        return items
+
+    def replace_tag(
+        self,
+        old_tag: str,
+        new_tag: Optional[str] = None,
+        project: Optional[str] = None,
+        session_id: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
+    ) -> int:
+        value = str(old_tag or "").strip()
+        if not value:
+            return 0
+        cursor = self.conn.cursor()
+        params: List[Any] = []
+        conditions: List[str] = []
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+        if session_id:
+            conditions.append("session_id = ?")
+            params.append(session_id)
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if date_start is not None:
+            conditions.append("created_at >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("created_at <= ?")
+            params.append(date_end)
+        tag_clause = self._tag_clause([value], params)
+        if tag_clause:
+            conditions.append(tag_clause)
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
+        cursor.execute(f"SELECT id, tags FROM observations {where_clause}", params)
+        updated = 0
+        replacement = str(new_tag or "").strip() or None
+        for row in cursor.fetchall():
+            raw = row["tags"]
+            try:
+                tags = json.loads(raw) if raw else []
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(tags, list):
+                continue
+            if value not in tags:
+                continue
+            if replacement:
+                new_tags = [replacement if tag == value else tag for tag in tags]
+            else:
+                new_tags = [tag for tag in tags if tag != value]
+            deduped = []
+            seen = set()
+            for tag in new_tags:
+                tag_str = str(tag).strip()
+                if not tag_str or tag_str in seen:
+                    continue
+                seen.add(tag_str)
+                deduped.append(tag_str)
+            if deduped == tags:
+                continue
+            cursor.execute(
+                "UPDATE observations SET tags = ? WHERE id = ?",
+                (json.dumps(deduped), row["id"]),
+            )
+            updated += 1
+        if updated:
+            self.conn.commit()
+        return updated
+
     def search_observations_fts(
         self,
         query: str,

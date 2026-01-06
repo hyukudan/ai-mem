@@ -95,6 +95,56 @@ class DatabaseTests(unittest.TestCase):
             stored = db.get_observation(obs.id)
             self.assertEqual(stored["tags"], ["alpha", "beta"])
 
+    def test_tag_counts_and_replace(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")
+            session = Session(project="proj")
+            db.add_session(session)
+
+            obs_a = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Alpha",
+                summary="Alpha",
+                tags=["alpha", "beta"],
+            )
+            obs_b = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="Beta",
+                summary="Beta",
+                tags=["beta"],
+            )
+            obs_c = Observation(
+                session_id=session.id,
+                project="proj",
+                type="note",
+                content="No tags",
+                summary="No tags",
+                tags=[],
+            )
+            for obs in (obs_a, obs_b, obs_c):
+                db.add_observation(obs)
+
+            counts = {item["tag"]: item["count"] for item in db.get_tag_counts(project="proj", limit=None)}
+            self.assertEqual(counts.get("alpha"), 1)
+            self.assertEqual(counts.get("beta"), 2)
+
+            updated = db.replace_tag("beta", "gamma", project="proj")
+            self.assertEqual(updated, 2)
+            obs_a_updated = db.get_observation(obs_a.id)
+            obs_b_updated = db.get_observation(obs_b.id)
+            self.assertIn("gamma", obs_a_updated["tags"])
+            self.assertNotIn("beta", obs_a_updated["tags"])
+            self.assertEqual(obs_b_updated["tags"], ["gamma"])
+
+            removed = db.replace_tag("alpha", None, project="proj")
+            self.assertEqual(removed, 1)
+            obs_a_final = db.get_observation(obs_a.id)
+            self.assertNotIn("alpha", obs_a_final["tags"])
+
     def test_stats(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = DatabaseManager(f"{tmpdir}/ai-mem.sqlite")

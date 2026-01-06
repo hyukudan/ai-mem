@@ -54,6 +54,7 @@ You can use ai-mem entirely locally with fast embeddings, or connect it to Gemin
 - Web viewer UI: browse, search, and manage memory at http://localhost:8000.
 - Sessions: track goals and scope retrieval to a session.
 - Privacy tags: <private>...</private> is stripped before storage.
+- Tag management: edit, filter, rename, and delete tags.
 - Context injection: generate <ai-mem-context> blocks for any model.
 - Hooks and proxies: automatic storage and injection.
 - MCP tools: search memory from Claude Desktop or other MCP clients.
@@ -239,6 +240,11 @@ ai-mem update-tags <observation_id> --clear
 # Stats
 ai-mem stats --tag infra
 
+# Tags
+ai-mem tags
+ai-mem tag-rename infra infrastructure
+ai-mem tag-delete legacy --force
+
 # Export / import
 ai-mem export memories.json
 ai-mem import memories.json
@@ -316,6 +322,7 @@ Viewer features:
 - Session list previews the latest session summary when available.
 - Session detail view shows totals, top types, and top tags.
 - Save and re-apply search filters in the viewer UI (stored locally in the browser).
+- Tag management panel to list, rename, and delete tags.
 
 ## Hooks (Model Agnostic)
 
@@ -449,6 +456,9 @@ Key endpoints:
 - POST /api/sessions/start (project, goal, session_id)
 - POST /api/sessions/end (session_id or latest)
 - GET /api/stats (project, session_id, obs_type, tags, date_start, date_end, tag_limit, day_limit, type_tag_limit)
+- GET /api/tags (project, session_id, obs_type, tags, date_start, date_end, limit)
+- POST /api/tags/rename (old_tag, new_tag, project, session_id, obs_type, date_start, date_end)
+- POST /api/tags/delete (tag, project, session_id, obs_type, date_start, date_end)
 - GET /api/context/preview (project, session_id, query, obs_type, obs_types, tags, total, full, full_field, show_tokens, wrap)
 - GET /api/context/inject (same as preview)
 - GET /api/context (alias)

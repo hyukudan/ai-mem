@@ -586,6 +586,71 @@ class MemoryManager:
             type_tag_limit=type_tag_limit,
         )
 
+    def list_tags(
+        self,
+        project: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
+        limit: Optional[int] = 50,
+    ) -> List[Dict[str, Any]]:
+        start_ts = _parse_date(date_start)
+        end_ts = _parse_date(date_end)
+        return self.db.get_tag_counts(
+            project=project,
+            obs_type=obs_type,
+            session_id=session_id,
+            date_start=start_ts,
+            date_end=end_ts,
+            tag_filters=_normalize_tags(tag_filters),
+            limit=limit,
+        )
+
+    def rename_tag(
+        self,
+        old_tag: str,
+        new_tag: str,
+        project: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+    ) -> int:
+        start_ts = _parse_date(date_start)
+        end_ts = _parse_date(date_end)
+        return self.db.replace_tag(
+            old_tag=old_tag,
+            new_tag=new_tag,
+            project=project,
+            obs_type=obs_type,
+            session_id=session_id,
+            date_start=start_ts,
+            date_end=end_ts,
+        )
+
+    def delete_tag(
+        self,
+        tag: str,
+        project: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+    ) -> int:
+        start_ts = _parse_date(date_start)
+        end_ts = _parse_date(date_end)
+        return self.db.replace_tag(
+            old_tag=tag,
+            new_tag=None,
+            project=project,
+            obs_type=obs_type,
+            session_id=session_id,
+            date_start=start_ts,
+            date_end=end_ts,
+        )
+
     def export_observations(
         self,
         project: Optional[str] = None,
