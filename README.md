@@ -397,6 +397,7 @@ Tools:
 - timeline
 - get_observations
 - summarize
+- stats
 - tags
 - tag-add
 - tag-rename

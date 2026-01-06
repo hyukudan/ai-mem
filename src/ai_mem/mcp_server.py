@@ -57,6 +57,11 @@ class MCPServer:
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
+                "name": "stats",
+                "description": "Aggregate stats. Params: project, session_id, obs_type, date_start, date_end, since, tags, tag_limit, day_limit, type_tag_limit.",
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
+            {
                 "name": "tags",
                 "description": "List tags with counts. Params: project, session_id, obs_type, date_start, date_end, tags, limit.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
@@ -89,6 +94,8 @@ class MCPServer:
             return self._get_observations(args)
         if name == "summarize":
             return self._summarize(args)
+        if name == "stats":
+            return self._stats(args)
         if name == "tags":
             return self._tags(args)
         if name == "tag-add":
@@ -190,6 +197,33 @@ class MCPServer:
             tags=tags if isinstance(tags, list) else None,
         )
         return self._wrap_text(json.dumps(result or {}, indent=2))
+
+    def _stats(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        project = args.get("project")
+        session_id = args.get("session_id")
+        obs_type = args.get("obs_type") or args.get("type")
+        date_start = args.get("date_start")
+        date_end = args.get("date_end")
+        since = args.get("since")
+        tags = self._parse_tags(args.get("tags") or args.get("tag"))
+        tag_limit = int(args.get("tag_limit", 10))
+        day_limit = int(args.get("day_limit", 14))
+        type_tag_limit = int(args.get("type_tag_limit", 3))
+        if session_id:
+            project = None
+        results = self.manager.get_stats(
+            project=project,
+            session_id=session_id,
+            obs_type=obs_type,
+            date_start=date_start,
+            date_end=date_end,
+            since=since,
+            tag_filters=tags,
+            tag_limit=tag_limit,
+            day_limit=day_limit,
+            type_tag_limit=type_tag_limit,
+        )
+        return self._wrap_text(json.dumps(results, indent=2))
 
     def _tags(self, args: Dict[str, Any]) -> Dict[str, Any]:
         project = args.get("project")
