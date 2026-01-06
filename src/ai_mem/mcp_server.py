@@ -2,6 +2,7 @@ import json
 import sys
 from typing import Any, Dict, List, Optional
 
+from .context import build_context
 from .memory import MemoryManager
 
 
@@ -57,6 +58,14 @@ class MCPServer:
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
             {
+                "name": "context",
+                "description": (
+                    "Build context injection text. Params: project, session_id, query, obs_type, "
+                    "obs_types, tags, total, full, full_field, show_tokens, wrap, output."
+                ),
+                "inputSchema": {"type": "object", "additionalProperties": True},
+            },
+            {
                 "name": "stats",
                 "description": "Aggregate stats. Params: project, session_id, obs_type, date_start, date_end, since, tags, tag_limit, day_limit, type_tag_limit.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
@@ -94,6 +103,8 @@ class MCPServer:
             return self._get_observations(args)
         if name == "summarize":
             return self._summarize(args)
+        if name == "context":
+            return self._context(args)
         if name == "stats":
             return self._stats(args)
         if name == "tags":
@@ -116,6 +127,32 @@ class MCPServer:
         if isinstance(value, str):
             tags = [item.strip() for item in value.split(",") if item.strip()]
             return tags or None
+        return None
+
+    @staticmethod
+    def _parse_bool(value: Any) -> Optional[bool]:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            if text in {"0", "false", "no", "off"}:
+                return False
+        return None
+
+    @staticmethod
+    def _parse_list(value: Any) -> Optional[List[str]]:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            items = [str(item).strip() for item in value if str(item).strip()]
+            return items or None
+        if isinstance(value, str):
+            items = [item.strip() for item in value.split(",") if item.strip()]
+            return items or None
         return None
 
     def _search(self, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -197,6 +234,40 @@ class MCPServer:
             tags=tags if isinstance(tags, list) else None,
         )
         return self._wrap_text(json.dumps(result or {}, indent=2))
+
+    def _context(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        project = args.get("project")
+        session_id = args.get("session_id")
+        query = args.get("query")
+        obs_type = args.get("obs_type") or args.get("type")
+        obs_types = self._parse_list(args.get("obs_types") or args.get("types"))
+        tags = self._parse_tags(args.get("tags") or args.get("tag"))
+        total = args.get("total")
+        full = args.get("full")
+        full_field = args.get("full_field")
+        show_tokens = self._parse_bool(args.get("show_tokens"))
+        wrap = self._parse_bool(args.get("wrap"))
+        output = str(args.get("output") or args.get("format") or "text").strip().lower()
+        if session_id:
+            project = None
+        context_text, meta = build_context(
+            self.manager,
+            project=project,
+            session_id=session_id,
+            query=query,
+            obs_type=obs_type,
+            obs_types=obs_types,
+            tag_filters=tags,
+            total_count=int(total) if total is not None else None,
+            full_count=int(full) if full is not None else None,
+            full_field=full_field,
+            show_tokens=show_tokens,
+            wrap=wrap,
+        )
+        if output == "json":
+            payload = {"context": context_text, "metadata": meta}
+            return self._wrap_text(json.dumps(payload, indent=2))
+        return self._wrap_text(context_text)
 
     def _stats(self, args: Dict[str, Any]) -> Dict[str, Any]:
         project = args.get("project")
