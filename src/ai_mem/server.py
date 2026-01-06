@@ -1319,8 +1319,9 @@ def read_root():
                 const fullModeLabel = modeValue === 'stats' ? 'Stats only' : 'Stats + results';
                 const compactModeLabel = modeValue === 'stats' ? 'Stats' : 'All';
                 const modeLabel = compact ? compactModeLabel : fullModeLabel;
+                const autoScopeMarker = autoScope === 'global' ? '● ' : '';
                 const autoBadge = live
-                    ? `<span class="auto-mode-badge" title="Auto-refresh: ${fullModeLabel} • ${interval}s • ${autoScope}">${modeLabel}</span>`
+                    ? `<span class="auto-mode-badge" title="Auto-refresh: ${fullModeLabel} • ${interval}s • ${autoScope}">${autoScopeMarker}${modeLabel}</span>`
                     : '';
                 if (lastMode === 'timeline') {
                     const depthBefore = timelineDepthBefore || '3';
