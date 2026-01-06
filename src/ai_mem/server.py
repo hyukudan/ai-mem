@@ -1685,6 +1685,7 @@ def read_root():
                 if (!label) return;
                 if (!enabled) {
                     label.textContent = '';
+                    label.title = '';
                     label.style.display = 'none';
                     return;
                 }
@@ -1692,6 +1693,9 @@ def read_root():
                 const intervalInput = document.getElementById('refreshInterval');
                 const interval = Math.max(5, parseInt(intervalInput ? intervalInput.value : '30', 10));
                 label.textContent = `Mode: ${modeText} • ${interval}s`;
+                const globalToggle = document.getElementById('autoGlobal');
+                const scope = globalToggle && globalToggle.checked ? 'global' : 'project';
+                label.title = `Auto-refresh scope: ${scope}`;
                 label.style.display = 'inline-flex';
             }
 
