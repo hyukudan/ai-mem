@@ -1687,7 +1687,9 @@ def read_root():
                     return;
                 }
                 const modeText = modeValue === 'stats' ? 'Stats only' : 'Stats + results';
-                label.textContent = `Mode: ${modeText}`;
+                const intervalInput = document.getElementById('refreshInterval');
+                const interval = Math.max(5, parseInt(intervalInput ? intervalInput.value : '30', 10));
+                label.textContent = `Mode: ${modeText} • ${interval}s`;
                 label.style.display = 'inline-flex';
             }
 
