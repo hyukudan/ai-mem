@@ -315,6 +315,7 @@ ai-mem server
 Viewer features:
 - Search, timeline, stats, and context preview.
 - Session start/end, summaries, and export.
+- Export JSON/JSONL/CSV and import JSON/JSONL/CSV from the viewer.
 - Stream view for new observations.
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.

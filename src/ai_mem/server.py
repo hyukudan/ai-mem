@@ -1418,7 +1418,9 @@ def read_root():
                             <button class="secondary" onclick="timeline()">Timeline</button>
                         </div>
                         <div class="row inline">
-                            <button class="secondary" onclick="exportData()">Export</button>
+                            <button class="secondary" onclick="exportData('json')">Export JSON</button>
+                            <button class="secondary" onclick="exportData('jsonl')">Export JSONL</button>
+                            <button class="secondary" onclick="exportData('csv')">Export CSV</button>
                             <button class="secondary" onclick="triggerImport()">Import</button>
                         </div>
                         <div class="row inline">
@@ -1440,7 +1442,7 @@ def read_root():
                 <div class="subtitle">Select a result to view details.</div>
             </section>
         </div>
-        <input type="file" id="importFile" accept="application/json" style="display:none" onchange="importFile(event)">
+        <input type="file" id="importFile" accept=".json,.jsonl,.ndjson,.csv,application/json,text/csv,application/x-ndjson" style="display:none" onchange="importFile(event)">
 
         <script>
             let currentObservationId = null;
@@ -1664,6 +1666,145 @@ def read_root():
                     return `"${text.replace(/"/g, '""')}"`;
                 }
                 return text;
+            }
+
+            function inferImportFormat(fileName) {
+                const name = (fileName || '').toLowerCase();
+                if (name.endsWith('.jsonl') || name.endsWith('.ndjson')) return 'jsonl';
+                if (name.endsWith('.csv')) return 'csv';
+                return 'json';
+            }
+
+            function parseJsonl(text) {
+                return text
+                    .split('\n')
+                    .map(line => line.trim())
+                    .filter(line => line)
+                    .map(line => JSON.parse(line));
+            }
+
+            function parseCsvRows(text) {
+                const rows = [];
+                let row = [];
+                let field = '';
+                let inQuotes = false;
+                for (let i = 0; i < text.length; i += 1) {
+                    const char = text[i];
+                    if (inQuotes) {
+                        if (char === '"') {
+                            const next = text[i + 1];
+                            if (next === '"') {
+                                field += '"';
+                                i += 1;
+                            } else {
+                                inQuotes = false;
+                            }
+                        } else {
+                            field += char;
+                        }
+                        continue;
+                    }
+                    if (char === '"') {
+                        inQuotes = true;
+                        continue;
+                    }
+                    if (char === ',') {
+                        row.push(field);
+                        field = '';
+                        continue;
+                    }
+                    if (char === '\n') {
+                        row.push(field);
+                        rows.push(row);
+                        row = [];
+                        field = '';
+                        continue;
+                    }
+                    if (char === '\r') {
+                        continue;
+                    }
+                    field += char;
+                }
+                if (field.length || row.length) {
+                    row.push(field);
+                    rows.push(row);
+                }
+                return rows;
+            }
+
+            function parseCsv(text) {
+                const rows = parseCsvRows(text);
+                if (!rows.length) return [];
+                const headers = rows.shift().map(header => header.trim());
+                return rows
+                    .filter(row => row.some(cell => String(cell || '').trim()))
+                    .map(row => {
+                        const item = {};
+                        headers.forEach((header, index) => {
+                            if (!header) return;
+                            item[header] = row[index] ?? '';
+                        });
+                        return item;
+                    });
+            }
+
+            function parseTagsValue(value) {
+                if (value === null || value === undefined) return [];
+                if (Array.isArray(value)) {
+                    return value.map(item => String(item).trim()).filter(item => item);
+                }
+                const text = String(value).trim();
+                if (!text) return [];
+                if (text.startsWith('[')) {
+                    try {
+                        const parsed = JSON.parse(text);
+                        if (Array.isArray(parsed)) {
+                            return parsed.map(item => String(item).trim()).filter(item => item);
+                        }
+                    } catch (error) {
+                        return [];
+                    }
+                }
+                return text.split(',').map(item => item.trim()).filter(item => item);
+            }
+
+            function parseMetadataValue(value) {
+                if (value === null || value === undefined) return {};
+                if (typeof value === 'object') return value;
+                const text = String(value).trim();
+                if (!text) return {};
+                if (!text.startsWith('{')) return {};
+                try {
+                    const parsed = JSON.parse(text);
+                    return typeof parsed === 'object' && parsed ? parsed : {};
+                } catch (error) {
+                    return {};
+                }
+            }
+
+            function parseNumberValue(value) {
+                if (value === null || value === undefined || value === '') return null;
+                const num = Number(value);
+                return Number.isNaN(num) ? null : num;
+            }
+
+            function normalizeImportItem(item) {
+                const normalized = { ...item };
+                normalized.tags = parseTagsValue(item.tags);
+                normalized.metadata = parseMetadataValue(item.metadata);
+                const createdAt = parseNumberValue(item.created_at);
+                if (createdAt !== null) {
+                    normalized.created_at = createdAt;
+                } else {
+                    delete normalized.created_at;
+                }
+                const importance = parseNumberValue(item.importance_score);
+                if (importance !== null) {
+                    normalized.importance_score = importance;
+                } else {
+                    delete normalized.importance_score;
+                }
+                return normalized;
             }
 
             function escapeHtml(value) {
@@ -2155,27 +2296,38 @@ def read_root():
                             Store summary
                         </label>
                         <button class="secondary" onclick="summarizeSession('${id}')">Summarize session</button>
-                        <button class="secondary" onclick="exportSession('${id}')">Export session</button>
+                        <button class="secondary" onclick="exportSession('${id}', 'json')">Export JSON</button>
+                        <button class="secondary" onclick="exportSession('${id}', 'jsonl')">Export JSONL</button>
+                        <button class="secondary" onclick="exportSession('${id}', 'csv')">Export CSV</button>
                     </div>
                     <div class="results">${listHtml}</div>
                 `;
             }
 
-            async function exportSession(id) {
+            async function exportSession(id, format = 'json') {
                 if (!id) return;
-                const params = new URLSearchParams({ session_id: id });
+                const params = new URLSearchParams({ session_id: id, format });
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
                 if (!response.ok) {
                     alert('Failed to export session.');
                     return;
                 }
-                const data = await response.json();
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const formatLabel = format || 'json';
+                const suffix = formatLabel === 'jsonl' ? 'jsonl' : formatLabel === 'csv' ? 'csv' : 'json';
+                let blob = null;
+                if (suffix === 'json') {
+                    const data = await response.json();
+                    blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                } else {
+                    const text = await response.text();
+                    const type = suffix === 'csv' ? 'text/csv' : 'application/x-ndjson';
+                    blob = new Blob([text], { type });
+                }
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
                 link.href = url;
-                link.download = `ai-mem-session-${id}.json`;
+                link.download = `ai-mem-session-${id}.${suffix}`;
                 document.body.appendChild(link);
                 link.click();
                 link.remove();
@@ -3925,7 +4077,7 @@ def read_root():
                 search();
             }
 
-            async function exportData() {
+            async function exportData(format = 'json') {
                 const project = document.getElementById('project').value;
                 const sessionId = (document.getElementById('sessionId')?.value || '').trim();
                 const params = new URLSearchParams();
@@ -3934,15 +4086,29 @@ def read_root():
                 } else if (project) {
                     params.append('project', project);
                 }
+                params.append('format', format);
                 const response = await fetch(`/api/export?${params.toString()}`, { headers: getAuthHeaders() });
                 if (await handleAuthError(response)) return;
-                const data = await response.json();
-                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                if (!response.ok) {
+                    alert('Failed to export.');
+                    return;
+                }
+                const formatLabel = format || 'json';
+                const formatExt = formatLabel === 'jsonl' ? 'jsonl' : formatLabel === 'csv' ? 'csv' : 'json';
+                let blob = null;
+                if (formatExt === 'json') {
+                    const data = await response.json();
+                    blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                } else {
+                    const text = await response.text();
+                    const type = formatExt === 'csv' ? 'text/csv' : 'application/x-ndjson';
+                    blob = new Blob([text], { type });
+                }
                 const url = URL.createObjectURL(blob);
                 const link = document.createElement('a');
-                const suffix = sessionId ? safeSlug(sessionId, 'session') : safeSlug(project, 'all');
+                const scopeSlug = sessionId ? safeSlug(sessionId, 'session') : safeSlug(project, 'all');
                 link.href = url;
-                link.download = `ai-mem-export-${suffix}.json`;
+                link.download = `ai-mem-export-${scopeSlug}.${formatExt}`;
                 document.body.appendChild(link);
                 link.click();
                 link.remove();
@@ -4037,17 +4203,25 @@ def read_root():
                 if (!file) return;
                 try {
                     const text = await file.text();
-                    const data = JSON.parse(text);
-                    let payload = null;
-                    if (Array.isArray(data)) {
-                        payload = { items: data };
-                    } else if (data && Array.isArray(data.items)) {
-                        payload = data;
+                    const format = inferImportFormat(file.name);
+                    let items = null;
+                    if (format === 'json') {
+                        const data = JSON.parse(text);
+                        if (Array.isArray(data)) {
+                            items = data;
+                        } else if (data && Array.isArray(data.items)) {
+                            items = data.items;
+                        }
+                    } else if (format === 'jsonl') {
+                        items = parseJsonl(text);
+                    } else if (format === 'csv') {
+                        items = parseCsv(text);
                     }
-                    if (!payload) {
+                    if (!items) {
                         alert('Invalid import file.');
                         return;
                     }
+                    const payload = { items: items.map(normalizeImportItem) };
                     const project = document.getElementById('project').value;
                     if (project) {
                         payload.project = project;
