@@ -162,6 +162,7 @@ Viewer tips:
 - Toggle "Use global query" to share the same query across projects.
 - Timeline mode shows an anchor badge and an Exit button in the header/sidebar.
 - Auto-refresh settings (on/off, interval, mode) are stored per project.
+- "Use global auto-refresh" lets you share auto-refresh settings across projects.
 
 ## 🛠️ Architecture
 
