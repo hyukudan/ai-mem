@@ -626,6 +626,10 @@ def read_root():
                 font-size: 12px;
                 color: var(--muted);
             }
+            .session-summary {
+                font-size: 12px;
+                color: var(--muted);
+            }
             .session-actions {
                 display: flex;
                 flex-wrap: wrap;
@@ -1499,6 +1503,13 @@ def read_root():
                     .replace(/>/g, '&gt;');
             }
 
+            function truncateText(value, limit) {
+                const text = value === null || value === undefined ? '' : String(value);
+                if (text.length <= limit) return text;
+                const trimmed = text.slice(0, Math.max(0, limit - 3)).trim();
+                return trimmed ? `${trimmed}...` : text.slice(0, limit);
+            }
+
             function estimateTokens(text) {
                 if (!text) return 0;
                 return Math.max(1, Math.ceil(text.length / 4));
@@ -1833,6 +1844,12 @@ def read_root():
                         goal.className = 'session-goal';
                         goal.textContent = item.goal;
                         card.appendChild(goal);
+                    }
+                    if (item.summary) {
+                        const summary = document.createElement('div');
+                        summary.className = 'session-summary';
+                        summary.textContent = truncateText(item.summary, 140);
+                        card.appendChild(summary);
                     }
                     const actions = document.createElement('div');
                     actions.className = 'session-actions';

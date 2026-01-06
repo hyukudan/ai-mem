@@ -303,6 +303,7 @@ Viewer features:
 - Session ID filter for search, timeline, stats, context, and stream.
 - Observation details include a Copy URL button for citations.
 - Search and timeline results show a rough token estimate per summary.
+- Session list previews the latest session summary when available.
 
 ## Hooks (Model Agnostic)
 
