@@ -635,6 +635,21 @@ def read_root():
                 display: grid;
                 gap: 10px;
             }
+            .context-presets {
+                display: grid;
+                gap: 8px;
+                padding-top: 6px;
+                border-top: 1px solid #e1d6c6;
+            }
+            .context-presets .row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            .context-presets input {
+                flex: 1;
+                min-width: 120px;
+            }
             .saved-card {
                 padding: 12px;
                 border-radius: 12px;
@@ -1252,6 +1267,19 @@ def read_root():
                                 <button class="chip" onclick="copyContext()">Copy</button>
                                 <button class="chip" onclick="summarizeContext()">Summarize</button>
                             </div>
+                            <div class="context-presets">
+                                <select id="contextPresets">
+                                    <option value="">Select preset</option>
+                                </select>
+                                <div class="row">
+                                    <input type="text" id="contextPresetName" placeholder="preset name">
+                                    <button class="chip" onclick="saveContextPreset()">Save</button>
+                                </div>
+                                <div class="row">
+                                    <button class="chip" onclick="applyContextPreset()">Apply</button>
+                                    <button class="chip" onclick="deleteContextPreset()">Delete</button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="session-card" id="sessionCard">
@@ -1465,6 +1493,7 @@ def read_root():
             let streamItems = [];
             const streamMaxItems = 20;
             let savedFilters = [];
+            let contextPresets = [];
 
             async function loadProjects() {
                 const response = await fetch('/api/projects', { headers: getAuthHeaders() });
@@ -2439,6 +2468,11 @@ def read_root():
                 };
             }
 
+            function getContextPresetKey(projectValue) {
+                const key = encodeURIComponent(projectValue || 'all');
+                return `ai-mem-context-presets-${key}`;
+            }
+
             function parseContextConfig(value) {
                 if (!value) return {};
                 try {
@@ -2558,12 +2592,102 @@ def read_root():
                 const projectValue = getCurrentProjectValue();
                 const config = getContextConfig(projectValue);
                 applyContextConfig(config);
+                loadContextPresets();
             }
 
             function updateContextConfig() {
                 const projectValue = getCurrentProjectValue();
                 const config = readContextForm();
                 persistContextConfig(config, projectValue);
+            }
+
+            function loadContextPresets() {
+                const projectValue = getCurrentProjectValue();
+                const key = getContextPresetKey(projectValue);
+                const stored = localStorage.getItem(key);
+                if (!stored) {
+                    contextPresets = [];
+                    renderContextPresets();
+                    return;
+                }
+                try {
+                    const parsed = JSON.parse(stored);
+                    contextPresets = Array.isArray(parsed) ? parsed : [];
+                } catch (error) {
+                    contextPresets = [];
+                }
+                renderContextPresets();
+            }
+
+            function persistContextPresets() {
+                const projectValue = getCurrentProjectValue();
+                const key = getContextPresetKey(projectValue);
+                localStorage.setItem(key, JSON.stringify(contextPresets));
+                renderContextPresets();
+            }
+
+            function renderContextPresets() {
+                const select = document.getElementById('contextPresets');
+                if (!select) return;
+                select.innerHTML = '<option value="">Select preset</option>';
+                contextPresets.forEach(preset => {
+                    const option = document.createElement('option');
+                    option.value = preset.name || '';
+                    option.textContent = preset.name || '';
+                    select.appendChild(option);
+                });
+            }
+
+            function saveContextPreset() {
+                const nameInput = document.getElementById('contextPresetName');
+                const name = (nameInput?.value || '').trim();
+                if (!name) {
+                    alert('Enter a preset name.');
+                    return;
+                }
+                const config = readContextForm();
+                const preset = {
+                    name,
+                    total: config.total,
+                    full: config.full,
+                    fullField: config.fullField,
+                    tags: config.tags,
+                    types: config.types,
+                    showTokens: config.showTokens,
+                    wrap: config.wrap,
+                    useGlobal: config.useGlobal,
+                };
+                const existingIndex = contextPresets.findIndex(item => item.name === name);
+                if (existingIndex >= 0) {
+                    contextPresets[existingIndex] = preset;
+                } else {
+                    contextPresets.unshift(preset);
+                }
+                persistContextPresets();
+                if (nameInput) {
+                    nameInput.value = '';
+                }
+            }
+
+            function applyContextPreset() {
+                const select = document.getElementById('contextPresets');
+                const name = select?.value || '';
+                if (!name) return;
+                const preset = contextPresets.find(item => item.name === name);
+                if (!preset) return;
+                applyContextConfig({ ...preset });
+                updateContextConfig();
+            }
+
+            function deleteContextPreset() {
+                const select = document.getElementById('contextPresets');
+                const name = select?.value || '';
+                if (!name) return;
+                contextPresets = contextPresets.filter(item => item.name !== name);
+                persistContextPresets();
+                if (select) {
+                    select.value = '';
+                }
             }
 
             function clearTimelineAnchorStorage(projectValue) {
@@ -4929,10 +5053,13 @@ def list_observations(
     obs_type: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    since: Optional[str] = None,
     tags: Optional[str] = None,
     limit: Optional[int] = None,
 ):
     _check_token(request)
+    if date_start is None and since is not None:
+        date_start = since
     return get_manager().export_observations(
         project=project,
         session_id=session_id,
@@ -4967,11 +5094,14 @@ def export_observations(
     obs_type: Optional[str] = None,
     date_start: Optional[str] = None,
     date_end: Optional[str] = None,
+    since: Optional[str] = None,
     tags: Optional[str] = None,
     limit: Optional[int] = None,
     format: Optional[str] = None,
 ):
     _check_token(request)
+    if date_start is None and since is not None:
+        date_start = since
     data = get_manager().export_observations(
         project=project,
         session_id=session_id,

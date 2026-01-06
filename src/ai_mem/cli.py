@@ -950,6 +950,7 @@ def export(
     obs_type: Optional[str] = typer.Option(None, help="Observation type filter"),
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
+    since: Optional[str] = typer.Option(None, help="Relative start window (e.g. 24h, 7d)"),
     tag: Optional[List[str]] = typer.Option(None, "--tag", "-t", help="Tag filters (any match)"),
     limit: Optional[int] = typer.Option(None, help="Limit number of observations"),
     output: Optional[str] = typer.Option(None, "--format", "-f", help="Output format: json, jsonl, csv"),
@@ -957,6 +958,8 @@ def export(
     """Export observations to a file."""
     manager = get_memory_manager()
     fmt = _infer_format(path, output, "json")
+    if since and not date_start:
+        date_start = since
     data = manager.export_observations(
         project=project,
         session_id=session_id,
