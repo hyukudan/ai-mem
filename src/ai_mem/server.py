@@ -1315,7 +1315,7 @@ def read_root():
                     header.style.display = 'flex';
                     return;
                 }
-                if (lastMode === 'search' && details.count > 0) {
+                if (lastMode === 'search' && (details.count > 0 || live)) {
                     const query = (document.getElementById('query').value || '').trim();
                     const label = query ? `Search results for "${query}"` : 'Search results';
                     header.innerHTML = `<span>${label} • ${filtersLabel}${icons}${liveDot}${pulseStatus}${autoBadge}</span><div class="row inline"><button class="secondary" onclick="clearAllFilters()">Clear filters</button></div>`;
