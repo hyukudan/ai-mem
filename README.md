@@ -166,6 +166,7 @@ Viewer tips:
 - The sidebar auto-refresh label shows mode/interval/scope (tooltip) and highlights global scope.
 - The results header auto-refresh badge shows a dot when scope is global.
 - Timeline badge shows "no anchor" when active without an anchor; hover for tooltip.
+- The global dot marker is hidden on compact mobile badges.
 
 ## 🛠️ Architecture
 
