@@ -1,54 +1,97 @@
 # API Reference
 
-## REST API
+## REST API Content Flow
 
-When you run `ai-mem server`, see docs at:
-- http://localhost:8000/docs
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as API /docs
+    participant Auth as Token Auth
+    participant Core as Memory Core
 
-Key endpoints:
-- `POST /api/memories`: add a memory (project, session_id, obs_type, tags, metadata, title, summarize)
-- `GET /api/search`: search (project, session_id, obs_type, tags, date_start, date_end, since, show_tokens)
-- `GET /api/timeline`: timeline (project, session_id, obs_type, tags, date_start, date_end, since, depth_before, depth_after, show_tokens)
-- `GET /api/observations`: list observations (project, session_id, obs_type, tags, date_start, date_end, since, limit)
-- `GET /api/observations/{id}`: single observation
-- `GET /api/observation/{id}`: alias
-- `PATCH /api/observations/{id}`: update tags (tags)
-- `DELETE /api/observations/{id}`
-- `GET /api/projects`
-- `GET /api/sessions` (project, active_only, goal, date_start, date_end, limit)
-- `GET /api/sessions/{id}`
-- `GET /api/sessions/{id}/observations`
-- `POST /api/sessions/start` (project, goal, session_id)
-- `POST /api/sessions/end` (session_id or latest)
-- `GET /api/stats` (project, session_id, obs_type, tags, date_start, date_end, since, tag_limit, day_limit, type_tag_limit)
-- `GET /api/tags` (project, session_id, obs_type, tags, date_start, date_end, limit)
-- `POST /api/tags/add` (tag, project, session_id, obs_type, tags, date_start, date_end)
-- `POST /api/tags/rename` (old_tag, new_tag, project, session_id, obs_type, tags, date_start, date_end)
-- `POST /api/tags/delete` (tag, project, session_id, obs_type, tags, date_start, date_end)
-- `GET /api/context/preview` (project, session_id, query, obs_type, obs_types, tags, total, full, full_field, show_tokens, wrap)
-- `GET /api/context/inject` (same as preview)
-- `GET /api/context` (alias)
-- `GET /api/context/config`
-- `POST /api/context/preview`
-- `POST /api/context/inject`
-- `GET /api/stream` (project, session_id, obs_type, tags, query, token)
-- `GET /api/export` (project, session_id, obs_type, tags, date_start, date_end, since, limit, format=json|jsonl|csv)
-- `POST /api/import` (preserves session_id unless project override changes scope)
-- `POST /api/summarize` (project, session_id, count, obs_type, store, tags)
-- `GET /api/health`
-- `GET /api/readiness`
-- `GET /api/version`
+    Client->>API: Request (GET /api/search?q=...)
+    API->>Auth: Validate Token (Optional)
+    alt Invalid Token
+        Auth-->>Client: 401 Unauthorized
+    else Valid Token
+        Auth->>Core: Process Request
+        Core-->>Client: JSON Response + Cache Headers
+    end
+```
 
-**Search cache header:** `/api/search` responses now include `X-AI-MEM-Search-Cache` with `hit`/`miss`, matching the viewer badge so automation can tell when a cached query was reused.
+## Endpoints
+
+When you run `ai-mem server`, interactive documentation is available at [http://localhost:8000/docs](http://localhost:8000/docs).
+
+### Core Operations
+
+| Method | Endpoint | Description | Key Parameters |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/memories` | **Add Memory** | `content`, `project`, `session_id`, `tags` |
+| `GET` | `/api/search` | **Search** | `q`, `start_date`, `end_date`, `limit` |
+| `GET` | `/api/timeline` | **Timeline** | `session_id`, `depth_before`, `depth_after` |
+| `GET` | `/api/observations` | **List All** | `limit`, `since`, `project` |
+| `GET` | `/api/observations/{id}` | **Get One** | `id` |
+
+### Session Management
+
+| Method | Endpoint | Description | Key Parameters |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/sessions` | **List Sessions** | `active_only`, `project` |
+| `POST` | `/api/sessions/start` | **Start Session** | `goal`, `project` |
+| `POST` | `/api/sessions/end` | **End Session** | `session_id` |
+
+### Context Injection (RAG)
+
+| Method | Endpoint | Description | Key Parameters |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/context` | **Get Context Block** | `query`, `total`, `full` |
+| `GET` | `/api/context/preview` | **Preview Context** | Same as above (alias) |
+
+### Scoreboard & cache telemetry
+
+The JSON payloads for `/api/search`, `/api/timeline`, and `/api/context` include a `scoreboard` map (FTS, vector, recency) plus the `cache` counters. This mirrors the scoreboard the CLI prints during `ai-mem endless` and what the web UI displays at `http://localhost:37777`.
+
+```json
+{
+  "scoreboard": {
+    "obs_abc": {
+      "fts_score": 0.92,
+      "vector_score": 0.81,
+      "recency_factor": 0.56
+    }
+  },
+  "cache": {
+    "hits": 14,
+    "misses": 2
+  }
+}
+```
+
+Query responses also include `tokens` totals (`index`, `full`, `total`) and `economics` data so you can estimate the formatted context before injecting it into any assistant.
+
+### Metadata & Maintenance
+
+| Method | Endpoint | Description | Key Parameters |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/api/tags` | **List Tags** | `project` |
+| `POST` | `/api/tags/add` | **Add Tag** | `tag`, `filters...` |
+| `GET` | `/api/stats` | **Global Stats** | `project` |
+| `GET` | `/api/health` | **Health Check** | - |
+
+> [!NOTE]
+> **Search Cache Header**: `/api/search` responses include `X-AI-MEM-Search-Cache` with values `hit` or `miss`.
 
 ## Storage Layout
 
 Default data directory: `~/.ai-mem`
 
-- SQLite: `~/.ai-mem/ai-mem.sqlite`
-- Vector DB: `~/.ai-mem/vector-db`
+- **SQLite**: `~/.ai-mem/ai-mem.sqlite`
+- **Vector DB**: `~/.ai-mem/vector-db`
 
-You can override these in config:
+### Customizing Paths
+
+You can override storage locations via CLI config:
 
 ```bash
 ai-mem config --data-dir /path/to/data
@@ -58,7 +101,8 @@ ai-mem config --vector-dir /path/to/vector-db
 
 ## Privacy and Redaction
 
-Use `<private>...</private>` to prevent sensitive content from being stored.
-The private segments are removed before hashing, indexing, and storage.
+> [!IMPORTANT]
+> Use `<private>...</private>` tags in any memory content to prevent that specific segment from being stored.
 
-`<ai-mem-context>` is reserved and stripped to prevent recursive ingestion.
+- Private segments are stripped **before** hashing, indexing, and storage.
+- The `<ai-mem-context>` tag is reserved and automatically stripped to prevent recursive ingestion loops.

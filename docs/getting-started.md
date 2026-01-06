@@ -1,71 +1,126 @@
 # Getting Started
 
-## Installation
+![Status](https://img.shields.io/badge/status-active-success)
+![Python](https://img.shields.io/badge/python-3.10+-blue)
 
-Requirements:
-- Python 3.10+
-- pip, venv
-- PostgreSQL 15+ with pgvector extension (only needed when using the pgvector provider)
+Welcome to **ai-mem**! This guide will help you set up your personal AI memory layer in minutes.
 
-Clone and install:
-
-```bash
-git clone https://github.com/yourusername/ai-mem.git
-cd ai-mem
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+```mermaid
+flowchart LR
+    A[Start] --> B{Installation Method}
+    B -->|Standard| C[Pip Install]
+    B -->|Quick| D[Bootstrap Script]
+    
+    C --> E[Configuration]
+    D --> E
+    
+    E --> F{Run Mode}
+    F -->|Server + UI| G[Run Server]
+    F -->|Proxies| H[Run Proxies]
+    F -->|MCP| I[MCP Server]
 ```
 
-Or use the bootstrap helper:
+## Installation
+
+### Prerequisites
+
+> [!NOTE]
+> Ensure you have **Python 3.10+** installed. If you plan to use the `pgvector` provider, you will also need PostgreSQL 15+ with the extension enabled.
+
+### Option A: Quick Bootstrap (Recommended)
+
+The easiest way to get started is using the helper script which sets up the virtual environment and installs dependencies for you.
 
 ```bash
 ./scripts/bootstrap.sh
 ```
 
-## Quick Start details
+### Option B: Manual Installation
 
-CLI only (no API keys required):
+If you prefer to manage your environment manually:
 
 ```bash
+# 1. Clone the repository
+git clone https://github.com/yourusername/ai-mem.git
+cd ai-mem
+
+# 2. Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install in editable mode
+pip install -e .
+```
+
+## Quick Start Details
+
+Once installed, you can interact with ai-mem via the CLI immediately, no API keys required for basic storage.
+
+### CLI Usage
+
+> [!TIP]
+> The CLI is great for quick interactions or scripting.
+
+```bash
+# Store a memory
 ai-mem add "We use Python 3.11 and pandas 2.0 in Omega."
+
+# Retrieve relevant memories
 ai-mem search "Omega dependencies"
 ```
 
-Start the server and UI:
+### Endless Mode & context streaming
+
+`ai-mem endless` keeps regenerating context on a loop, prints scoreboard/cache telemetry every tick, and stays within your token budget so you can feed Claude, Gemini, ChatGPT, or any vLLM with fresh continuity.
+
+```bash
+ai-mem endless --query "next steps" --interval 30 --token-limit 900
+```
+
+Each iteration shows the same `fts_score`, `vector_score`, and `recency_factor` entries that `mem-search`, `timeline`, and the web UI expose, helping you understand why memories were selected before pasting or proxying them.
+
+### Snapshot export & merge
+
+Capture or share a workspace by exporting a checkpoint:
+
+```bash
+ai-mem snapshot export backups/gear.ndjson
+```
+
+Another device (or session) can then merge it back:
+
+```bash
+ai-mem snapshot merge backups/gear.ndjson
+```
+
+Merge operations preserve IDs and metadata so you can stitch together threaded conversations that span Claude, Gemini, or other assistants without losing referential links.
+
+### Model-agnostic context injection
+
+Use `ai-mem context` to build `<ai-mem-context>` blocks for any model. The command prints token budgets (`tokens.index`, `tokens.full`) plus chassis metadata (`scoreboard`, `cache`, `economics`) so every assistant can introspect the reason for a retrieval before replying.
+
+### Starting the Web UI
+
+To visualize your memory graph and manage sessions, start the web server:
 
 ```bash
 ./scripts/run.sh
 ```
-
-Open http://localhost:8000
+Then open [http://localhost:8000](http://localhost:8000) in your browser.
 
 ## Convenience Scripts
 
-Scripts in `scripts/` start common stacks:
+We provide a suite of scripts in `scripts/` to launch common configurations.
 
-- `./scripts/run.sh`: server + UI only
-- `./scripts/run-all.sh`: server + UI + MCP
-- `./scripts/run-stack.sh`: server + OpenAI-compatible proxy
-- `./scripts/run-full.sh`: server + OpenAI-compatible proxy + MCP
-- `./scripts/run-gemini-stack.sh`: server + Gemini proxy
-- `./scripts/run-gemini-full.sh`: server + Gemini proxy + MCP
-- `./scripts/run-anthropic-stack.sh`: server + Anthropic proxy
-- `./scripts/run-anthropic-full.sh`: server + Anthropic proxy + MCP
-- `./scripts/run-azure-stack.sh`: server + Azure OpenAI proxy
-- `./scripts/run-azure-full.sh`: server + Azure OpenAI proxy + MCP
-- `./scripts/run-bedrock-stack.sh`: server + Bedrock proxy
-- `./scripts/run-bedrock-full.sh`: server + Bedrock proxy + MCP
-- `./scripts/run-dual-stack.sh`: server + OpenAI-compatible proxy + Gemini proxy
-- `./scripts/run-dual-full.sh`: server + OpenAI-compatible proxy + Gemini proxy + MCP
-- `./scripts/run-proxy.sh`: OpenAI-compatible proxy only
-- `./scripts/run-gemini-proxy.sh`: Gemini proxy only
-- `./scripts/run-anthropic-proxy.sh`: Anthropic proxy only
-- `./scripts/run-azure-proxy.sh`: Azure OpenAI proxy only
-- `./scripts/run-bedrock-proxy.sh`: Bedrock proxy only
-- `./scripts/run-mcp.sh`: MCP server only
-- `./scripts/install-hooks.sh`: install hook scripts to `~/.config/ai-mem/hooks`
-- `./scripts/install-mcp-claude-desktop.sh`: add ai-mem MCP entry to Claude Desktop config
-- `./scripts/install-mcp-cursor.sh`: add ai-mem MCP entry to Cursor config
-- `./scripts/install-vscode-tasks.sh`: add ai-mem tasks to VS Code
-- `./scripts/install-jetbrains-tools.sh`: add ai-mem External Tools to JetBrains IDEs
+| Script | description |
+| :--- | :--- |
+| **Server & UI** | |
+| `./scripts/run.sh` | Core server + Web UI. |
+| `./scripts/run-all.sh` | Server + UI + MCP Server. |
+| **Proxies (Intercept Traffic)** | |
+| `./scripts/run-stack.sh` | Server + OpenAI-compatible Proxy. |
+| `./scripts/run-gemini-stack.sh` | Server + Gemini Proxy. |
+| `./scripts/run-anthropic-stack.sh` | Server + Anthropic Proxy. |
+| **Integrations** | |
+| `./scripts/install-mcp-claude-desktop.sh` | Register with Claude Desktop. |
+| `./scripts/install-mcp-cursor.sh` | Register with Cursor IDE. |
