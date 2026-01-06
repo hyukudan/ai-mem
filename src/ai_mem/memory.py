@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import threading
 import time
 from datetime import datetime
@@ -85,6 +86,9 @@ def _build_embedding_provider(config: AppConfig) -> EmbeddingProvider:
     raise ValueError(f"Unsupported embedding provider: {config.embeddings.provider}")
 
 
+_RELATIVE_DATE_RE = re.compile(r"^(\d+(?:\.\d+)?)([smhdw])$", re.IGNORECASE)
+
+
 def _parse_date(value: Optional[str]) -> Optional[float]:
     if value is None:
         return None
@@ -97,6 +101,18 @@ def _parse_date(value: Optional[str]) -> Optional[float]:
         return float(text)
     except ValueError:
         pass
+    match = _RELATIVE_DATE_RE.match(text)
+    if match:
+        amount = float(match.group(1))
+        unit = match.group(2).lower()
+        multipliers = {
+            "s": 1,
+            "m": 60,
+            "h": 3600,
+            "d": 86400,
+            "w": 604800,
+        }
+        return time.time() - amount * multipliers[unit]
     try:
         return datetime.fromisoformat(text).timestamp()
     except ValueError:

@@ -215,6 +215,8 @@ export AI_MEM_CONTEXT_SHOW_TOKENS=true
 export AI_MEM_CONTEXT_WRAP=true
 ```
 
+Date filters accept epoch, ISO-8601, or relative durations like 7d, 24h, 30m.
+
 ## Using the CLI
 
 Common commands:
