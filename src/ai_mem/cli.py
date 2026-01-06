@@ -1116,6 +1116,33 @@ def mcp():
     run_stdio()
 
 
+@app.command("mcp-config")
+def mcp_config(
+    bin_path: str = typer.Option("ai-mem", help="ai-mem binary path"),
+    name: str = typer.Option("ai-mem", help="MCP server name"),
+    project: Optional[str] = typer.Option(None, help="Default AI_MEM_PROJECT"),
+    full: bool = typer.Option(False, help="Wrap in mcpServers object"),
+    output: Optional[str] = typer.Option(None, help="Write JSON to file"),
+):
+    """Generate an MCP config snippet for external clients."""
+    entry: Dict[str, object] = {"command": bin_path, "args": ["mcp"]}
+    if project:
+        entry["env"] = {"AI_MEM_PROJECT": project}
+    payload: Dict[str, object]
+    if full:
+        payload = {"mcpServers": {name: entry}}
+    else:
+        payload = entry
+
+    text = json.dumps(payload, indent=2)
+    if output:
+        with open(output, "w", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+        console.print(f"[green]Wrote MCP config to {output}[/green]")
+        return
+    print(text)
+
+
 @app.command()
 def ingest(
     path: str = typer.Argument(".", help="Path to the project directory to ingest"),

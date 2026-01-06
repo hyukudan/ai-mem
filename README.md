@@ -429,6 +429,13 @@ Add ai-mem to Claude Desktop MCP config:
 ./scripts/install-mcp-claude-desktop.sh --bin "$PWD/.venv/bin/ai-mem"
 ```
 
+Generate an MCP config snippet for any MCP client:
+
+```bash
+ai-mem mcp-config --bin "$PWD/.venv/bin/ai-mem"
+ai-mem mcp-config --full --name ai-mem --project "$PWD"
+```
+
 Tools:
 - search
 - mem-search (alias)
