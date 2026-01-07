@@ -209,6 +209,34 @@ def test_stats_with_project(client, auth_headers):
 
 
 # =============================================================================
+# Test: Cache endpoints
+# =============================================================================
+
+
+def test_cache_metrics(client, auth_headers):
+    """Test the cache metrics endpoint."""
+    response = client.get("/api/cache", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert "enabled" in data
+    assert "hits" in data
+    assert "misses" in data
+    assert "hit_rate_percent" in data
+    assert "entries" in data
+    assert "total_requests" in data
+
+
+def test_cache_clear(client, auth_headers):
+    """Test clearing the cache."""
+    response = client.post("/api/cache/clear", headers=auth_headers)
+    assert response.status_code == 200
+    data = response.json()
+    assert "cleared_entries" in data
+    assert "previous_hits" in data
+    assert "previous_misses" in data
+
+
+# =============================================================================
 # Test: Tags endpoints
 # =============================================================================
 

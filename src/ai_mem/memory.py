@@ -394,6 +394,12 @@ class MemoryManager:
         self._search_cache_misses += 1
 
     def search_cache_summary(self) -> Dict[str, Any]:
+        total_requests = self._search_cache_hits + self._search_cache_misses
+        hit_rate = (
+            (self._search_cache_hits / total_requests * 100)
+            if total_requests > 0
+            else 0.0
+        )
         return {
             "enabled": self._is_search_cache_enabled(),
             "ttl_seconds": self.config.search.cache_ttl_seconds,
@@ -401,10 +407,27 @@ class MemoryManager:
             "entries": len(self._search_cache),
             "hits": self._search_cache_hits,
             "misses": self._search_cache_misses,
+            "total_requests": total_requests,
+            "hit_rate_percent": round(hit_rate, 2),
             "fts_weight": self.config.search.fts_weight,
             "vector_weight": self.config.search.vector_weight,
             "recency_half_life_hours": self.config.search.recency_half_life_hours,
             "recency_weight": self.config.search.recency_weight,
+        }
+
+    def clear_search_cache(self) -> Dict[str, Any]:
+        """Clear the search cache and reset metrics."""
+        cleared_entries = len(self._search_cache)
+        previous_hits = self._search_cache_hits
+        previous_misses = self._search_cache_misses
+        self._search_cache.clear()
+        self._search_cache_hits = 0
+        self._search_cache_misses = 0
+        logger.info(f"Search cache cleared: {cleared_entries} entries, {previous_hits} hits, {previous_misses} misses")
+        return {
+            "cleared_entries": cleared_entries,
+            "previous_hits": previous_hits,
+            "previous_misses": previous_misses,
         }
 
     async def start_session(
