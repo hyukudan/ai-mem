@@ -57,10 +57,27 @@ async def test_indexes_exist(db_manager):
     async with db_manager.conn.execute("PRAGMA index_list(observations)") as cursor:
         rows = await cursor.fetchall()
         indexes = {row["name"] for row in rows}
+        # Primary indexes
         assert "idx_observations_session" in indexes
+        assert "idx_observations_project" in indexes
+        assert "idx_observations_type" in indexes
+        assert "idx_observations_created" in indexes
+        assert "idx_observations_hash" in indexes
+        # Composite indexes for common query patterns
         assert "idx_observations_project_created" in indexes
-    
+        assert "idx_observations_project_type" in indexes
+        assert "idx_observations_session_created" in indexes
+        assert "idx_observations_type_created" in indexes
+
     async with db_manager.conn.execute("PRAGMA index_list(sessions)") as cursor:
         rows = await cursor.fetchall()
         indexes = {row["name"] for row in rows}
         assert "idx_sessions_project" in indexes
+        assert "idx_sessions_start" in indexes
+
+    # Check event_idempotency indexes
+    async with db_manager.conn.execute("PRAGMA index_list(event_idempotency)") as cursor:
+        rows = await cursor.fetchall()
+        indexes = {row["name"] for row in rows}
+        assert "idx_event_idempotency_processed" in indexes
+        assert "idx_event_idempotency_host" in indexes
