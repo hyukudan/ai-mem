@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
 from .base import ChatProvider, ChatMessage
 
@@ -13,20 +13,20 @@ class OpenAICompatibleProvider(ChatProvider):
         model_name: str,
         timeout_s: float = 60.0,
     ):
-        self.client = OpenAI(
+        self.client = AsyncOpenAI(
             base_url=base_url,
             api_key=api_key or "local",
             timeout=timeout_s,
         )
         self.model_name = model_name
 
-    def chat(
+    async def chat(
         self,
         messages: List[ChatMessage],
         model: Optional[str] = None,
         temperature: float = 0.2,
     ) -> str:
-        response = self.client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=model or self.model_name,
             messages=[{"role": m.role, "content": m.content} for m in messages],
             temperature=temperature,
