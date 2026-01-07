@@ -562,3 +562,103 @@ async def test_observations_by_session(db):
     results = await db.list_observations(session_id=session_a.id)
     assert len(results) == 1
     assert results[0].id == obs_a.id
+
+
+# ============================================
+# Event Idempotency Tests
+# ============================================
+
+@pytest.mark.asyncio
+async def test_event_idempotency_not_processed(db):
+    """Test that an unprocessed event_id returns None."""
+    result = await db.check_event_processed("non-existent-event-id")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_event_idempotency_record_and_check(db):
+    """Test recording and checking a processed event."""
+    event_id = "test-event-123"
+    observation_id = "obs-456"
+    host = "claude-code"
+
+    # Record the event as processed
+    await db.record_event_processed(event_id, observation_id, host)
+
+    # Check should return the observation ID
+    result = await db.check_event_processed(event_id)
+    assert result == observation_id
+
+
+@pytest.mark.asyncio
+async def test_event_idempotency_duplicate_record(db):
+    """Test that recording the same event_id twice doesn't raise an error."""
+    event_id = "duplicate-event"
+
+    # Record twice - should not raise (INSERT OR IGNORE)
+    await db.record_event_processed(event_id, "obs-1", "host-1")
+    await db.record_event_processed(event_id, "obs-2", "host-2")
+
+    # Should return the first observation_id (first insert wins)
+    result = await db.check_event_processed(event_id)
+    assert result == "obs-1"
+
+
+@pytest.mark.asyncio
+async def test_event_idempotency_multiple_events(db):
+    """Test multiple different event_ids."""
+    events = [
+        ("event-a", "obs-a", "claude-code"),
+        ("event-b", "obs-b", "gemini"),
+        ("event-c", "obs-c", "cursor"),
+    ]
+
+    for event_id, obs_id, host in events:
+        await db.record_event_processed(event_id, obs_id, host)
+
+    # Each should return its own observation_id
+    assert await db.check_event_processed("event-a") == "obs-a"
+    assert await db.check_event_processed("event-b") == "obs-b"
+    assert await db.check_event_processed("event-c") == "obs-c"
+
+
+@pytest.mark.asyncio
+async def test_event_idempotency_cleanup_old(db):
+    """Test cleanup of old event IDs."""
+    import time
+
+    # Record some events
+    await db.record_event_processed("recent-event", "obs-recent", "host")
+
+    # Manually insert an old event (simulate 60 days ago)
+    old_timestamp = time.time() - (60 * 24 * 60 * 60)
+    await db.conn.execute(
+        "INSERT INTO event_idempotency (event_id, observation_id, host, processed_at) VALUES (?, ?, ?, ?)",
+        ("old-event", "obs-old", "host", old_timestamp),
+    )
+    await db.conn.commit()
+
+    # Both should exist initially
+    assert await db.check_event_processed("recent-event") is not None
+    assert await db.check_event_processed("old-event") is not None
+
+    # Cleanup with 30 days threshold
+    deleted = await db.cleanup_old_event_ids(max_age_days=30)
+    assert deleted == 1  # Only the old event should be deleted
+
+    # Recent should still exist, old should be gone
+    assert await db.check_event_processed("recent-event") is not None
+    assert await db.check_event_processed("old-event") is None
+
+
+@pytest.mark.asyncio
+async def test_event_idempotency_cleanup_nothing_to_delete(db):
+    """Test cleanup when there's nothing to delete."""
+    await db.record_event_processed("event-1", "obs-1", "host")
+
+    # Cleanup with 30 days - nothing should be deleted (event is fresh)
+    deleted = await db.cleanup_old_event_ids(max_age_days=30)
+    assert deleted == 0
+
+    # Event should still exist
+    assert await db.check_event_processed("event-1") == "obs-1"

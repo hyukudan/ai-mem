@@ -2200,5 +2200,27 @@ def delete_project(
     console.print(f"[green]Deleted {deleted} observations for {project}[/green]")
 
 
+@app.command()
+def cleanup_events(
+    max_age_days: int = typer.Option(30, help="Delete event IDs older than this many days"),
+):
+    """Clean up old event idempotency records.
+
+    The event_idempotency table tracks processed events to prevent duplicates.
+    This command removes records older than max_age_days to prevent table growth.
+    This is automatically run on server startup, but can be run manually.
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            deleted = await manager.db.cleanup_old_event_ids(max_age_days=max_age_days)
+            console.print(f"[green]Cleaned up {deleted} old event idempotency records (older than {max_age_days} days)[/green]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     app()
