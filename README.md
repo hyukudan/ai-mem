@@ -72,6 +72,117 @@
 - **CLI-first control** – All key flows (add/search/context/timeline/endless/snapshot) are available via `ai-mem` so you can script onboarding via a single CLI.
 - **Scripts library** – `./scripts/run*.sh` cover full/stack/proxy setups for Gemini, Claude, Bedrock, Azure, and Anthropic deployments, ensuring the UI + MCP server is always upstream.
 
+## Multi-LLM Architecture
+
+ai-mem is designed from the ground up to support **multiple LLMs simultaneously**. Whether you're using Claude Code in one terminal, Gemini CLI in another, and Cursor in your IDE, all observations flow into the same shared memory store.
+
+### Event Schema v1
+
+All events are normalized to a canonical format before storage:
+
+```python
+from ai_mem.events import ToolEvent, EventSource, ToolExecution
+
+event = ToolEvent(
+    event_id="unique-uuid",           # For idempotency
+    session_id="session-123",
+    source=EventSource(host="gemini"), # Host identifier
+    tool=ToolExecution(
+        name="Read",
+        input={"path": "/src/main.py"},
+        output="file contents...",
+        success=True,
+    ),
+)
+```
+
+This schema is **LLM-agnostic** - no Claude or Gemini specific fields. Any host can generate events in this format.
+
+### Host Adapters
+
+Adapters translate host-specific payloads to the unified Event Schema:
+
+| Adapter | Host | Use Case |
+|---------|------|----------|
+| `ClaudeAdapter` | `claude-code`, `claude-desktop` | Claude Code CLI, Claude Desktop app |
+| `GeminiAdapter` | `gemini`, `gemini-cli` | Gemini CLI, Gemini API integrations |
+| `GenericAdapter` | Any other | Cursor, VS Code, custom integrations |
+
+**Usage via API:**
+
+```bash
+# Send a tool event from any host
+curl -X POST http://localhost:37777/api/events \
+  -H "Content-Type: application/json" \
+  -d '{
+    "host": "gemini",
+    "payload": {
+      "tool_name": "Read",
+      "tool_input": {"path": "/src/main.py"},
+      "tool_response": "file contents..."
+    }
+  }'
+```
+
+**Usage via CLI:**
+
+```bash
+# The --host flag identifies the source
+ai-mem add "Tool: Read\nInput: /src/main.py" --host gemini --event-id "uuid-123"
+```
+
+**Programmatic usage:**
+
+```python
+from ai_mem.adapters import get_adapter
+
+# Auto-select adapter based on host
+adapter = get_adapter("gemini")
+event = adapter.parse_tool_event({
+    "tool_name": "Bash",
+    "tool_input": {"command": "ls -la"},
+    "tool_response": "file list...",
+})
+
+# Event is now in canonical ToolEvent format
+print(event.tool.name)  # "Bash"
+print(event.source.host)  # "gemini"
+```
+
+### Idempotency
+
+Each event has an `event_id` that prevents duplicate observations:
+
+```bash
+# First call - creates observation
+ai-mem add "test" --event-id "abc-123" --host claude-code
+# Memory stored! (ID: obs_xyz)
+
+# Second call with same event_id - returns existing observation
+ai-mem add "test" --event-id "abc-123" --host claude-code
+# Memory stored! (ID: obs_xyz)  # Same ID, no duplicate
+```
+
+This is critical for hooks that may be retried on network failures.
+
+### Environment Variables
+
+Configure host behavior via environment variables (see `.env.example`):
+
+```bash
+# Host identification
+AI_MEM_HOST=claude-code           # Default host identifier
+
+# Ingestion filtering
+AI_MEM_SKIP_TOOL_NAMES=TodoWrite,SlashCommand,Skill
+AI_MEM_SKIP_TOOL_PREFIXES=mcp__
+AI_MEM_MAX_OUTPUT_CHARS=50000
+AI_MEM_IGNORE_FAILED_TOOLS=false
+
+# Redaction patterns (comma-separated regex)
+AI_MEM_REDACTION_PATTERNS=(?i)api[_-]?key.*,sk-[a-zA-Z0-9]{20,}
+```
+
 ## Cross-model handoff
 
 1. Start the server/panel stack so the MCP tools, REST API, and UI feed a shared memory graph:

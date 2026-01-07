@@ -16,6 +16,8 @@ import uvicorn
 from .context import build_context, estimate_tokens
 from . import __version__
 from .memory import MemoryManager
+from .adapters import get_adapter
+from .events import ToolEvent, UserPromptEvent, SessionEvent
 
 import logging
 
@@ -28,9 +30,19 @@ async def lifespan(app: FastAPI):
     # Startup
     if not _api_token:
         logger.warning("SECURITY WARNING: AI_MEM_API_TOKEN is not set. The API is accessible without authentication.")
-    
+
     manager = get_manager()
     await manager.initialize()
+
+    # Cleanup old event IDs to prevent table growth
+    try:
+        max_age_days = int(os.environ.get("AI_MEM_EVENT_ID_MAX_AGE_DAYS", "30"))
+        deleted = await manager.db.cleanup_old_event_ids(max_age_days=max_age_days)
+        if deleted > 0:
+            logger.info(f"Cleaned up {deleted} old event idempotency records (older than {max_age_days} days)")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup old event IDs: {e}")
+
     yield
     # Shutdown
     if _manager:
@@ -109,6 +121,16 @@ class MemoryInput(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
     title: Optional[str] = None
     summarize: bool = True
+
+
+class EventIngestRequest(BaseModel):
+    """Request to ingest a raw event from any LLM host."""
+    host: str = Field(default="generic", description="Host identifier: claude-code, gemini, cursor, etc.")
+    payload: Dict[str, Any] = Field(..., description="Raw event payload from the host")
+    session_id: Optional[str] = Field(default=None, description="Session ID override")
+    project: Optional[str] = Field(default=None, description="Project path override")
+    tags: List[str] = Field(default_factory=list, description="Additional tags")
+    summarize: bool = Field(default=True, description="Enable summarization")
 
 
 class ObservationIds(BaseModel):
@@ -227,6 +249,134 @@ async def add_memory(mem: MemoryInput, request: Request):
         return obs.model_dump()
     except Exception as exc:
         logger.error(f"Internal error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/events")
+async def ingest_event(req: EventIngestRequest, request: Request):
+    """Ingest a raw event from any LLM host.
+
+    This endpoint uses host adapters to parse the payload into a canonical
+    ToolEvent, then converts it to an observation. Supports idempotency via
+    event_id to prevent duplicates from retried hooks.
+
+    Example:
+        POST /api/events
+        {
+            "host": "gemini",
+            "payload": {
+                "tool_name": "Read",
+                "tool_input": {"path": "/src/main.py"},
+                "tool_response": "file contents..."
+            }
+        }
+    """
+    _check_token(request)
+    try:
+        # Get the appropriate adapter for this host
+        adapter = get_adapter(req.host)
+
+        # Try to parse as tool event first (most common)
+        event = adapter.parse_tool_event(req.payload)
+
+        if not event:
+            # Try user prompt event
+            prompt_event = adapter.parse_user_prompt(req.payload)
+            if prompt_event:
+                # Convert user prompt to observation
+                manager = get_manager()
+                obs = await manager.add_observation(
+                    content=prompt_event.content,
+                    obs_type="user_prompt",
+                    project=req.project or prompt_event.context.project,
+                    session_id=req.session_id or prompt_event.session_id,
+                    tags=req.tags or ["user-prompt", req.host],
+                    metadata=prompt_event.metadata,
+                    summarize=req.summarize,
+                    event_id=prompt_event.event_id,
+                    host=req.host,
+                )
+                if not obs:
+                    return {"status": "skipped", "reason": "private"}
+                return {"status": "ok", "observation": obs.model_dump(), "event_type": "user_prompt"}
+
+            # Try session event
+            session_event = adapter.parse_session_event(req.payload)
+            if session_event:
+                manager = get_manager()
+                obs = await manager.add_observation(
+                    content=f"Session: {session_event.goal or 'started'}",
+                    obs_type="session",
+                    project=req.project or session_event.context.project,
+                    session_id=req.session_id or session_event.session_id,
+                    tags=req.tags or ["session", req.host],
+                    metadata=session_event.metadata,
+                    summarize=False,
+                    event_id=session_event.event_id,
+                    host=req.host,
+                )
+                if not obs:
+                    return {"status": "skipped", "reason": "private"}
+                return {"status": "ok", "observation": obs.model_dump(), "event_type": "session"}
+
+            # Could not parse the payload
+            raise HTTPException(
+                status_code=400,
+                detail=f"Could not parse payload with {req.host} adapter. Check payload format."
+            )
+
+        # Build content from tool event
+        parts = []
+        if event.tool.name:
+            parts.append(f"Tool: {event.tool.name}")
+        if event.tool.input:
+            input_str = json.dumps(event.tool.input) if isinstance(event.tool.input, dict) else str(event.tool.input)
+            parts.append(f"Input: {input_str}")
+        if event.tool.output:
+            output_str = json.dumps(event.tool.output) if isinstance(event.tool.output, dict) else str(event.tool.output)
+            parts.append(f"Output: {output_str}")
+
+        content = "\n".join(parts)
+        if not content.strip():
+            return {"status": "skipped", "reason": "empty_content"}
+
+        # Merge tags: event tags + request tags + host
+        tags = list(set(req.tags + [req.host, "tool", "auto-ingested"]))
+
+        # Create observation with idempotency
+        manager = get_manager()
+        obs = await manager.add_observation(
+            content=content,
+            obs_type="tool_output",
+            project=req.project or event.context.project,
+            session_id=req.session_id or event.session_id,
+            tags=tags,
+            metadata={
+                "tool_name": event.tool.name,
+                "tool_success": event.tool.success,
+                "tool_latency_ms": event.tool.latency_ms,
+                "source_host": event.source.host,
+                **event.metadata,
+            },
+            summarize=req.summarize,
+            event_id=event.event_id,
+            host=req.host,
+        )
+
+        if not obs:
+            return {"status": "skipped", "reason": "private"}
+
+        return {
+            "status": "ok",
+            "observation": obs.model_dump(),
+            "event_type": "tool_use",
+            "event_id": event.event_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Event ingestion error: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
