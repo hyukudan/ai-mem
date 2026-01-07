@@ -864,6 +864,26 @@ async def get_stats(
     return payload
 
 
+@app.get("/api/cache")
+async def get_cache_metrics(request: Request):
+    """Get current search cache metrics.
+
+    Returns cache configuration, current entries, hit/miss counts, and hit rate.
+    """
+    _check_token(request)
+    return get_manager().search_cache_summary()
+
+
+@app.post("/api/cache/clear")
+async def clear_cache(request: Request):
+    """Clear the search cache and reset metrics.
+
+    Returns the number of entries that were cleared and previous hit/miss counts.
+    """
+    _check_token(request)
+    return get_manager().clear_search_cache()
+
+
 @app.get("/api/tags")
 async def list_tags(
     request: Request,
