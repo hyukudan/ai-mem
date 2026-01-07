@@ -486,7 +486,17 @@ class MemoryManager:
         importance_score: float = 0.5,
         assets: Optional[List[Dict[str, Any]]] = None,
         diff: Optional[str] = None,
+        event_id: Optional[str] = None,
+        host: Optional[str] = None,
     ) -> Optional[Observation]:
+        # Check idempotency: if event_id was already processed, return existing observation
+        if event_id:
+            existing_obs_id = await self.db.check_event_processed(event_id)
+            if existing_obs_id:
+                existing = await self.db.get_observation(existing_obs_id)
+                if existing:
+                    return Observation.model_validate(existing)
+
         session = None
         if session_id:
             session_data = await self.db.get_session(session_id)
@@ -565,6 +575,11 @@ class MemoryManager:
             await self._store_assets(obs.id, obs.assets)
         self._index_observation(obs)
         self._notify_listeners(obs)
+
+        # Record event_id for idempotency tracking
+        if event_id:
+            await self.db.record_event_processed(event_id, obs.id, host or "unknown")
+
         return obs
 
     def _normalize_assets(self, assets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

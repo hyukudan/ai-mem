@@ -126,6 +126,7 @@ class DatabaseManager:
         await self.conn.commit()
         await self._ensure_columns()
         await self._ensure_asset_table()
+        await self._ensure_event_idempotency_table()
 
     def _tag_clause(
         self,
@@ -199,6 +200,90 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_assets_observation ON observation_assets(observation_id)"
         )
         await self.conn.commit()
+
+    async def _ensure_event_idempotency_table(self) -> None:
+        """Create table for tracking processed event IDs (idempotency)."""
+        if not self.conn:
+            return
+        await self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS event_idempotency (
+                event_id TEXT PRIMARY KEY,
+                observation_id TEXT,
+                host TEXT,
+                processed_at REAL NOT NULL,
+                FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE SET NULL
+            )
+            """
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_event_idempotency_processed ON event_idempotency(processed_at)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_event_idempotency_host ON event_idempotency(host)"
+        )
+        await self.conn.commit()
+
+    async def check_event_processed(self, event_id: str) -> Optional[str]:
+        """Check if an event ID has already been processed.
+
+        Args:
+            event_id: The event ID to check
+
+        Returns:
+            The observation_id if already processed, None otherwise
+        """
+        if not self.conn or not event_id:
+            return None
+        async with self.conn.execute(
+            "SELECT observation_id FROM event_idempotency WHERE event_id = ?",
+            (event_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return row["observation_id"] if row else None
+
+    async def record_event_processed(
+        self,
+        event_id: str,
+        observation_id: Optional[str] = None,
+        host: Optional[str] = None,
+    ) -> None:
+        """Record that an event ID has been processed.
+
+        Args:
+            event_id: The event ID that was processed
+            observation_id: The resulting observation ID (if any)
+            host: The host that generated the event
+        """
+        if not self.conn or not event_id:
+            return
+        await self.conn.execute(
+            """
+            INSERT OR IGNORE INTO event_idempotency (event_id, observation_id, host, processed_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (event_id, observation_id, host, time.time()),
+        )
+        await self.conn.commit()
+
+    async def cleanup_old_event_ids(self, max_age_days: int = 30) -> int:
+        """Remove old event IDs to prevent table growth.
+
+        Args:
+            max_age_days: Remove events older than this many days
+
+        Returns:
+            Number of records deleted
+        """
+        if not self.conn:
+            return 0
+        cutoff = time.time() - (max_age_days * 86400)
+        async with self.conn.execute(
+            "DELETE FROM event_idempotency WHERE processed_at < ?",
+            (cutoff,),
+        ) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
 
     async def add_asset(
         self,
