@@ -65,6 +65,9 @@
 - **Event Schema v1 + idempotency** – Canonical event format for all hosts, with event_id-based deduplication to prevent duplicate observations from retried hooks.
 - **Host adapters** – Built-in adapters translate Claude, Gemini, and custom payload formats to the unified Event Schema, so any LLM host can plug in without code changes.
 - **Shared metadata & scoreboard** – Responses include metadata that enumerates vector vs. FTS scores, recency, and cache hits/misses, letting you introspect model prompts before each completion.
+- **Context deduplication** – Automatically removes semantically similar observations from context, showing `[+N similar]` indicators to reduce token waste while preserving information.
+- **Two-stage retrieval** – Configurable reranking with bi-encoder, TF-IDF, or cross-encoder strategies for improved search precision.
+- **Memory consolidation & decay** – Merge duplicate observations and automatically clean up old, rarely-accessed memories to keep the store lean.
 - **Endless Mode** – `ai-mem endless` polls the store at a configurable interval to keep total tokens within limits. See [Endless Mode Guide](docs/endless_mode.md).
 - **Snapshot-based syncing** – `ai-mem snapshot export`/`import`/`merge` round-trips checkpoints. See [Snapshots Guide](docs/snapshots.md).
 - **Hooks & IDE scripts** – Run `./scripts/install-hooks.sh`, `./scripts/install-vscode-tasks.sh`, `./scripts/install-jetbrains-tools.sh`, or the Antigravity/Claude installers to make every hook call `ai-mem hook ...` automatically.
@@ -173,6 +176,129 @@ batch_embedder = AsyncBatchEmbedder(
 result = await batch_embedder.embed_batch(texts)
 print(f"Embedded {result.total_texts} texts in {result.elapsed_seconds:.2f}s")
 ```
+
+### Memory Consolidation & Decay
+
+Keep your memory store lean by consolidating duplicates and removing stale entries:
+
+```bash
+# Find and consolidate similar observations
+ai-mem consolidate --project /path/to/project --threshold 0.85
+
+# Preview what would be consolidated (dry run)
+ai-mem consolidate -p myproject --dry-run
+
+# Keep highest importance observations instead of newest
+ai-mem consolidate -p myproject --strategy highest_importance
+
+# Clean up old, rarely-accessed memories (decay)
+ai-mem cleanup-stale --project myproject --max-age 90 --min-access 0
+
+# Find similar observations without consolidating
+ai-mem find-similar --project myproject --threshold 0.8
+```
+
+Strategies: `newest` (default), `oldest`, `highest_importance`.
+
+### Two-Stage Retrieval
+
+Improve search precision with configurable reranking:
+
+```bash
+# Search with automatic two-stage retrieval
+ai-mem search "authentication flow" --rerank
+
+# Configure reranker type in config
+# Options: "biencoder" (default), "tfidf" (fast), "crossencoder" (most accurate)
+```
+
+Configuration in `~/.config/ai-mem/config.json`:
+```json
+{
+  "search": {
+    "enable_reranking": true,
+    "reranker_type": "biencoder",
+    "stage1_candidates": 50,
+    "rerank_weight": 0.4
+  }
+}
+```
+
+### Progressive Disclosure (3-Layer Context)
+
+Optimize token usage with layered context disclosure:
+
+```bash
+# Layer 1: Compact index only (~50-100 tokens)
+ai-mem context --query "auth" --mode compact
+
+# Layer 2: Timeline context around results
+ai-mem timeline --query "auth" --depth-before 3 --depth-after 3
+
+# Layer 3: Full details on demand
+ai-mem get <observation-id>
+```
+
+The 3-layer workflow enables ~10x token savings:
+- **Layer 1**: Quick index with IDs and summaries
+- **Layer 2**: Chronological context around anchor observation
+- **Layer 3**: Full content only when needed
+
+### Host Configuration
+
+Configure behavior per LLM host:
+
+```bash
+# Set default host
+export AI_MEM_DEFAULT_HOST=claude-code
+
+# Override host-specific settings
+export AI_MEM_HOST_CLAUDE_CODE_INJECTION_METHOD=mcp_tools
+export AI_MEM_HOST_GEMINI_FORMAT=markdown
+```
+
+Configuration in `~/.config/ai-mem/config.json`:
+```json
+{
+  "hosts": {
+    "default_host": "generic",
+    "hosts": {
+      "claude-code": {
+        "injection_method": "mcp_tools",
+        "supports_mcp": true,
+        "context_position": "system_prompt",
+        "format": "markdown",
+        "progressive_disclosure": true
+      },
+      "gemini": {
+        "injection_method": "prompt_prefix",
+        "supports_mcp": false,
+        "context_position": "user_prompt_start",
+        "format": "markdown"
+      }
+    }
+  }
+}
+```
+
+### AI Compression
+
+Compress observations to reduce token usage:
+
+```python
+from ai_mem.compression import CompressionService
+
+# Heuristic compression (no LLM required)
+service = CompressionService()
+result = await service.compress(text, target_ratio=4.0)
+print(f"Compressed {result.original_tokens} → {result.compressed_tokens} tokens")
+
+# With LLM for semantic compression
+service = CompressionService(provider=chat_provider)
+result = await service.compress(text, context_type="code_context")
+```
+
+Context types: `default`, `code_context`, `tool_output`, `conversation`.
 
 ## Multi-LLM Architecture
 
