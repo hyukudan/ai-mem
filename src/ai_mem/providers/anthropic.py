@@ -1,6 +1,7 @@
 import httpx
 from typing import List, Optional
 
+from ..exceptions import APIError, NetworkError
 from .base import ChatProvider, ChatMessage
 
 DEFAULT_ANTHROPIC_VERSION = "2023-06-01"
@@ -70,9 +71,9 @@ class AnthropicProvider(ChatProvider):
             return _extract_text(response.json())
         except httpx.HTTPStatusError as e:
             # Sanitize error to avoid leaking API key
-            raise RuntimeError(f"Anthropic API error: {e.response.status_code}") from None
+            raise APIError("anthropic", e.response.status_code, f"Anthropic API error") from None
         except httpx.RequestError as e:
-            raise RuntimeError(f"Anthropic request failed: {type(e).__name__}") from None
+            raise NetworkError(f"Anthropic request failed: {type(e).__name__}") from None
 
     def get_name(self) -> str:
         return "anthropic"

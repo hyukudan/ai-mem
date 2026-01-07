@@ -1,7 +1,8 @@
 from typing import List, Optional
 
-from openai import AsyncAzureOpenAI
+from openai import AsyncAzureOpenAI, APIError as OpenAIAPIError, APIConnectionError
 
+from ..exceptions import APIError, NetworkError
 from .base import ChatProvider, ChatMessage
 
 
@@ -28,12 +29,17 @@ class AzureOpenAIProvider(ChatProvider):
         model: Optional[str] = None,
         temperature: float = 0.2,
     ) -> str:
-        response = await self.client.chat.completions.create(
-            model=model or self.deployment_name,
-            messages=[{"role": m.role, "content": m.content} for m in messages],
-            temperature=temperature,
-        )
-        return (response.choices[0].message.content or "").strip()
+        try:
+            response = await self.client.chat.completions.create(
+                model=model or self.deployment_name,
+                messages=[{"role": m.role, "content": m.content} for m in messages],
+                temperature=temperature,
+            )
+            return (response.choices[0].message.content or "").strip()
+        except OpenAIAPIError as e:
+            raise APIError("azure-openai", getattr(e, "status_code", None), str(e)) from None
+        except APIConnectionError as e:
+            raise NetworkError(f"Azure OpenAI connection failed: {type(e).__name__}") from None
 
     def get_name(self) -> str:
         return "azure-openai"

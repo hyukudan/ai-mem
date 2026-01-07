@@ -1,6 +1,8 @@
 import asyncio
 import google.generativeai as genai
 from typing import List, Optional
+
+from ..exceptions import APIError
 from .base import ChatProvider, ChatMessage
 
 
@@ -32,7 +34,7 @@ class GeminiProvider(ChatProvider):
             return (response.text or "").strip()
         except Exception as e:
             # Sanitize error to avoid leaking API key
-            raise RuntimeError(f"Gemini API error: {type(e).__name__}") from None
+            raise APIError("gemini", None, f"Gemini API error: {type(e).__name__}") from None
 
     async def chat(
         self,
