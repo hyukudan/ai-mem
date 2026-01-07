@@ -7,7 +7,10 @@ from collections import Counter
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Iterable
 
+from .logging_config import get_logger, log_duration
 from .models import Observation, Session, ObservationIndex
+
+logger = get_logger("db")
 
 
 class DatabaseManager:
@@ -17,14 +20,20 @@ class DatabaseManager:
         self.conn: Optional[aiosqlite.Connection] = None
 
     async def connect(self) -> None:
+        logger.debug(f"Connecting to database: {self.db_path}")
+        start = time.perf_counter()
         self.conn = await aiosqlite.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = aiosqlite.Row
         await self._configure()
         await self.create_tables()
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"Database connected in {duration_ms:.2f}ms: {self.db_path}")
 
     async def close(self) -> None:
         if self.conn:
+            logger.debug("Closing database connection")
             await self.conn.close()
+            logger.info("Database connection closed")
 
     async def _configure(self) -> None:
         if not self.conn:
@@ -406,7 +415,10 @@ class DatabaseManager:
 
     async def add_observation(self, obs: Observation) -> None:
         if not self.conn:
+            logger.warning("Cannot add observation: database not connected")
             return
+        logger.debug(f"Adding observation: id={obs.id}, type={obs.type}, project={obs.project}")
+        start = time.perf_counter()
         await self.conn.execute(
             """
             INSERT OR REPLACE INTO observations (
@@ -443,6 +455,8 @@ class DatabaseManager:
             ),
         )
         await self.conn.commit()
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.debug(f"Observation added in {duration_ms:.2f}ms: {obs.id}")
 
     async def find_observation_by_hash(
         self,
@@ -1080,7 +1094,10 @@ class DatabaseManager:
         limit: int = 20,
     ) -> List[ObservationIndex]:
         if not self.conn:
+            logger.warning("Cannot search: database not connected")
             return []
+        logger.debug(f"FTS search: query='{query}', project={project}, limit={limit}")
+        start = time.perf_counter()
         conditions = []
         params: List[Any] = []
 
@@ -1133,7 +1150,10 @@ class DatabaseManager:
         
         async with self.conn.execute(sql, params) as cursor:
             rows = await cursor.fetchall()
-            
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.debug(f"FTS search completed in {duration_ms:.2f}ms, found {len(rows)} results")
+
         return [
             ObservationIndex(
                 id=row["id"],

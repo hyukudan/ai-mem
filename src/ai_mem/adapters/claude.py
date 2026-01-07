@@ -16,7 +16,10 @@ from ..events import (
     ToolEvent,
     ToolExecution,
 )
+from ..logging_config import get_logger
 from .base import EventAdapter
+
+logger = get_logger("adapters.claude")
 
 
 class ClaudeAdapter(EventAdapter):
@@ -37,10 +40,12 @@ class ClaudeAdapter(EventAdapter):
         - cwd / working_dir
         - prompt_number (for ordering)
         """
+        logger.debug("Parsing Claude tool event")
         tool_name = self._extract_first(
             payload, ["tool_name", "tool", "name"]
         )
         if not tool_name:
+            logger.debug("No tool_name found in payload, skipping")
             return None
 
         tool_input = self._extract_first(

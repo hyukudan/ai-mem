@@ -15,10 +15,13 @@ Usage:
     event = adapter.parse_tool_event(claude_hook_payload)
 """
 
+from ..logging_config import get_logger
 from .base import EventAdapter
 from .claude import ClaudeAdapter
 from .gemini import GeminiAdapter
 from .generic import GenericAdapter
+
+logger = get_logger("adapters")
 
 __all__ = [
     "EventAdapter",
@@ -46,8 +49,11 @@ def get_adapter(host: str = None) -> EventAdapter:
     host_lower = host.lower().strip()
 
     if host_lower in ("claude", "claude-code", "claude-desktop", "anthropic"):
+        logger.debug(f"Using ClaudeAdapter for host: {host}")
         return ClaudeAdapter()
     elif host_lower in ("gemini", "gemini-cli", "google", "vertex"):
+        logger.debug(f"Using GeminiAdapter for host: {host}")
         return GeminiAdapter()
     else:
+        logger.debug(f"Using GenericAdapter for host: {host}")
         return GenericAdapter(host_name=host)
