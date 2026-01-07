@@ -211,17 +211,30 @@ def _compute_text_similarity(text1: str, text2: str) -> float:
     return intersection / union if union > 0 else 0.0
 
 
+@dataclass
+class DeduplicationResult:
+    """Result of deduplication operation."""
+    observations: List[Dict[str, Any]]
+    removed_count: int
+    similar_groups: Dict[str, List[str]]  # obs_id -> list of similar obs_ids
+
+
 def deduplicate_observations(
     observations: List[Dict[str, Any]],
     threshold: float = 0.85,
     key_field: str = "summary",
+    track_similar: bool = True,
 ) -> Tuple[List[Dict[str, Any]], int]:
     """Remove semantically similar observations.
+
+    Uses Jaccard word-level similarity for fast deduplication.
+    Optionally tracks similar observations for "[+N similar]" display.
 
     Args:
         observations: List of observation dicts
         threshold: Similarity threshold (0.0-1.0) above which to consider duplicates
         key_field: Field to use for similarity comparison
+        track_similar: If True, add "_similar_count" to retained observations
 
     Returns:
         Tuple of (deduplicated list, count of removed duplicates)
@@ -231,28 +244,134 @@ def deduplicate_observations(
 
     deduplicated: List[Dict[str, Any]] = []
     seen_texts: List[str] = []
+    seen_indices: List[int] = []  # Index in deduplicated list
     removed_count = 0
 
     for obs in observations:
         text = obs.get(key_field) or obs.get("content") or ""
         if not text:
             deduplicated.append(obs)
+            seen_texts.append("")
+            seen_indices.append(len(deduplicated) - 1)
             continue
 
         # Check similarity with already-seen observations
         is_duplicate = False
-        for seen_text in seen_texts:
-            similarity = _compute_text_similarity(text, seen_text)
-            if similarity >= threshold:
-                is_duplicate = True
-                removed_count += 1
-                break
+        best_match_idx = -1
+        best_similarity = 0.0
 
-        if not is_duplicate:
+        for idx, seen_text in enumerate(seen_texts):
+            if not seen_text:
+                continue
+            similarity = _compute_text_similarity(text, seen_text)
+            if similarity >= threshold and similarity > best_similarity:
+                is_duplicate = True
+                best_match_idx = seen_indices[idx]
+                best_similarity = similarity
+
+        if is_duplicate and best_match_idx >= 0:
+            removed_count += 1
+            if track_similar:
+                # Increment similar count on the retained observation
+                if "_similar_count" not in deduplicated[best_match_idx]:
+                    deduplicated[best_match_idx]["_similar_count"] = 0
+                deduplicated[best_match_idx]["_similar_count"] += 1
+                # Track IDs of similar observations
+                if "_similar_ids" not in deduplicated[best_match_idx]:
+                    deduplicated[best_match_idx]["_similar_ids"] = []
+                if obs.get("id"):
+                    deduplicated[best_match_idx]["_similar_ids"].append(obs["id"])
+        else:
             deduplicated.append(obs)
             seen_texts.append(text)
+            seen_indices.append(len(deduplicated) - 1)
 
     return deduplicated, removed_count
+
+
+def deduplicate_with_embeddings(
+    observations: List[Dict[str, Any]],
+    embeddings: List[List[float]],
+    threshold: float = 0.85,
+    track_similar: bool = True,
+) -> Tuple[List[Dict[str, Any]], int]:
+    """Remove semantically similar observations using vector embeddings.
+
+    More accurate than Jaccard but requires pre-computed embeddings.
+
+    Args:
+        observations: List of observation dicts
+        embeddings: Pre-computed embeddings (same order as observations)
+        threshold: Cosine similarity threshold (0.0-1.0)
+        track_similar: If True, add "_similar_count" to retained observations
+
+    Returns:
+        Tuple of (deduplicated list, count of removed duplicates)
+    """
+    if not observations or not embeddings or threshold <= 0:
+        return observations, 0
+
+    if len(observations) != len(embeddings):
+        # Fallback to Jaccard if embeddings don't match
+        return deduplicate_observations(observations, threshold, track_similar=track_similar)
+
+    deduplicated: List[Dict[str, Any]] = []
+    kept_embeddings: List[List[float]] = []
+    kept_indices: List[int] = []
+    removed_count = 0
+
+    for i, (obs, emb) in enumerate(zip(observations, embeddings)):
+        if not emb:  # Empty embedding
+            deduplicated.append(obs)
+            kept_embeddings.append(emb)
+            kept_indices.append(len(deduplicated) - 1)
+            continue
+
+        # Check cosine similarity with kept embeddings
+        is_duplicate = False
+        best_match_idx = -1
+        best_similarity = 0.0
+
+        for j, kept_emb in enumerate(kept_embeddings):
+            if not kept_emb:
+                continue
+            similarity = _cosine_similarity(emb, kept_emb)
+            if similarity >= threshold and similarity > best_similarity:
+                is_duplicate = True
+                best_match_idx = kept_indices[j]
+                best_similarity = similarity
+
+        if is_duplicate and best_match_idx >= 0:
+            removed_count += 1
+            if track_similar:
+                if "_similar_count" not in deduplicated[best_match_idx]:
+                    deduplicated[best_match_idx]["_similar_count"] = 0
+                deduplicated[best_match_idx]["_similar_count"] += 1
+                if "_similar_ids" not in deduplicated[best_match_idx]:
+                    deduplicated[best_match_idx]["_similar_ids"] = []
+                if obs.get("id"):
+                    deduplicated[best_match_idx]["_similar_ids"].append(obs["id"])
+        else:
+            deduplicated.append(obs)
+            kept_embeddings.append(emb)
+            kept_indices.append(len(deduplicated) - 1)
+
+    return deduplicated, removed_count
+
+
+def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    """Compute cosine similarity between two vectors."""
+    if not vec1 or not vec2 or len(vec1) != len(vec2):
+        return 0.0
+
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    norm1 = math.sqrt(sum(a * a for a in vec1))
+    norm2 = math.sqrt(sum(b * b for b in vec2))
+
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+
+    return dot_product / (norm1 * norm2)
 
 
 # Common stopwords to remove for compression (LLM-agnostic)
@@ -385,6 +504,131 @@ def _format_compact_index_line(obs: Dict[str, Any], score: Optional[float] = Non
     return f"- {obs_id} | {obs_type} | {summary}{score_str}"
 
 
+def format_context_ref(obs_id: str, summary: Optional[str] = None) -> str:
+    """Format a context reference placeholder for Layer 1 compact mode.
+
+    These placeholders can be expanded to full content by the LLM
+    using the get_observations tool/command.
+
+    Example: <context-ref id="obs_abc12345" hint="JWT auth config"/>
+    """
+    hint = ""
+    if summary:
+        # Truncate hint to ~30 chars
+        hint_text = summary[:27] + "..." if len(summary) > 30 else summary
+        hint = f' hint="{hint_text}"'
+
+    return f'<context-ref id="{obs_id}"{hint}/>'
+
+
+def format_layer1_index(
+    observations: List[Dict[str, Any]],
+    scoreboard: Optional[Dict[str, Dict[str, Optional[float]]]] = None,
+    include_refs: bool = True,
+) -> Tuple[str, int]:
+    """Format Layer 1: Compact index with optional context-ref placeholders.
+
+    Returns: (formatted_text, token_estimate)
+    """
+    lines = ["## Quick Index (Layer 1)"]
+    lines.append("Request full details for any ID using `get_observation <id>`\n")
+
+    for obs in observations:
+        obs_id = obs.get("id", "")
+        score = None
+        if scoreboard and obs_id in scoreboard:
+            score = scoreboard[obs_id].get("vector_score")
+
+        line = _format_compact_index_line(obs, score)
+
+        # Optionally add context-ref for easy expansion
+        if include_refs and obs_id:
+            ref = format_context_ref(obs_id, obs.get("summary"))
+            line = f"{line}  {ref}"
+
+        lines.append(line)
+
+    text = "\n".join(lines)
+    tokens = estimate_tokens(text)
+    return text, tokens
+
+
+def format_layer2_timeline(
+    anchor: Dict[str, Any],
+    before: List[Dict[str, Any]],
+    after: List[Dict[str, Any]],
+) -> Tuple[str, int]:
+    """Format Layer 2: Chronological timeline around anchor observation.
+
+    Shows temporal context to help the model understand sequence of events.
+
+    Returns: (formatted_text, token_estimate)
+    """
+    lines = ["## Timeline Context (Layer 2)"]
+    lines.append(f"Anchor: {anchor.get('id', '?')[:8]}\n")
+
+    # Before context
+    if before:
+        lines.append("**Before:**")
+        for obs in reversed(before):  # Show oldest first
+            ts = obs.get("created_at", "")[:16] if obs.get("created_at") else "?"
+            summary = obs.get("summary") or obs.get("content") or ""
+            if len(summary) > 80:
+                summary = summary[:77] + "..."
+            lines.append(f"  {ts} | {obs.get('id', '?')[:8]} | {summary}")
+
+    # Anchor observation (highlighted)
+    lines.append("\n**→ Current:**")
+    ts = anchor.get("created_at", "")[:16] if anchor.get("created_at") else "?"
+    summary = anchor.get("summary") or anchor.get("content") or ""
+    if len(summary) > 80:
+        summary = summary[:77] + "..."
+    lines.append(f"  {ts} | {anchor.get('id', '?')[:8]} | {summary}")
+
+    # After context
+    if after:
+        lines.append("\n**After:**")
+        for obs in after:
+            ts = obs.get("created_at", "")[:16] if obs.get("created_at") else "?"
+            summary = obs.get("summary") or obs.get("content") or ""
+            if len(summary) > 80:
+                summary = summary[:77] + "..."
+            lines.append(f"  {ts} | {obs.get('id', '?')[:8]} | {summary}")
+
+    text = "\n".join(lines)
+    tokens = estimate_tokens(text)
+    return text, tokens
+
+
+def format_layer3_full(
+    observations: List[Dict[str, Any]],
+    field: str = "content",
+) -> Tuple[str, int]:
+    """Format Layer 3: Full observation details.
+
+    Only used when model explicitly requests full content.
+
+    Returns: (formatted_text, token_estimate)
+    """
+    lines = ["## Full Details (Layer 3)"]
+
+    for obs in observations:
+        obs_id = obs.get("id", "?")
+        obs_type = obs.get("type", "-")
+        content = obs.get(field) or obs.get("content") or obs.get("summary") or ""
+
+        lines.append(f"\n### {obs_id} ({obs_type})")
+        lines.append(content)
+
+        # Add metadata if available
+        if obs.get("tags"):
+            lines.append(f"\nTags: {', '.join(obs['tags'])}")
+
+    text = "\n".join(lines)
+    tokens = estimate_tokens(text)
+    return text, tokens
+
+
 def _match_tags(obs_tags: List[str], filters: List[str]) -> bool:
     if not filters:
         return True
@@ -412,7 +656,12 @@ def _format_index_line(obs: Dict[str, Any], token_count: int, show_tokens: bool)
     tags = obs.get("tags") or []
     tag_text = f" | tags: {', '.join(tags)}" if tags else ""
     tokens = f" (~{token_count} tok)" if show_tokens else ""
-    return f"- {obs.get('id')} | {obs_type} | {summary}{tag_text}{tokens}"
+
+    # Show similar count if deduplication found similar observations
+    similar_count = obs.get("_similar_count", 0)
+    similar_text = f" [+{similar_count} similar]" if similar_count > 0 else ""
+
+    return f"- {obs.get('id')} | {obs_type} | {summary}{tag_text}{tokens}{similar_text}"
 
 
 def _determine_disclosure_mode(

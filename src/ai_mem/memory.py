@@ -1696,15 +1696,22 @@ class MemoryManager:
         query: str,
         results: List[ObservationIndex],
         top_k: int = 10,
+        reranker_type: Optional[str] = None,
     ) -> List[ObservationIndex]:
-        """Rerank search results using embedding similarity as a second stage.
+        """Rerank search results using configurable strategy.
 
         Stage 1 (BM25 + vector) provides recall, Stage 2 (reranking) improves precision.
+
+        Supported reranker types:
+        - "biencoder": Embedding similarity (default, good balance)
+        - "tfidf": TF-IDF similarity (fast, no external deps)
+        - "crossencoder": Cross-encoder model (most accurate, requires model)
 
         Args:
             query: Original search query
             results: Results from Stage 1
             top_k: Number of results to return after reranking
+            reranker_type: Override reranker type (default: from config)
 
         Returns:
             Reranked list of results
@@ -1712,6 +1719,26 @@ class MemoryManager:
         if not results or len(results) <= 1:
             return results[:top_k]
 
+        # Get reranker type from config or parameter
+        reranker = reranker_type or self.config.search.reranker_type
+        rerank_weight = self.config.search.rerank_weight
+
+        if reranker == "tfidf":
+            return self._rerank_with_tfidf(query, results, top_k, rerank_weight)
+        elif reranker == "crossencoder":
+            return self._rerank_with_crossencoder(query, results, top_k, rerank_weight)
+        else:
+            # Default: biencoder
+            return self._rerank_with_biencoder(query, results, top_k, rerank_weight)
+
+    def _rerank_with_biencoder(
+        self,
+        query: str,
+        results: List[ObservationIndex],
+        top_k: int,
+        rerank_weight: float,
+    ) -> List[ObservationIndex]:
+        """Rerank using bi-encoder (separate query and document embeddings)."""
         try:
             # Get query embedding
             query_embedding = self.embedding_provider.embed([query])[0]
@@ -1722,26 +1749,135 @@ class MemoryManager:
 
             # Compute rerank scores
             rerank_scores: List[Tuple[ObservationIndex, float]] = []
+            original_weight = 1.0 - rerank_weight
+
             for i, result in enumerate(results):
                 similarity = self._compute_embedding_similarity(
                     query_embedding,
                     result_embeddings[i],
                 )
-                # Combine original score with rerank similarity
-                # Original score weighted 0.6, rerank weighted 0.4
-                combined = (result.score or 0.0) * 0.6 + similarity * 0.4
+                combined = (result.score or 0.0) * original_weight + similarity * rerank_weight
                 result.rerank_score = combined
                 rerank_scores.append((result, combined))
 
             # Sort by combined score
             rerank_scores.sort(key=lambda x: x[1], reverse=True)
-            reranked = [item[0] for item in rerank_scores[:top_k]]
-
-            return reranked
+            return [item[0] for item in rerank_scores[:top_k]]
 
         except Exception as e:
-            logger.warning(f"Reranking failed, returning original results: {e}")
+            logger.warning(f"Bi-encoder reranking failed: {e}")
             return results[:top_k]
+
+    def _rerank_with_tfidf(
+        self,
+        query: str,
+        results: List[ObservationIndex],
+        top_k: int,
+        rerank_weight: float,
+    ) -> List[ObservationIndex]:
+        """Rerank using TF-IDF similarity (fast, no external deps)."""
+        try:
+            # Build document frequency from results
+            query_terms = set(query.lower().split())
+            doc_freq: Dict[str, int] = {}
+
+            texts = [r.summary or "" for r in results]
+            for text in texts:
+                unique_terms = set(text.lower().split())
+                for term in unique_terms:
+                    doc_freq[term] = doc_freq.get(term, 0) + 1
+
+            n_docs = len(texts)
+            rerank_scores: List[Tuple[ObservationIndex, float]] = []
+            original_weight = 1.0 - rerank_weight
+
+            for i, result in enumerate(results):
+                text = texts[i]
+                text_terms = text.lower().split()
+
+                # Compute TF-IDF similarity with query
+                tfidf_score = 0.0
+                term_freq: Dict[str, int] = {}
+                for term in text_terms:
+                    term_freq[term] = term_freq.get(term, 0) + 1
+
+                for term in query_terms:
+                    if term in term_freq:
+                        tf = term_freq[term] / len(text_terms) if text_terms else 0
+                        idf = math.log((n_docs + 1) / (doc_freq.get(term, 0) + 1))
+                        tfidf_score += tf * idf
+
+                # Normalize
+                max_score = len(query_terms) * math.log(n_docs + 1) if query_terms else 1
+                normalized = tfidf_score / max_score if max_score > 0 else 0
+
+                combined = (result.score or 0.0) * original_weight + normalized * rerank_weight
+                result.rerank_score = combined
+                rerank_scores.append((result, combined))
+
+            rerank_scores.sort(key=lambda x: x[1], reverse=True)
+            return [item[0] for item in rerank_scores[:top_k]]
+
+        except Exception as e:
+            logger.warning(f"TF-IDF reranking failed: {e}")
+            return results[:top_k]
+
+    def _rerank_with_crossencoder(
+        self,
+        query: str,
+        results: List[ObservationIndex],
+        top_k: int,
+        rerank_weight: float,
+    ) -> List[ObservationIndex]:
+        """Rerank using cross-encoder model (most accurate).
+
+        Cross-encoders encode query and document together, allowing for
+        more nuanced similarity computation. Falls back to bi-encoder
+        if cross-encoder not available.
+        """
+        try:
+            # Try to import sentence-transformers for cross-encoder
+            from sentence_transformers import CrossEncoder
+
+            model_name = self.config.search.crossencoder_model or "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+            # Cache the cross-encoder model
+            if not hasattr(self, "_crossencoder_model") or self._crossencoder_model_name != model_name:
+                logger.info(f"Loading cross-encoder model: {model_name}")
+                self._crossencoder_model = CrossEncoder(model_name)
+                self._crossencoder_model_name = model_name
+
+            # Create query-document pairs
+            texts = [r.summary or "" for r in results]
+            pairs = [(query, text) for text in texts]
+
+            # Get cross-encoder scores
+            scores = self._crossencoder_model.predict(pairs)
+
+            # Combine with original scores
+            rerank_scores: List[Tuple[ObservationIndex, float]] = []
+            original_weight = 1.0 - rerank_weight
+
+            # Normalize cross-encoder scores to 0-1
+            min_score = min(scores) if scores.size > 0 else 0
+            max_score = max(scores) if scores.size > 0 else 1
+            score_range = max_score - min_score if max_score > min_score else 1
+
+            for i, result in enumerate(results):
+                normalized = (scores[i] - min_score) / score_range if score_range > 0 else 0
+                combined = (result.score or 0.0) * original_weight + normalized * rerank_weight
+                result.rerank_score = combined
+                rerank_scores.append((result, combined))
+
+            rerank_scores.sort(key=lambda x: x[1], reverse=True)
+            return [item[0] for item in rerank_scores[:top_k]]
+
+        except ImportError:
+            logger.warning("sentence-transformers not installed, falling back to bi-encoder")
+            return self._rerank_with_biencoder(query, results, top_k, rerank_weight)
+        except Exception as e:
+            logger.warning(f"Cross-encoder reranking failed: {e}")
+            return self._rerank_with_biencoder(query, results, top_k, rerank_weight)
 
     async def search_with_rerank(
         self,

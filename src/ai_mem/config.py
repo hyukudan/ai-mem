@@ -43,6 +43,12 @@ class SearchConfig(BaseModel):
     vector_weight: float = 0.5
     recency_half_life_hours: float = 48.0
     recency_weight: float = 0.1
+    # Two-stage retrieval / reranking settings
+    enable_reranking: bool = True
+    reranker_type: str = "biencoder"  # "biencoder", "crossencoder", "tfidf"
+    stage1_candidates: int = 50  # Number of candidates for Stage 1
+    rerank_weight: float = 0.4  # Weight for rerank score (original gets 1 - this)
+    crossencoder_model: Optional[str] = None  # Optional cross-encoder model name
 
 
 class VectorConfig(BaseModel):
@@ -77,6 +83,99 @@ class ContextConfig(BaseModel):
     # Entity Graph settings (Phase 4)
     enable_entity_extraction: bool = True  # Extract entities from observations
     include_related_entities: bool = True  # Include related entities in context
+
+
+class HostConfig(BaseModel):
+    """Configuration for a specific LLM host."""
+
+    # Injection method: how to inject context
+    injection_method: str = "auto"  # "mcp_tools", "prompt_prefix", "hybrid", "auto"
+    # Whether host supports MCP protocol
+    supports_mcp: bool = True
+    # Where to inject context
+    context_position: str = "user_prompt_start"  # "system_prompt", "user_prompt_start", "user_prompt_end", "both"
+    # Context format preference
+    format: str = "markdown"  # "markdown", "xml_tags", "json", "plain"
+    # Default token budget for this host (None = use model default)
+    token_budget: Optional[int] = None
+    # Model identifier for token calculations
+    default_model: Optional[str] = None
+    # Enable progressive disclosure for this host
+    progressive_disclosure: bool = True
+    # Custom tags to add to observations from this host
+    default_tags: List[str] = Field(default_factory=list)
+    # Max context tokens for this host
+    max_context_tokens: Optional[int] = None
+
+
+class HostsConfig(BaseModel):
+    """Configuration for all LLM hosts."""
+
+    # Default host identifier
+    default_host: str = "generic"
+    # Per-host configurations
+    hosts: Dict[str, HostConfig] = Field(default_factory=lambda: {
+        "claude-code": HostConfig(
+            injection_method="mcp_tools",
+            supports_mcp=True,
+            context_position="system_prompt",
+            format="markdown",
+            default_model="claude-3-sonnet",
+            progressive_disclosure=True,
+        ),
+        "claude-desktop": HostConfig(
+            injection_method="mcp_tools",
+            supports_mcp=True,
+            context_position="system_prompt",
+            format="markdown",
+            default_model="claude-3-sonnet",
+        ),
+        "gemini": HostConfig(
+            injection_method="prompt_prefix",
+            supports_mcp=False,
+            context_position="user_prompt_start",
+            format="markdown",
+            default_model="gemini-pro",
+        ),
+        "gemini-cli": HostConfig(
+            injection_method="prompt_prefix",
+            supports_mcp=False,
+            context_position="user_prompt_start",
+            format="markdown",
+            default_model="gemini-pro",
+        ),
+        "cursor": HostConfig(
+            injection_method="hybrid",
+            supports_mcp=True,
+            context_position="both",
+            format="markdown",
+            default_model="gpt-4",
+        ),
+        "chatgpt": HostConfig(
+            injection_method="prompt_prefix",
+            supports_mcp=False,
+            context_position="user_prompt_start",
+            format="markdown",
+            default_model="gpt-4",
+        ),
+        "generic": HostConfig(
+            injection_method="prompt_prefix",
+            supports_mcp=False,
+            context_position="user_prompt_start",
+            format="xml_tags",
+        ),
+    })
+
+    def get_host_config(self, host: Optional[str] = None) -> HostConfig:
+        """Get configuration for a specific host, falling back to default."""
+        if host and host in self.hosts:
+            return self.hosts[host]
+        # Try to match by prefix (e.g., "claude-code-v2" matches "claude-code")
+        if host:
+            for known_host in self.hosts:
+                if host.startswith(known_host):
+                    return self.hosts[known_host]
+        return self.hosts.get(self.default_host, HostConfig())
 
 
 class IngestionConfig(BaseModel):
@@ -128,6 +227,7 @@ class AppConfig(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     vector: VectorConfig = Field(default_factory=VectorConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
+    hosts: HostsConfig = Field(default_factory=HostsConfig)
 
 
 def _config_path() -> Path:
@@ -362,6 +462,45 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
     if default_tags is not None:
         config.ingestion.default_tags = default_tags
 
+    # Hosts config overrides
+    default_host = os.environ.get("AI_MEM_DEFAULT_HOST")
+    host_override = os.environ.get("AI_MEM_HOST")  # Current host identifier
+
+    if default_host:
+        config.hosts.default_host = default_host
+
+    # Allow overriding specific host settings via AI_MEM_HOST_<HOSTNAME>_<SETTING>
+    # e.g., AI_MEM_HOST_CLAUDE_CODE_INJECTION_METHOD=prompt_prefix
+    for host_name in config.hosts.hosts:
+        env_prefix = f"AI_MEM_HOST_{host_name.upper().replace('-', '_')}_"
+
+        injection_method = os.environ.get(f"{env_prefix}INJECTION_METHOD")
+        supports_mcp = _env_bool(f"{env_prefix}SUPPORTS_MCP")
+        context_position = os.environ.get(f"{env_prefix}CONTEXT_POSITION")
+        host_format = os.environ.get(f"{env_prefix}FORMAT")
+        token_budget = _env_int(f"{env_prefix}TOKEN_BUDGET")
+        default_model = os.environ.get(f"{env_prefix}DEFAULT_MODEL")
+        progressive = _env_bool(f"{env_prefix}PROGRESSIVE_DISCLOSURE")
+        max_context = _env_int(f"{env_prefix}MAX_CONTEXT_TOKENS")
+
+        host_config = config.hosts.hosts[host_name]
+        if injection_method:
+            host_config.injection_method = injection_method
+        if supports_mcp is not None:
+            host_config.supports_mcp = supports_mcp
+        if context_position:
+            host_config.context_position = context_position
+        if host_format:
+            host_config.format = host_format
+        if token_budget is not None:
+            host_config.token_budget = token_budget
+        if default_model:
+            host_config.default_model = default_model
+        if progressive is not None:
+            host_config.progressive_disclosure = progressive
+        if max_context is not None:
+            host_config.max_context_tokens = max_context
+
     return config
 
 
@@ -416,6 +555,9 @@ def validate_config(config: AppConfig, strict: bool = False) -> Tuple[bool, List
 
     # Validate context configuration
     _validate_context_config(config.context, errors, warnings)
+
+    # Validate hosts configuration
+    _validate_hosts_config(config.hosts, errors, warnings)
 
     # If strict mode, treat warnings as errors
     if strict:
@@ -614,6 +756,58 @@ def _validate_context_config(context: ContextConfig, errors: List[str], warnings
 
     if context.max_token_budget is not None and context.max_token_budget <= 0:
         errors.append(f"max_token_budget must be positive, got {context.max_token_budget}")
+
+
+def _validate_hosts_config(hosts: HostsConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate hosts configuration."""
+    valid_injection_methods = {"mcp_tools", "prompt_prefix", "hybrid", "auto"}
+    valid_context_positions = {"system_prompt", "user_prompt_start", "user_prompt_end", "both"}
+    valid_formats = {"markdown", "xml_tags", "json", "plain"}
+
+    # Check default host exists
+    if hosts.default_host not in hosts.hosts:
+        warnings.append(
+            f"Default host '{hosts.default_host}' not found in hosts config, "
+            f"will use generic config"
+        )
+
+    for host_name, host_config in hosts.hosts.items():
+        prefix = f"hosts.{host_name}"
+
+        # Validate injection method
+        if host_config.injection_method not in valid_injection_methods:
+            warnings.append(
+                f"{prefix}.injection_method '{host_config.injection_method}' unknown, "
+                f"valid: {valid_injection_methods}"
+            )
+
+        # Validate context position
+        if host_config.context_position not in valid_context_positions:
+            warnings.append(
+                f"{prefix}.context_position '{host_config.context_position}' unknown, "
+                f"valid: {valid_context_positions}"
+            )
+
+        # Validate format
+        if host_config.format not in valid_formats:
+            warnings.append(
+                f"{prefix}.format '{host_config.format}' unknown, "
+                f"valid: {valid_formats}"
+            )
+
+        # Validate token budget
+        if host_config.token_budget is not None and host_config.token_budget <= 0:
+            errors.append(f"{prefix}.token_budget must be positive, got {host_config.token_budget}")
+
+        # Validate max context tokens
+        if host_config.max_context_tokens is not None and host_config.max_context_tokens <= 0:
+            errors.append(f"{prefix}.max_context_tokens must be positive, got {host_config.max_context_tokens}")
+
+        # Warn if MCP disabled but injection method is mcp_tools
+        if not host_config.supports_mcp and host_config.injection_method == "mcp_tools":
+            warnings.append(
+                f"{prefix}: injection_method is 'mcp_tools' but supports_mcp is False"
+            )
 
 
 def load_and_validate_config(strict: bool = False) -> Tuple[AppConfig, List[str]]:
