@@ -72,6 +72,108 @@
 - **CLI-first control** – All key flows (add/search/context/timeline/endless/snapshot) are available via `ai-mem` so you can script onboarding via a single CLI.
 - **Scripts library** – `./scripts/run*.sh` cover full/stack/proxy setups for Gemini, Claude, Bedrock, Azure, and Anthropic deployments, ensuring the UI + MCP server is always upstream.
 
+## Advanced Features
+
+### Knowledge Graph
+
+Extract and traverse entity relationships from your observations:
+
+```bash
+# List entities in the knowledge graph
+ai-mem entities --name "Auth"
+
+# Find related entities (multi-hop traversal)
+ai-mem related-entities <entity-id> --depth 2
+
+# View graph statistics
+ai-mem graph-stats
+```
+
+Entity types: `file`, `function`, `class`, `module`, `endpoint`, `error`, `concept`, `technology`.
+
+### User-Level Memory
+
+Store global preferences that persist across projects:
+
+```bash
+# Add a user preference
+ai-mem user-add "I prefer TypeScript over JavaScript" --type preference
+
+# List user memories
+ai-mem user-list
+
+# Export/import for backup or sync
+ai-mem user-export -o ~/my-preferences.json
+ai-mem user-import -i ~/my-preferences.json
+```
+
+### Query Expansion
+
+Improve search recall with automatic synonym expansion:
+
+```bash
+# Expand a query with technical synonyms
+ai-mem expand-query "auth login"
+# → auth, authentication, authorization, login, signin, oauth...
+
+# Detect intent from a prompt
+ai-mem detect-intent "Fix the authentication bug in login.py"
+```
+
+### Inline Context Tags
+
+Embed memory queries directly in prompts using `<mem>` tags:
+
+```bash
+# Parse tags in a prompt
+ai-mem parse-tags 'Help with <mem query="auth" limit="5"/> implementation'
+
+# Expand tags with actual memory content
+ai-mem expand-tags 'Explain <mem query="config" mode="compact"/>'
+```
+
+### Token Budget & Context Preview
+
+Monitor and optimize token usage:
+
+```bash
+# Preview context without generating it
+ai-mem context --preview --model claude-3-opus
+
+# Check token budget warnings
+ai-mem context --query "auth" --model gpt-4
+```
+
+### Incremental Indexing
+
+Only reindex new or modified observations:
+
+```bash
+# View indexing statistics
+ai-mem index-stats
+
+# Incrementally reindex
+ai-mem reindex
+
+# Force full reindex
+ai-mem reindex --force
+```
+
+### Async Batch Embeddings
+
+For bulk operations, use the async batch embedder:
+
+```python
+from ai_mem.embeddings import AsyncBatchEmbedder, BatchConfig
+
+batch_embedder = AsyncBatchEmbedder(
+    provider,
+    config=BatchConfig(max_batch_size=32, max_concurrent_batches=4)
+)
+result = await batch_embedder.embed_batch(texts)
+print(f"Embedded {result.total_texts} texts in {result.elapsed_seconds:.2f}s")
+```
+
 ## Multi-LLM Architecture
 
 ai-mem is designed from the ground up to support **multiple LLMs simultaneously**. Whether you're using Claude Code in one terminal, Gemini CLI in another, and Cursor in your IDE, all observations flow into the same shared memory store.

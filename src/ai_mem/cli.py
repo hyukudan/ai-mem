@@ -3296,5 +3296,166 @@ def parse_tags_cmd(
     console.print(f"  {parsed.cleaned}")
 
 
+# =============================================================================
+# Indexing Commands
+# =============================================================================
+
+
+@app.command(name="index-stats")
+def index_stats_cmd(
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Show stats for all projects"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Show vector index statistics.
+
+    Displays information about indexing status:
+    - Total observations
+    - Indexed vs unindexed counts
+    - Index coverage percentage
+
+    Examples:
+        ai-mem index-stats
+        ai-mem index-stats --project /my/project
+        ai-mem index-stats -f json
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if all_projects:
+                current_project = None
+            elif project:
+                current_project = project
+            else:
+                current_project = os.getcwd()
+
+            stats = await manager.db.get_indexing_stats(project=current_project)
+
+            if output == "json":
+                print(json.dumps(stats, indent=2))
+                return
+
+            console.print("[bold]Index Statistics[/bold]")
+            console.print(f"  Total observations: {stats.get('total', 0)}")
+            console.print(f"  Indexed: {stats.get('indexed', 0)}")
+            console.print(f"  Never indexed: {stats.get('never_indexed', 0)}")
+            console.print(f"  Outdated: {stats.get('outdated', 0)}")
+            console.print(f"  Needs indexing: {stats.get('needs_indexing', 0)}")
+            console.print(f"  Coverage: {stats.get('index_coverage', 0):.1f}%")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="reindex")
+def reindex_cmd(
+    project: Optional[str] = typer.Option(None, help="Project path filter"),
+    all_projects: bool = typer.Option(False, help="Reindex all projects"),
+    batch_size: int = typer.Option(50, help="Batch size for processing"),
+    force: bool = typer.Option(False, help="Force reindex all (reset status first)"),
+    dry_run: bool = typer.Option(False, help="Show what would be reindexed"),
+):
+    """Incrementally reindex observations in the vector store.
+
+    Only processes observations that:
+    - Have never been indexed
+    - Have outdated index versions
+
+    Use --force to reindex everything.
+
+    Examples:
+        ai-mem reindex                    # Incremental reindex current project
+        ai-mem reindex --all-projects     # Reindex all projects
+        ai-mem reindex --force            # Force full reindex
+        ai-mem reindex --dry-run          # Preview what would be reindexed
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if all_projects:
+                current_project = None
+            elif project:
+                current_project = project
+            else:
+                current_project = os.getcwd()
+
+            if force and not dry_run:
+                reset_count = await manager.db.reset_index_status(project=current_project)
+                console.print(f"[yellow]Reset index status for {reset_count} observations[/yellow]")
+
+            # Get stats before
+            stats = await manager.db.get_indexing_stats(project=current_project)
+            needs_indexing = stats.get("needs_indexing", 0)
+
+            if needs_indexing == 0:
+                console.print("[green]All observations are already indexed[/green]")
+                return
+
+            if dry_run:
+                console.print(f"[cyan]Would reindex {needs_indexing} observations[/cyan]")
+                # Show sample
+                sample = await manager.db.get_unindexed_observations(
+                    project=current_project, limit=5
+                )
+                if sample:
+                    console.print("\nSample observations to index:")
+                    for obs in sample:
+                        summary = (obs.get("summary") or obs.get("content", ""))[:60]
+                        console.print(f"  - {obs['id'][:8]}: {summary}...")
+                return
+
+            console.print(f"[bold]Reindexing {needs_indexing} observations...[/bold]")
+
+            total_indexed = 0
+            while True:
+                # Get batch of unindexed observations
+                batch = await manager.db.get_unindexed_observations(
+                    project=current_project, limit=batch_size
+                )
+
+                if not batch:
+                    break
+
+                # Index each observation
+                indexed_ids = []
+                for obs_dict in batch:
+                    try:
+                        # Create Observation object and index it
+                        from .models import Observation
+                        obs = Observation(
+                            id=obs_dict["id"],
+                            session_id=obs_dict["session_id"],
+                            project=obs_dict["project"],
+                            type=obs_dict["type"],
+                            title=obs_dict.get("title"),
+                            content=obs_dict["content"],
+                            summary=obs_dict.get("summary"),
+                            created_at=obs_dict["created_at"],
+                            importance_score=obs_dict.get("importance_score", 0.5),
+                            tags=json.loads(obs_dict.get("tags") or "[]"),
+                        )
+                        await manager._index_observation(obs)
+                        indexed_ids.append(obs.id)
+                    except Exception as e:
+                        console.print(f"[red]Error indexing {obs_dict['id']}: {e}[/red]")
+
+                # Mark as indexed
+                if indexed_ids:
+                    await manager.db.mark_observations_indexed(indexed_ids)
+                    total_indexed += len(indexed_ids)
+                    console.print(f"  Indexed {total_indexed}/{needs_indexing}...")
+
+            console.print(f"[green]Reindexed {total_indexed} observations[/green]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     app()

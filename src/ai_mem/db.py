@@ -218,6 +218,13 @@ class DatabaseManager:
         if "last_accessed_at" not in existing:
             await self.conn.execute("ALTER TABLE observations ADD COLUMN last_accessed_at REAL")
             await self.conn.commit()
+        # Incremental indexing field (Phase 5)
+        if "last_indexed_at" not in existing:
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN last_indexed_at REAL")
+            await self.conn.commit()
+        if "index_version" not in existing:
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN index_version INTEGER DEFAULT 0")
+            await self.conn.commit()
 
     async def _ensure_asset_table(self) -> None:
         if not self.conn:
@@ -1983,4 +1990,192 @@ class DatabaseManager:
                 "obs_count": row["obs_count"],
             })
         return stats
+
+    # =========================================================================
+    # Incremental Indexing Methods
+    # =========================================================================
+
+    async def get_unindexed_observations(
+        self,
+        project: Optional[str] = None,
+        limit: int = 100,
+        current_version: int = 1,
+    ) -> List[Dict[str, Any]]:
+        """Get observations that haven't been indexed or need re-indexing.
+
+        Returns observations where:
+        - last_indexed_at is NULL (never indexed)
+        - OR index_version < current_version (outdated index)
+
+        Args:
+            project: Optional project filter
+            limit: Maximum number of observations to return
+            current_version: Current index version
+
+        Returns:
+            List of observation dicts needing indexing
+        """
+        if not self.conn:
+            return []
+
+        params: List[Any] = []
+        conditions = [
+            "(last_indexed_at IS NULL OR index_version < ?)"
+        ]
+        params.append(current_version)
+
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+
+        where_clause = " WHERE " + " AND ".join(conditions)
+        sql = f"""
+            SELECT id, session_id, project, type, title, content, summary,
+                   content_hash, created_at, importance_score, tags, metadata
+            FROM observations
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    async def mark_observations_indexed(
+        self,
+        obs_ids: List[str],
+        index_version: int = 1,
+    ) -> int:
+        """Mark observations as indexed.
+
+        Args:
+            obs_ids: List of observation IDs to mark
+            index_version: Index version number
+
+        Returns:
+            Number of observations updated
+        """
+        if not self.conn or not obs_ids:
+            return 0
+
+        now = time.time()
+        placeholders = ",".join("?" * len(obs_ids))
+        sql = f"""
+            UPDATE observations
+            SET last_indexed_at = ?, index_version = ?
+            WHERE id IN ({placeholders})
+        """
+        params = [now, index_version] + obs_ids
+
+        async with self.conn.execute(sql, params) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
+
+    async def get_indexing_stats(
+        self,
+        project: Optional[str] = None,
+        current_version: int = 1,
+    ) -> Dict[str, Any]:
+        """Get statistics about indexing status.
+
+        Args:
+            project: Optional project filter
+            current_version: Current index version
+
+        Returns:
+            Dict with indexing statistics
+        """
+        if not self.conn:
+            return {}
+
+        params: List[Any] = []
+        where_clause = ""
+        if project:
+            where_clause = "WHERE project = ?"
+            params.append(project)
+
+        # Total observations
+        async with self.conn.execute(
+            f"SELECT COUNT(*) as count FROM observations {where_clause}",
+            params
+        ) as cursor:
+            row = await cursor.fetchone()
+            total = row["count"] if row else 0
+
+        # Never indexed
+        params_unindexed = params.copy()
+        unindexed_where = "WHERE last_indexed_at IS NULL"
+        if project:
+            unindexed_where += " AND project = ?"
+            params_unindexed.append(project)
+
+        async with self.conn.execute(
+            f"SELECT COUNT(*) as count FROM observations {unindexed_where}",
+            params_unindexed[len(params):] if project else []
+        ) as cursor:
+            row = await cursor.fetchone()
+            never_indexed = row["count"] if row else 0
+
+        # Outdated index
+        params_outdated = [current_version]
+        outdated_where = "WHERE last_indexed_at IS NOT NULL AND index_version < ?"
+        if project:
+            outdated_where += " AND project = ?"
+            params_outdated.append(project)
+
+        async with self.conn.execute(
+            f"SELECT COUNT(*) as count FROM observations {outdated_where}",
+            params_outdated
+        ) as cursor:
+            row = await cursor.fetchone()
+            outdated = row["count"] if row else 0
+
+        # Up to date
+        up_to_date = total - never_indexed - outdated
+
+        return {
+            "total": total,
+            "indexed": up_to_date,
+            "never_indexed": never_indexed,
+            "outdated": outdated,
+            "needs_indexing": never_indexed + outdated,
+            "current_version": current_version,
+            "index_coverage": (up_to_date / total * 100) if total > 0 else 100.0,
+        }
+
+    async def reset_index_status(
+        self,
+        project: Optional[str] = None,
+    ) -> int:
+        """Reset indexing status for all observations.
+
+        Useful when rebuilding the entire index.
+
+        Args:
+            project: Optional project filter
+
+        Returns:
+            Number of observations reset
+        """
+        if not self.conn:
+            return 0
+
+        params: List[Any] = []
+        where_clause = ""
+        if project:
+            where_clause = "WHERE project = ?"
+            params.append(project)
+
+        sql = f"""
+            UPDATE observations
+            SET last_indexed_at = NULL, index_version = 0
+            {where_clause}
+        """
+
+        async with self.conn.execute(sql, params) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
 
