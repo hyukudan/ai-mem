@@ -17,7 +17,10 @@ from ..events import (
     ToolEvent,
     ToolExecution,
 )
+from ..logging_config import get_logger
 from .base import EventAdapter
+
+logger = get_logger("adapters.gemini")
 
 
 class GeminiAdapter(EventAdapter):
@@ -35,6 +38,7 @@ class GeminiAdapter(EventAdapter):
         - Nested: function_call.name, function_call.args
         - Response: function_response.name, function_response.response
         """
+        logger.debug("Parsing Gemini function call")
         # Try nested function_call format first
         function_call = payload.get("function_call", {})
         function_response = payload.get("function_response", {})

@@ -172,6 +172,8 @@ def should_skip_tool(
         return True
 
     name = str(tool_name).strip()
+    if not name:
+        return True
 
     # Check exact name match
     if skip_names and name in skip_names:

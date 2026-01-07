@@ -20,7 +20,10 @@ from ..events import (
     ToolEvent,
     ToolExecution,
 )
+from ..logging_config import get_logger
 from .base import EventAdapter
+
+logger = get_logger("adapters.generic")
 
 
 class GenericAdapter(EventAdapter):
@@ -48,8 +51,10 @@ class GenericAdapter(EventAdapter):
         - Anthropic: tool_use.name, tool_use.input
         - Direct schema: tool.name, tool.input, tool.output
         """
+        logger.debug(f"Parsing generic event for host: {self._host_name}")
         # Check if this is already an Event Schema v1 payload
         if "schema_version" in payload and "tool" in payload:
+            logger.debug("Detected Event Schema v1 format")
             return self._parse_schema_v1(payload)
 
         # Check for nested tool objects

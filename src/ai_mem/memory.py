@@ -12,11 +12,14 @@ from .chunking import chunk_text
 from .config import AppConfig, load_config, resolve_storage_paths
 from .db import DatabaseManager
 from .embeddings.base import EmbeddingProvider
+from .logging_config import get_logger
 from .models import Observation, ObservationAsset, ObservationIndex, Session
 from .providers.base import ChatMessage, ChatProvider, NoOpChatProvider
 from .privacy import strip_memory_tags
 from .structured import combine_extraction, StructuredData
 from .vector_store import build_vector_store
+
+logger = get_logger("memory")
 
 
 def _build_chat_provider(config: AppConfig) -> ChatProvider:
@@ -268,11 +271,17 @@ class MemoryManager:
         self._search_cache_misses: int = 0
 
     async def initialize(self) -> None:
+        logger.debug("Initializing MemoryManager")
+        start = time.perf_counter()
         await self.db.connect()
         await self.db.create_tables()
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"MemoryManager initialized in {duration_ms:.2f}ms")
 
     async def close(self) -> None:
+        logger.debug("Closing MemoryManager")
         await self.db.close()
+        logger.info("MemoryManager closed")
 
     def add_listener(self, listener: Callable[[Observation], None]) -> Callable[[], None]:
         with self._listener_lock:
@@ -490,6 +499,9 @@ class MemoryManager:
         event_id: Optional[str] = None,
         host: Optional[str] = None,
     ) -> Optional[Observation]:
+        logger.debug(f"Adding observation: type={obs_type}, project={project}, event_id={event_id}")
+        start = time.perf_counter()
+
         # Check idempotency: if event_id was already processed, return existing observation
         if event_id:
             existing_obs_id = await self.db.check_event_processed(event_id)
@@ -592,6 +604,8 @@ class MemoryManager:
         if event_id:
             await self.db.record_event_processed(event_id, obs.id, host or "unknown")
 
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.debug(f"Observation added in {duration_ms:.2f}ms: id={obs.id}, type={obs.type}")
         return obs
 
     def _normalize_assets(self, assets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -670,6 +684,9 @@ class MemoryManager:
         since: Optional[str] = None,
         tag_filters: Optional[List[str]] = None,
     ) -> List[ObservationIndex]:
+        logger.debug(f"Searching: query='{query}', project={project}, limit={limit}")
+        search_start = time.perf_counter()
+
         if date_start is None and since is not None:
             date_start = since
         start_ts = _parse_date(date_start)
@@ -768,6 +785,9 @@ class MemoryManager:
         if cache_key:
             self._record_cache_miss()
             self._set_search_cache(cache_key, final_results)
+
+        duration_ms = (time.perf_counter() - search_start) * 1000
+        logger.debug(f"Search completed in {duration_ms:.2f}ms, found {len(final_results)} results")
         return final_results
 
     async def _vector_search(
