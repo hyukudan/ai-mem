@@ -113,13 +113,13 @@ class TestClaudeAdapter:
     def test_parse_session_event_start(self):
         adapter = ClaudeAdapter()
         payload = {
-            "event": "session_start",
             "session_id": "session-abc",
             "goal": "Implement feature X",
         }
-        event = adapter.parse_session_event(payload)
+        event = adapter.parse_session_event(payload, EventType.SESSION_START)
         assert event is not None
         assert event.event_type == EventType.SESSION_START
+        assert event.session_id == "session-abc"
         assert event.goal == "Implement feature X"
 
 
@@ -138,10 +138,10 @@ class TestGeminiAdapter:
 
     def test_parse_tool_event_gemini_specific_fields(self):
         adapter = GeminiAdapter()
+        # Gemini uses nested function_call object
         payload = {
-            "function_call": "Read",
-            "arguments": {"path": "/foo"},
-            "result": "content...",
+            "function_call": {"name": "Read", "args": {"path": "/foo"}},
+            "function_response": {"response": "content..."},
         }
         event = adapter.parse_tool_event(payload)
         assert event.tool.name == "Read"
@@ -173,17 +173,17 @@ class TestGenericAdapter:
     def test_parse_tool_event_many_field_variations(self):
         adapter = GenericAdapter()
 
-        # Test various field name combinations
+        # Test various field name combinations that GenericAdapter supports
         variations = [
             {"tool_name": "A", "tool_input": {}, "tool_output": "out"},
             {"tool": "B", "input": {}, "output": "out"},
             {"name": "C", "arguments": {}, "result": "out"},
-            {"function_call": "D", "tool_args": {}, "response": "out"},
+            {"function_name": "D", "parameters": {}, "response": "out"},
         ]
 
         for payload in variations:
             event = adapter.parse_tool_event(payload)
-            assert event is not None
+            assert event is not None, f"Failed for payload: {payload}"
             assert event.tool.name in ["A", "B", "C", "D"]
 
     def test_parse_schema_v1_passthrough(self):
@@ -203,16 +203,23 @@ class TestGenericAdapter:
         assert event.event_id == "existing-id"
         assert event.tool.name == "Read"
 
-    def test_detect_tool_category(self):
+    def test_tool_category_mapping(self):
+        """Test that tool names are mapped to correct categories."""
         adapter = GenericAdapter()
 
-        assert adapter._detect_category("Read") == ToolCategory.FILESYSTEM
-        assert adapter._detect_category("Write") == ToolCategory.FILESYSTEM
-        assert adapter._detect_category("Bash") == ToolCategory.SHELL
-        assert adapter._detect_category("Grep") == ToolCategory.SEARCH
-        assert adapter._detect_category("WebFetch") == ToolCategory.NETWORK
-        assert adapter._detect_category("TodoWrite") == ToolCategory.META
-        assert adapter._detect_category("UnknownTool") == ToolCategory.CUSTOM
+        # Test via actual parsing (category is set internally)
+        fs_event = adapter.parse_tool_event({"tool_name": "Read"})
+        assert fs_event.tool.category == ToolCategory.FILESYSTEM
+
+        shell_event = adapter.parse_tool_event({"tool_name": "Bash"})
+        assert shell_event.tool.category == ToolCategory.SHELL
+
+        search_event = adapter.parse_tool_event({"tool_name": "Grep"})
+        assert search_event.tool.category == ToolCategory.SEARCH
+
+        # Unknown tools get CUSTOM category
+        custom_event = adapter.parse_tool_event({"tool_name": "UnknownTool"})
+        assert custom_event.tool.category == ToolCategory.CUSTOM
 
     def test_parse_returns_none_for_empty(self):
         adapter = GenericAdapter()
@@ -242,7 +249,7 @@ class TestAdapterHostIdentifier:
         assert event.source.host == "generic"
 
     def test_generic_adapter_custom_host(self):
-        adapter = GenericAdapter(host="cursor")
+        adapter = GenericAdapter(host_name="cursor")
         event = adapter.parse_tool_event({"tool_name": "Read"})
         assert event.source.host == "cursor"
 

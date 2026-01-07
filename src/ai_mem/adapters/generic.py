@@ -115,12 +115,11 @@ class GenericAdapter(EventAdapter):
         else:
             category = self._map_tool_category(str(tool_name))
 
-        return ToolEvent(
-            event_id=payload.get("event_id"),
-            session_id=self._extract_session_id(payload),
-            timestamp=payload.get("timestamp"),
-            source=self._extract_source(payload),
-            tool=ToolExecution(
+        # Build kwargs, only including event_id and timestamp if present
+        kwargs: Dict[str, Any] = {
+            "session_id": self._extract_session_id(payload),
+            "source": self._extract_source(payload),
+            "tool": ToolExecution(
                 name=str(tool_name),
                 category=category,
                 input=tool_input,
@@ -129,10 +128,16 @@ class GenericAdapter(EventAdapter):
                 latency_ms=latency,
                 error=str(error) if error else None,
             ),
-            context=self._extract_context(payload),
-            privacy=self._extract_privacy(payload),
-            metadata=payload.get("metadata", {}),
-        )
+            "context": self._extract_context(payload),
+            "privacy": self._extract_privacy(payload),
+            "metadata": payload.get("metadata", {}),
+        }
+        if payload.get("event_id"):
+            kwargs["event_id"] = payload["event_id"]
+        if payload.get("timestamp"):
+            kwargs["timestamp"] = payload["timestamp"]
+
+        return ToolEvent(**kwargs)
 
     def _parse_flat_fields(self, payload: Dict[str, Any]) -> Optional[ToolEvent]:
         """Parse a payload with flat field structure."""
@@ -175,12 +180,11 @@ class GenericAdapter(EventAdapter):
             except (ValueError, TypeError):
                 latency = None
 
-        return ToolEvent(
-            event_id=payload.get("event_id"),
-            session_id=self._extract_session_id(payload),
-            timestamp=payload.get("timestamp"),
-            source=self._extract_source(payload),
-            tool=ToolExecution(
+        # Build kwargs, only including event_id and timestamp if present
+        kwargs: Dict[str, Any] = {
+            "session_id": self._extract_session_id(payload),
+            "source": self._extract_source(payload),
+            "tool": ToolExecution(
                 name=str(tool_name),
                 category=self._map_tool_category(str(tool_name)),
                 input=tool_input,
@@ -189,10 +193,17 @@ class GenericAdapter(EventAdapter):
                 latency_ms=latency,
                 error=str(error) if error else None,
             ),
-            context=self._extract_context(payload),
-            privacy=self._extract_privacy(payload),
-            metadata=payload.get("metadata", {}),
-        )
+            "context": self._extract_context(payload),
+            "privacy": self._extract_privacy(payload),
+            "metadata": payload.get("metadata", {}),
+        }
+        # Only set if present (let defaults apply otherwise)
+        if payload.get("event_id"):
+            kwargs["event_id"] = payload["event_id"]
+        if payload.get("timestamp"):
+            kwargs["timestamp"] = payload["timestamp"]
+
+        return ToolEvent(**kwargs)
 
     def _extract_source(self, payload: Dict[str, Any]) -> EventSource:
         """Extract source information from payload."""

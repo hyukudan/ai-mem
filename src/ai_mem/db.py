@@ -144,7 +144,10 @@ class DatabaseManager:
             # Optimization: Use FTS index for faster tag filtering
             # We construct a MATCH query like: "tag1" OR "tag2"
             # We wrap tags in double quotes for phrase matching to be safe
-            quoted_tags = [f'"{tag.replace("\"", "\"\"")}"' for tag in valid_tags]
+            def quote_tag(tag: str) -> str:
+                escaped = tag.replace('"', '""')
+                return f'"{escaped}"'
+            quoted_tags = [quote_tag(tag) for tag in valid_tags]
             match_query = " OR ".join(quoted_tags)
             params.append(match_query)
             return "observations.rowid IN (SELECT rowid FROM observations_fts WHERE tags MATCH ?)"
@@ -205,14 +208,16 @@ class DatabaseManager:
         """Create table for tracking processed event IDs (idempotency)."""
         if not self.conn:
             return
+        # No FK constraint - we just track the mapping for idempotency
+        # The observation might be deleted later, but we still want to
+        # remember the event_id was processed to avoid re-ingestion
         await self.conn.execute(
             """
             CREATE TABLE IF NOT EXISTS event_idempotency (
                 event_id TEXT PRIMARY KEY,
                 observation_id TEXT,
                 host TEXT,
-                processed_at REAL NOT NULL,
-                FOREIGN KEY(observation_id) REFERENCES observations(id) ON DELETE SET NULL
+                processed_at REAL NOT NULL
             )
             """
         )
