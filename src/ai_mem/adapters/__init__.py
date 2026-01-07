@@ -45,7 +45,7 @@ def get_adapter(host: str = None) -> EventAdapter:
 
     host_lower = host.lower().strip()
 
-    if host_lower in ("claude", "claude-code", "anthropic"):
+    if host_lower in ("claude", "claude-code", "claude-desktop", "anthropic"):
         return ClaudeAdapter()
     elif host_lower in ("gemini", "gemini-cli", "google", "vertex"):
         return GeminiAdapter()
