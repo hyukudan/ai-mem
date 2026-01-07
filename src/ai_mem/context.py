@@ -1,4 +1,5 @@
 import math
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Set
 
@@ -19,6 +20,168 @@ DISCLOSURE_TOKEN_TARGETS = {
     "full": 2000,      # All layers
     "auto": None,      # Determined by token budget
 }
+
+# Default context window sizes for common models
+MODEL_CONTEXT_WINDOWS = {
+    # Anthropic
+    "claude-3-opus": 200000,
+    "claude-3-sonnet": 200000,
+    "claude-3-haiku": 200000,
+    "claude-opus-4": 200000,
+    "claude-sonnet-4": 200000,
+    # OpenAI
+    "gpt-4-turbo": 128000,
+    "gpt-4": 8192,
+    "gpt-4o": 128000,
+    "gpt-3.5-turbo": 16384,
+    # Google
+    "gemini-pro": 32000,
+    "gemini-1.5-pro": 1000000,
+    "gemini-1.5-flash": 1000000,
+    # Default
+    "default": 16000,
+}
+
+# Warning thresholds (percentage of context window)
+TOKEN_WARNING_THRESHOLDS = {
+    "info": 0.15,      # >15% - informational
+    "warning": 0.30,   # >30% - warning
+    "critical": 0.50,  # >50% - critical warning
+}
+
+
+@dataclass
+class TokenBudgetWarning:
+    """Warning about token budget usage."""
+    level: str  # "info", "warning", "critical"
+    message: str
+    tokens_used: int
+    tokens_budget: int
+    percentage: float
+    recommendations: List[str]
+
+
+def get_model_context_window(model: Optional[str] = None) -> int:
+    """Get the context window size for a model.
+
+    Args:
+        model: Model identifier (e.g., "claude-3-opus", "gpt-4")
+
+    Returns:
+        Context window size in tokens
+    """
+    if not model:
+        return MODEL_CONTEXT_WINDOWS["default"]
+
+    model_lower = model.lower()
+
+    # Exact match
+    if model_lower in MODEL_CONTEXT_WINDOWS:
+        return MODEL_CONTEXT_WINDOWS[model_lower]
+
+    # Partial match
+    for key, value in MODEL_CONTEXT_WINDOWS.items():
+        if key in model_lower or model_lower in key:
+            return value
+
+    return MODEL_CONTEXT_WINDOWS["default"]
+
+
+def check_token_budget(
+    tokens_used: int,
+    model: Optional[str] = None,
+    max_budget: Optional[int] = None,
+    context_percentage: float = 0.25,  # Recommend using max 25% for context
+) -> Optional[TokenBudgetWarning]:
+    """Check if token usage exceeds recommended thresholds.
+
+    Args:
+        tokens_used: Number of tokens used for context
+        model: Model identifier for context window lookup
+        max_budget: Override max budget (ignores model lookup)
+        context_percentage: Target percentage of context window for memory
+
+    Returns:
+        TokenBudgetWarning if threshold exceeded, None otherwise
+    """
+    if max_budget:
+        budget = max_budget
+    else:
+        context_window = get_model_context_window(model)
+        budget = int(context_window * context_percentage)
+
+    if budget <= 0:
+        return None
+
+    percentage = tokens_used / budget
+
+    # Determine warning level
+    if percentage >= TOKEN_WARNING_THRESHOLDS["critical"]:
+        level = "critical"
+    elif percentage >= TOKEN_WARNING_THRESHOLDS["warning"]:
+        level = "warning"
+    elif percentage >= TOKEN_WARNING_THRESHOLDS["info"]:
+        level = "info"
+    else:
+        return None
+
+    # Generate recommendations based on level
+    recommendations = []
+
+    if level == "critical":
+        recommendations.extend([
+            "Switch to 'compact' disclosure mode for ~10x token savings",
+            "Reduce --total and --full counts",
+            "Use more specific search queries to narrow results",
+            "Enable compression with --compression-level 0.7",
+        ])
+    elif level == "warning":
+        recommendations.extend([
+            "Consider using 'compact' or 'standard' disclosure mode",
+            "Reduce --total count to limit observations",
+            "Enable deduplication to merge similar observations",
+        ])
+    else:  # info
+        recommendations.extend([
+            "Current usage is within acceptable limits",
+            "Consider monitoring if context grows further",
+        ])
+
+    # Format message
+    if level == "critical":
+        message = f"CRITICAL: Context using {percentage:.0%} of budget ({tokens_used}/{budget} tokens)"
+    elif level == "warning":
+        message = f"WARNING: Context using {percentage:.0%} of budget ({tokens_used}/{budget} tokens)"
+    else:
+        message = f"INFO: Context using {percentage:.0%} of budget ({tokens_used}/{budget} tokens)"
+
+    return TokenBudgetWarning(
+        level=level,
+        message=message,
+        tokens_used=tokens_used,
+        tokens_budget=budget,
+        percentage=percentage * 100,
+        recommendations=recommendations,
+    )
+
+
+def format_token_warning(warning: TokenBudgetWarning) -> str:
+    """Format a token budget warning for display.
+
+    Args:
+        warning: TokenBudgetWarning object
+
+    Returns:
+        Formatted warning string
+    """
+    lines = [warning.message]
+
+    if warning.recommendations:
+        lines.append("Recommendations:")
+        for rec in warning.recommendations[:3]:  # Top 3 recommendations
+            lines.append(f"  - {rec}")
+
+    return "\n".join(lines)
 
 
 def estimate_tokens(text: str) -> int:

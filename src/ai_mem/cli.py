@@ -753,9 +753,13 @@ def context(
         None, "--show-tokens/--hide-tokens", help="Toggle token estimates"
     ),
     no_wrap: bool = typer.Option(False, help="Disable <ai-mem-context> wrapper"),
+    preview: bool = typer.Option(False, "--preview", "-p", help="Preview mode: show metadata without full context"),
+    model: Optional[str] = typer.Option(None, help="Model for token budget calculation (e.g., claude-3-opus)"),
     output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
 ):
     """Generate formatted context for injection into other LLMs."""
+    from .context import check_token_budget, format_token_warning
+
     async def _run():
         manager = get_memory_manager()
         await manager.initialize()
@@ -782,10 +786,66 @@ def context(
                 full_field=full_field,
                 show_tokens=show_tokens,
                 wrap=not no_wrap,
+                model=model,
             )
-            if output == "json":
-                print(json.dumps({"context": context_text, "metadata": meta}, indent=2))
+
+            # Check token budget and generate warnings
+            tokens_used = meta.get("tokens", {}).get("total", 0)
+            warning = check_token_budget(tokens_used, model=model)
+
+            if preview:
+                # Preview mode: show metadata without full context
+                preview_data = {
+                    "mode": "preview",
+                    "project": meta.get("project"),
+                    "query": query,
+                    "disclosure_mode": meta.get("disclosure_mode"),
+                    "index_count": meta.get("index_count", 0),
+                    "full_count": meta.get("full_count", 0),
+                    "tokens": meta.get("tokens", {}),
+                    "economics": meta.get("economics", {}),
+                    "dedup_count": meta.get("dedup_count", 0),
+                    "warning": {
+                        "level": warning.level,
+                        "message": warning.message,
+                        "percentage": warning.percentage,
+                        "recommendations": warning.recommendations,
+                    } if warning else None,
+                }
+
+                if output == "json":
+                    print(json.dumps(preview_data, indent=2))
+                else:
+                    console.print("[bold]Context Preview[/bold]")
+                    console.print(f"  Project: {preview_data['project']}")
+                    console.print(f"  Query: {query or 'none'}")
+                    console.print(f"  Mode: {preview_data['disclosure_mode']}")
+                    console.print(f"  Index items: {preview_data['index_count']}")
+                    console.print(f"  Full items: {preview_data['full_count']}")
+                    console.print(f"  Tokens: ~{tokens_used}")
+                    if warning:
+                        style = "red" if warning.level == "critical" else "yellow" if warning.level == "warning" else "cyan"
+                        console.print(f"\n[{style}]{format_token_warning(warning)}[/{style}]")
+                    console.print("\nRun without --preview to see full context")
                 return
+
+            # Full output mode
+            if output == "json":
+                result = {"context": context_text, "metadata": meta}
+                if warning:
+                    result["warning"] = {
+                        "level": warning.level,
+                        "message": warning.message,
+                        "recommendations": warning.recommendations,
+                    }
+                print(json.dumps(result, indent=2))
+                return
+
+            # Show warning before context if applicable
+            if warning and warning.level in ("warning", "critical"):
+                style = "red" if warning.level == "critical" else "yellow"
+                console.print(f"[{style}]{format_token_warning(warning)}[/{style}]\n")
+
             console.print(context_text)
         finally:
             await manager.close()
@@ -3034,6 +3094,206 @@ def user_count():
             await manager.close()
 
     asyncio.run(_run())
+
+
+# =============================================================================
+# Query Expansion Commands
+# =============================================================================
+
+
+@app.command(name="expand-query")
+def expand_query_cmd(
+    query: str = typer.Argument(..., help="Query to expand"),
+    max_synonyms: int = typer.Option(2, help="Max synonyms per term"),
+    max_queries: int = typer.Option(5, help="Max total query variants"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Expand a search query with synonyms and variations.
+
+    This LLM-agnostic expansion adds technical synonyms and case variations
+    to improve recall in memory searches.
+
+    Examples:
+        ai-mem expand-query "auth login"
+        ai-mem expand-query "get_user" --max-synonyms 3
+        ai-mem expand-query "database query" -f json
+    """
+    from .intent import expand_query, ExpandedQuery
+
+    result = expand_query(query, max_synonyms_per_term=max_synonyms, max_total_terms=max_queries * 3)
+
+    if output == "json":
+        print(json.dumps({
+            "original": result.original,
+            "expanded_terms": result.expanded_terms,
+            "all_queries": result.all_queries,
+            "expansion_count": result.expansion_count,
+        }, indent=2))
+        return
+
+    console.print(f"[bold]Query Expansion[/bold]")
+    console.print(f"  Original: {result.original}")
+    console.print(f"  Expanded terms: {', '.join(result.expanded_terms)}")
+    console.print(f"  Variants ({len(result.all_queries)}):")
+    for i, q in enumerate(result.all_queries, 1):
+        console.print(f"    {i}. {q}")
+
+
+@app.command(name="detect-intent")
+def detect_intent_cmd(
+    prompt: str = typer.Argument(..., help="Prompt to analyze"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Analyze a prompt to detect intent and extract keywords.
+
+    Shows what entities, concepts, and keywords would be extracted
+    for memory context retrieval.
+
+    Examples:
+        ai-mem detect-intent "Fix the authentication bug in login.py"
+        ai-mem detect-intent "How does the database connection work?" -f json
+    """
+    from .intent import detect_intent, should_inject_context
+
+    intent = detect_intent(prompt)
+    should_inject, reason = should_inject_context(prompt)
+
+    if output == "json":
+        print(json.dumps({
+            "action": intent.action,
+            "entities": intent.entities,
+            "concepts": intent.concepts,
+            "keywords": intent.keywords,
+            "query": intent.query,
+            "should_inject_context": should_inject,
+            "inject_reason": reason,
+        }, indent=2))
+        return
+
+    console.print(f"[bold]Intent Detection[/bold]")
+    console.print(f"  Action: {intent.action or 'none'}")
+    console.print(f"  Entities: {', '.join(intent.entities) if intent.entities else 'none'}")
+    console.print(f"  Concepts: {', '.join(intent.concepts) if intent.concepts else 'none'}")
+    console.print(f"  Keywords: {', '.join(intent.keywords) if intent.keywords else 'none'}")
+    console.print(f"  Generated query: {intent.query or 'none'}")
+    console.print(f"\n  Should inject context: {'Yes' if should_inject else 'No'}")
+    console.print(f"  Reason: {reason}")
+
+
+# =============================================================================
+# Inline Tags Commands
+# =============================================================================
+
+
+@app.command(name="expand-tags")
+def expand_tags_cmd(
+    prompt: str = typer.Argument(..., help="Prompt with <mem> tags to expand"),
+    project: Optional[str] = typer.Option(None, help="Default project for queries"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Expand inline <mem> tags in a prompt with actual memory content.
+
+    Recognizes tags like:
+        <mem query="auth"/>
+        <mem query="database" limit="5" mode="compact"/>
+        <mem query="user" type="decision" tags="api,backend"/>
+
+    Examples:
+        ai-mem expand-tags 'Help with <mem query="auth"/> implementation'
+        ai-mem expand-tags 'Explain <mem query="config" limit="3"/>' --project /my/project
+    """
+    from .inline_tags import expand_mem_tags, has_mem_tags, format_expansion_summary
+
+    if not has_mem_tags(prompt):
+        console.print("[yellow]No <mem> tags found in prompt[/yellow]")
+        console.print(f"Original prompt: {prompt}")
+        return
+
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            expanded, expansions = await expand_mem_tags(
+                prompt,
+                manager,
+                default_project=project or os.getcwd(),
+            )
+
+            if output == "json":
+                print(json.dumps({
+                    "original": prompt,
+                    "expanded": expanded,
+                    "expansions": expansions,
+                }, indent=2))
+                return
+
+            console.print(f"[bold]Tag Expansion Summary[/bold]")
+            console.print(format_expansion_summary(expansions))
+            console.print(f"\n[bold]Expanded Prompt:[/bold]")
+            console.print(expanded)
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="parse-tags")
+def parse_tags_cmd(
+    prompt: str = typer.Argument(..., help="Prompt with <mem> tags to parse"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Parse and display <mem> tags in a prompt without expanding them.
+
+    Shows what tags were found and their attributes.
+
+    Examples:
+        ai-mem parse-tags 'Query <mem query="auth" limit="5"/> for context'
+        ai-mem parse-tags '<mem query="user" type="decision"/>' -f json
+    """
+    from .inline_tags import parse_prompt
+
+    parsed = parse_prompt(prompt)
+
+    if output == "json":
+        print(json.dumps({
+            "original": parsed.original,
+            "has_tags": parsed.has_tags,
+            "cleaned": parsed.cleaned,
+            "tags": [
+                {
+                    "raw": t.raw,
+                    "query": t.query,
+                    "limit": t.limit,
+                    "project": t.project,
+                    "obs_type": t.obs_type,
+                    "tags": t.tags,
+                    "mode": t.mode,
+                }
+                for t in parsed.tags
+            ],
+        }, indent=2))
+        return
+
+    if not parsed.has_tags:
+        console.print("[yellow]No <mem> tags found in prompt[/yellow]")
+        return
+
+    console.print(f"[bold]Found {len(parsed.tags)} tag(s)[/bold]")
+    for i, tag in enumerate(parsed.tags, 1):
+        console.print(f"\n  Tag {i}: {tag.raw[:50]}...")
+        console.print(f"    query: {tag.query or 'none'}")
+        console.print(f"    limit: {tag.limit}")
+        console.print(f"    mode: {tag.mode}")
+        if tag.project:
+            console.print(f"    project: {tag.project}")
+        if tag.obs_type:
+            console.print(f"    type: {tag.obs_type}")
+        if tag.tags:
+            console.print(f"    tags: {', '.join(tag.tags)}")
+
+    console.print(f"\n[bold]Cleaned prompt:[/bold]")
+    console.print(f"  {parsed.cleaned}")
 
 
 if __name__ == "__main__":
