@@ -15,6 +15,9 @@ ObservationType = Literal[
     "file_content",
     "note",
     "summary",
+    # User-level memory types (Phase 4)
+    "preference",
+    "convention",
 ]
 
 class ObservationAsset(BaseModel):
@@ -54,6 +57,7 @@ class ObservationIndex(BaseModel):
     fts_score: Optional[float] = None
     vector_score: Optional[float] = None
     recency_factor: Optional[float] = None
+    rerank_score: Optional[float] = None  # Two-stage retrieval rerank score
 
 class Session(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))

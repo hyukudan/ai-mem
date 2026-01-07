@@ -154,6 +154,7 @@ class DatabaseManager:
         await self._ensure_columns()
         await self._ensure_asset_table()
         await self._ensure_event_idempotency_table()
+        await self._ensure_entity_tables()
 
     def _tag_clause(
         self,
@@ -200,12 +201,22 @@ class DatabaseManager:
         async with self.conn.execute("PRAGMA table_info(observations)") as cursor:
             rows = await cursor.fetchall()
             existing = {row["name"] for row in rows}
-        
+
         if "content_hash" not in existing:
             await self.conn.execute("ALTER TABLE observations ADD COLUMN content_hash TEXT")
             await self.conn.commit()
         if "diff" not in existing:
             await self.conn.execute("ALTER TABLE observations ADD COLUMN diff TEXT")
+            await self.conn.commit()
+        # Memory consolidation fields (Phase 3)
+        if "superseded_by" not in existing:
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN superseded_by TEXT")
+            await self.conn.commit()
+        if "access_count" not in existing:
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN access_count INTEGER DEFAULT 0")
+            await self.conn.commit()
+        if "last_accessed_at" not in existing:
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN last_accessed_at REAL")
             await self.conn.commit()
 
     async def _ensure_asset_table(self) -> None:
@@ -255,6 +266,386 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_event_idempotency_host ON event_idempotency(host)"
         )
         await self.conn.commit()
+
+    async def _ensure_entity_tables(self) -> None:
+        """Create tables for entity graph (Phase 4)."""
+        if not self.conn:
+            return
+        # Entities table
+        await self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS entities (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                project TEXT,
+                metadata TEXT,
+                mention_count INTEGER DEFAULT 1,
+                first_seen REAL,
+                last_seen REAL,
+                UNIQUE(name, entity_type, project)
+            )
+            """
+        )
+        # Entity relations table
+        await self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS entity_relations (
+                id TEXT PRIMARY KEY,
+                source_entity_id TEXT NOT NULL,
+                target_entity_id TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                observation_id TEXT,
+                confidence REAL DEFAULT 1.0,
+                metadata TEXT,
+                created_at REAL,
+                FOREIGN KEY(source_entity_id) REFERENCES entities(id),
+                FOREIGN KEY(target_entity_id) REFERENCES entities(id)
+            )
+            """
+        )
+        # Indexes for entity queries
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(entity_type)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entities_project ON entities(project)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_relations_source ON entity_relations(source_entity_id)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_relations_target ON entity_relations(target_entity_id)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_relations_type ON entity_relations(relation_type)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_entity_relations_obs ON entity_relations(observation_id)"
+        )
+        await self.conn.commit()
+
+    # ==================== Entity Graph Methods (Phase 4) ====================
+
+    async def get_or_create_entity(
+        self,
+        name: str,
+        entity_type: str,
+        project: Optional[str] = None,
+        created_at: Optional[float] = None,
+    ) -> Optional[str]:
+        """Get existing entity or create new one.
+
+        Args:
+            name: Entity name
+            entity_type: Entity type
+            project: Project identifier
+            created_at: Timestamp
+
+        Returns:
+            Entity ID
+        """
+        if not self.conn:
+            return None
+
+        now = created_at or time.time()
+
+        # Try to find existing entity
+        async with self.conn.execute(
+            """
+            SELECT id FROM entities
+            WHERE name = ? AND entity_type = ? AND (project = ? OR project IS NULL)
+            """,
+            (name, entity_type, project),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                # Update mention count and last_seen
+                await self.conn.execute(
+                    """
+                    UPDATE entities
+                    SET mention_count = mention_count + 1, last_seen = ?
+                    WHERE id = ?
+                    """,
+                    (now, row["id"]),
+                )
+                await self.conn.commit()
+                return row["id"]
+
+        # Create new entity
+        import uuid
+        entity_id = str(uuid.uuid4())
+        await self.conn.execute(
+            """
+            INSERT INTO entities (id, name, entity_type, project, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (entity_id, name, entity_type, project, now, now),
+        )
+        await self.conn.commit()
+        return entity_id
+
+    async def create_entity_relation(
+        self,
+        source_entity_id: str,
+        target_entity_id: str,
+        relation_type: str,
+        observation_id: Optional[str] = None,
+        confidence: float = 1.0,
+        created_at: Optional[float] = None,
+    ) -> Optional[str]:
+        """Create a relation between entities.
+
+        Args:
+            source_entity_id: Source entity ID
+            target_entity_id: Target entity ID
+            relation_type: Type of relation
+            observation_id: Source observation ID
+            confidence: Confidence score
+            created_at: Timestamp
+
+        Returns:
+            Relation ID
+        """
+        if not self.conn:
+            return None
+
+        import uuid
+        relation_id = str(uuid.uuid4())
+        now = created_at or time.time()
+
+        await self.conn.execute(
+            """
+            INSERT OR IGNORE INTO entity_relations
+            (id, source_entity_id, target_entity_id, relation_type, observation_id, confidence, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (relation_id, source_entity_id, target_entity_id, relation_type, observation_id, confidence, now),
+        )
+        await self.conn.commit()
+        return relation_id
+
+    async def get_related_entities(
+        self,
+        entity_id: str,
+        relation_types: Optional[List[str]] = None,
+        max_depth: int = 1,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Get entities related to a given entity.
+
+        Args:
+            entity_id: Starting entity ID
+            relation_types: Filter by relation types
+            max_depth: Maximum traversal depth
+            limit: Maximum entities to return
+
+        Returns:
+            List of related entity dicts
+        """
+        if not self.conn:
+            return []
+
+        results: List[Dict[str, Any]] = []
+        visited: set = {entity_id}
+        current_ids = [entity_id]
+
+        for depth in range(max_depth):
+            if not current_ids:
+                break
+
+            placeholders = ",".join("?" * len(current_ids))
+            params: List[Any] = list(current_ids)
+
+            type_filter = ""
+            if relation_types:
+                type_placeholders = ",".join("?" * len(relation_types))
+                type_filter = f"AND r.relation_type IN ({type_placeholders})"
+                params.extend(relation_types)
+
+            # Get outgoing relations
+            sql = f"""
+                SELECT DISTINCT e.id, e.name, e.entity_type, e.project,
+                       e.mention_count, r.relation_type, {depth + 1} as depth
+                FROM entity_relations r
+                JOIN entities e ON r.target_entity_id = e.id
+                WHERE r.source_entity_id IN ({placeholders}) {type_filter}
+                UNION
+                SELECT DISTINCT e.id, e.name, e.entity_type, e.project,
+                       e.mention_count, r.relation_type, {depth + 1} as depth
+                FROM entity_relations r
+                JOIN entities e ON r.source_entity_id = e.id
+                WHERE r.target_entity_id IN ({placeholders}) {type_filter}
+            """
+            params.extend(current_ids)
+            if relation_types:
+                params.extend(relation_types)
+
+            next_ids = []
+            async with self.conn.execute(sql, params) as cursor:
+                rows = await cursor.fetchall()
+                for row in rows:
+                    if row["id"] not in visited and len(results) < limit:
+                        visited.add(row["id"])
+                        next_ids.append(row["id"])
+                        results.append({
+                            "id": row["id"],
+                            "name": row["name"],
+                            "entity_type": row["entity_type"],
+                            "project": row["project"],
+                            "mention_count": row["mention_count"],
+                            "relation_type": row["relation_type"],
+                            "depth": row["depth"],
+                        })
+
+            current_ids = next_ids
+
+        return results
+
+    async def search_entities(
+        self,
+        query: str,
+        project: Optional[str] = None,
+        entity_types: Optional[List[str]] = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Search for entities by name.
+
+        Args:
+            query: Search query
+            project: Filter by project
+            entity_types: Filter by types
+            limit: Maximum entities to return
+
+        Returns:
+            List of matching entity dicts
+        """
+        if not self.conn:
+            return []
+
+        conditions = ["name LIKE ?"]
+        params: List[Any] = [f"%{query}%"]
+
+        if project:
+            conditions.append("(project = ? OR project IS NULL)")
+            params.append(project)
+
+        if entity_types:
+            placeholders = ",".join("?" * len(entity_types))
+            conditions.append(f"entity_type IN ({placeholders})")
+            params.extend(entity_types)
+
+        sql = f"""
+            SELECT id, name, entity_type, project, mention_count, first_seen, last_seen
+            FROM entities
+            WHERE {" AND ".join(conditions)}
+            ORDER BY mention_count DESC, last_seen DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "entity_type": row["entity_type"],
+                "project": row["project"],
+                "mention_count": row["mention_count"],
+                "first_seen": row["first_seen"],
+                "last_seen": row["last_seen"],
+            }
+            for row in rows
+        ]
+
+    async def get_entity_observations(
+        self,
+        entity_id: str,
+        limit: int = 20,
+    ) -> List[str]:
+        """Get observation IDs that mention an entity.
+
+        Args:
+            entity_id: Entity ID
+            limit: Maximum observations to return
+
+        Returns:
+            List of observation IDs
+        """
+        if not self.conn:
+            return []
+
+        sql = """
+            SELECT DISTINCT observation_id
+            FROM entity_relations
+            WHERE (source_entity_id = ? OR target_entity_id = ?)
+              AND observation_id IS NOT NULL
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        async with self.conn.execute(sql, (entity_id, entity_id, limit)) as cursor:
+            rows = await cursor.fetchall()
+
+        return [row["observation_id"] for row in rows]
+
+    async def get_graph_stats(
+        self,
+        project: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get statistics about the entity graph.
+
+        Args:
+            project: Filter by project
+
+        Returns:
+            Dict with graph statistics
+        """
+        if not self.conn:
+            return {"entities": 0, "relations": 0, "by_type": {}}
+
+        # Count entities
+        if project:
+            async with self.conn.execute(
+                "SELECT COUNT(*) as count FROM entities WHERE project = ? OR project IS NULL",
+                (project,)
+            ) as cursor:
+                row = await cursor.fetchone()
+                entity_count = row["count"] if row else 0
+        else:
+            async with self.conn.execute("SELECT COUNT(*) as count FROM entities") as cursor:
+                row = await cursor.fetchone()
+                entity_count = row["count"] if row else 0
+
+        # Count relations
+        async with self.conn.execute("SELECT COUNT(*) as count FROM entity_relations") as cursor:
+            row = await cursor.fetchone()
+            relation_count = row["count"] if row else 0
+
+        # Count by type
+        async with self.conn.execute(
+            "SELECT entity_type, COUNT(*) as count FROM entities GROUP BY entity_type"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            by_type = {row["entity_type"]: row["count"] for row in rows}
+
+        # Count relations by type
+        async with self.conn.execute(
+            "SELECT relation_type, COUNT(*) as count FROM entity_relations GROUP BY relation_type"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            relations_by_type = {row["relation_type"]: row["count"] for row in rows}
+
+        return {
+            "entities": entity_count,
+            "relations": relation_count,
+            "entities_by_type": by_type,
+            "relations_by_type": relations_by_type,
+        }
 
     async def check_event_processed(self, event_id: str) -> Optional[str]:
         """Check if an event ID has already been processed.
@@ -1383,6 +1774,171 @@ class DatabaseManager:
             "start_time": row["start_time"],
             "end_time": row["end_time"],
         }
+
+    async def increment_access_count(self, obs_id: str) -> None:
+        """Increment the access count for an observation.
+
+        Args:
+            obs_id: The observation ID to update
+        """
+        if not self.conn:
+            return
+        await self.conn.execute(
+            """
+            UPDATE observations
+            SET access_count = COALESCE(access_count, 0) + 1,
+                last_accessed_at = ?
+            WHERE id = ?
+            """,
+            (time.time(), obs_id),
+        )
+        await self.conn.commit()
+
+    async def mark_superseded(
+        self,
+        obs_id: str,
+        superseded_by: str,
+    ) -> int:
+        """Mark an observation as superseded by another.
+
+        Args:
+            obs_id: The observation ID to mark as superseded
+            superseded_by: The ID of the observation that supersedes this one
+
+        Returns:
+            Number of rows updated
+        """
+        if not self.conn:
+            return 0
+        async with self.conn.execute(
+            """
+            UPDATE observations
+            SET superseded_by = ?
+            WHERE id = ? AND superseded_by IS NULL
+            """,
+            (superseded_by, obs_id),
+        ) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount
+
+    async def get_similar_observations(
+        self,
+        project: str,
+        obs_type: Optional[str] = None,
+        exclude_superseded: bool = True,
+        limit: int = 100,
+        date_start: Optional[float] = None,
+        date_end: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+        """Get observations for similarity analysis.
+
+        Args:
+            project: Project to search in
+            obs_type: Optional type filter
+            exclude_superseded: Exclude already superseded observations
+            limit: Maximum number to return
+            date_start: Optional start date filter
+            date_end: Optional end date filter
+
+        Returns:
+            List of observation dicts with id, content, summary, created_at
+        """
+        if not self.conn:
+            return []
+        params: List[Any] = [project]
+        conditions = ["project = ?"]
+        if obs_type:
+            conditions.append("type = ?")
+            params.append(obs_type)
+        if exclude_superseded:
+            conditions.append("superseded_by IS NULL")
+        if date_start is not None:
+            conditions.append("created_at >= ?")
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append("created_at <= ?")
+            params.append(date_end)
+
+        sql = f"""
+            SELECT id, content, summary, created_at, type, tags
+            FROM observations
+            WHERE {" AND ".join(conditions)}
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row["id"],
+                "content": row["content"],
+                "summary": row["summary"],
+                "created_at": row["created_at"],
+                "type": row["type"],
+                "tags": json.loads(row["tags"] or "[]"),
+            }
+            for row in rows
+        ]
+
+    async def get_stale_observations(
+        self,
+        project: str,
+        max_age_days: int = 90,
+        min_access_count: int = 0,
+        exclude_superseded: bool = True,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """Get observations that are old and rarely accessed (candidates for decay).
+
+        Args:
+            project: Project to search in
+            max_age_days: Only include observations older than this
+            min_access_count: Only include observations with access count <= this
+            exclude_superseded: Exclude already superseded observations
+            limit: Maximum number to return
+
+        Returns:
+            List of observation dicts
+        """
+        if not self.conn:
+            return []
+        cutoff_time = time.time() - (max_age_days * 86400)
+        params: List[Any] = [project, cutoff_time, min_access_count]
+        conditions = [
+            "project = ?",
+            "created_at < ?",
+            "COALESCE(access_count, 0) <= ?",
+        ]
+        if exclude_superseded:
+            conditions.append("superseded_by IS NULL")
+
+        sql = f"""
+            SELECT id, content, summary, created_at, type, access_count, importance_score
+            FROM observations
+            WHERE {" AND ".join(conditions)}
+            ORDER BY access_count ASC, created_at ASC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row["id"],
+                "content": row["content"],
+                "summary": row["summary"],
+                "created_at": row["created_at"],
+                "type": row["type"],
+                "access_count": row["access_count"] or 0,
+                "importance_score": row["importance_score"],
+            }
+            for row in rows
+        ]
 
     async def get_session_stats(self, project: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
         if not self.conn:

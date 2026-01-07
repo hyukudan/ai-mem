@@ -2352,5 +2352,689 @@ def cleanup_events(
     asyncio.run(_run())
 
 
+@app.command()
+def consolidate(
+    project: str = typer.Option(..., "--project", "-p", help="Project to consolidate"),
+    similarity_threshold: float = typer.Option(0.85, "--threshold", "-t", help="Similarity threshold (0.0-1.0)"),
+    strategy: str = typer.Option("newest", "--strategy", "-s", help="Keep strategy: newest, oldest, highest_importance"),
+    obs_type: Optional[str] = typer.Option(None, "--type", help="Filter by observation type"),
+    limit: int = typer.Option(100, "--limit", "-l", help="Max observations to analyze"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without making changes"),
+):
+    """Consolidate similar memories by marking duplicates as superseded.
+
+    This helps reduce redundancy and keep memory lean over time.
+    Uses embedding similarity to find similar observations and marks
+    the older/less important ones as superseded based on the strategy.
+
+    Strategies:
+        - newest: Keep the most recent observation (default)
+        - oldest: Keep the oldest observation
+        - highest_importance: Keep the one with highest importance_score
+
+    Examples:
+        ai-mem consolidate --project /path/to/project
+        ai-mem consolidate -p myproject --threshold 0.9 --dry-run
+        ai-mem consolidate -p myproject --strategy highest_importance
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if dry_run:
+                console.print("[yellow]DRY RUN - Preview mode, no changes will be made[/yellow]")
+
+            result = await manager.consolidate_memories(
+                project=project,
+                similarity_threshold=similarity_threshold,
+                keep_strategy=strategy,
+                obs_type=obs_type,
+                dry_run=dry_run,
+                limit=limit,
+            )
+
+            console.print(f"\n[bold]Consolidation Results[/bold]")
+            console.print(f"  Observations analyzed: {result['analyzed']}")
+            console.print(f"  Similar pairs found: {result['pairs_found']}")
+            console.print(f"  {'Would consolidate' if dry_run else 'Consolidated'}: {result['consolidated']}")
+
+            if result['superseded_ids']:
+                console.print(f"\n[dim]Superseded IDs: {', '.join(result['superseded_ids'][:5])}")
+                if len(result['superseded_ids']) > 5:
+                    console.print(f"  ... and {len(result['superseded_ids']) - 5} more[/dim]")
+
+            if result['pairs_found'] == 0:
+                console.print("\n[green]No similar observations found - memory is clean![/green]")
+            elif not dry_run:
+                console.print(f"\n[green]Successfully consolidated {result['consolidated']} observations[/green]")
+            else:
+                console.print(f"\n[yellow]Run without --dry-run to apply changes[/yellow]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="memory-cleanup")
+def memory_cleanup(
+    project: str = typer.Option(..., "--project", "-p", help="Project to clean up"),
+    max_age_days: int = typer.Option(90, "--max-age", "-a", help="Only consider observations older than this (days)"),
+    min_access_count: int = typer.Option(0, "--min-access", help="Only consider observations with access count <= this"),
+    limit: int = typer.Option(100, "--limit", "-l", help="Max observations to consider"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without deleting"),
+):
+    """Remove old, rarely-accessed memories (memory decay).
+
+    This implements memory decay - observations that are old and haven't
+    been accessed will be removed to keep the memory store efficient.
+
+    The access_count is incremented each time an observation appears in
+    search results, so frequently useful memories are preserved.
+
+    Examples:
+        ai-mem memory-cleanup --project /path/to/project --dry-run
+        ai-mem memory-cleanup -p myproject --max-age 60
+        ai-mem memory-cleanup -p myproject --min-access 2
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if dry_run:
+                console.print("[yellow]DRY RUN - Preview mode, no deletions will be made[/yellow]")
+
+            result = await manager.cleanup_stale_memories(
+                project=project,
+                max_age_days=max_age_days,
+                min_access_count=min_access_count,
+                dry_run=dry_run,
+                limit=limit,
+            )
+
+            console.print(f"\n[bold]Memory Cleanup Results[/bold]")
+            console.print(f"  Stale candidates found: {result['candidates_found']}")
+            console.print(f"  {'Would delete' if dry_run else 'Deleted'}: {result['deleted']}")
+
+            if result['deleted_ids']:
+                console.print(f"\n[dim]Deleted IDs: {', '.join(result['deleted_ids'][:5])}")
+                if len(result['deleted_ids']) > 5:
+                    console.print(f"  ... and {len(result['deleted_ids']) - 5} more[/dim]")
+
+            if result['candidates_found'] == 0:
+                console.print("\n[green]No stale observations found - memory is fresh![/green]")
+            elif not dry_run:
+                console.print(f"\n[green]Successfully deleted {result['deleted']} stale observations[/green]")
+            else:
+                console.print(f"\n[yellow]Run without --dry-run to apply changes[/yellow]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="find-similar")
+def find_similar(
+    project: str = typer.Option(..., "--project", "-p", help="Project to search in"),
+    similarity_threshold: float = typer.Option(0.85, "--threshold", "-t", help="Similarity threshold (0.0-1.0)"),
+    obs_type: Optional[str] = typer.Option(None, "--type", help="Filter by observation type"),
+    limit: int = typer.Option(100, "--limit", "-l", help="Max observations to analyze"),
+):
+    """Find pairs of similar observations that might be duplicates.
+
+    This is a preview command - it shows similar pairs without making changes.
+    Use 'consolidate' command to actually merge duplicates.
+
+    Examples:
+        ai-mem find-similar --project /path/to/project
+        ai-mem find-similar -p myproject --threshold 0.9
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            pairs = await manager.find_similar_observations(
+                project=project,
+                similarity_threshold=similarity_threshold,
+                use_embeddings=True,
+                obs_type=obs_type,
+                limit=limit,
+            )
+
+            if not pairs:
+                console.print("[green]No similar observations found - memory is clean![/green]")
+                return
+
+            table = Table(title=f"Similar Observation Pairs (threshold >= {similarity_threshold})")
+            table.add_column("Obs ID 1", style="cyan")
+            table.add_column("Obs ID 2", style="cyan")
+            table.add_column("Similarity", style="green")
+
+            for obs1_id, obs2_id, similarity in pairs[:20]:
+                table.add_row(obs1_id[:8] + "...", obs2_id[:8] + "...", f"{similarity:.3f}")
+
+            console.print(table)
+
+            if len(pairs) > 20:
+                console.print(f"\n[dim]Showing 20 of {len(pairs)} pairs[/dim]")
+
+            console.print(f"\n[yellow]Run 'ai-mem consolidate -p {project}' to merge duplicates[/yellow]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+# =============================================================================
+# Graph Memory Commands (Phase 4)
+# =============================================================================
+
+
+@app.command()
+def entities(
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path filter"),
+    all_projects: bool = typer.Option(False, "--all", "-a", help="Include all projects"),
+    name: Optional[str] = typer.Option(None, "--name", "-n", help="Filter by entity name (partial match)"),
+    entity_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by entity type"),
+    limit: int = typer.Option(50, "--limit", "-l", help="Max entities to show"),
+    output: str = typer.Option("table", "--format", "-f", help="Output format: table, json"),
+):
+    """List and search entities in the knowledge graph.
+
+    Entity types: file, function, class, module, endpoint, error, concept, technology
+
+    Examples:
+        ai-mem entities                           # List entities in current project
+        ai-mem entities --name "auth"             # Search by name
+        ai-mem entities --type function           # Filter by type
+        ai-mem entities --all --type file         # All files across projects
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if all_projects:
+                current_project = None
+            elif project:
+                current_project = project
+            else:
+                current_project = os.getcwd()
+
+            results = await manager.db.search_entities(
+                query=name or "",
+                entity_types=[entity_type] if entity_type else None,
+                project=current_project,
+                limit=limit,
+            )
+
+            if output == "json":
+                print(json.dumps(results, indent=2))
+                return
+
+            if not results:
+                console.print("[yellow]No entities found[/yellow]")
+                return
+
+            table = Table(title="Entities")
+            table.add_column("ID", style="dim", max_width=10)
+            table.add_column("Name", style="cyan")
+            table.add_column("Type", style="magenta")
+            table.add_column("Project", style="green", max_width=30)
+            table.add_column("Mentions", style="yellow", justify="right")
+
+            for entity in results:
+                table.add_row(
+                    entity.get("id", "")[:8] + "...",
+                    entity.get("name", ""),
+                    entity.get("entity_type", ""),
+                    entity.get("project", "-") or "-",
+                    str(entity.get("mention_count", 0)),
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Showing {len(results)} entities[/dim]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="related-entities")
+def related_entities(
+    entity_id: str = typer.Argument(..., help="Entity ID to find relations for"),
+    depth: int = typer.Option(1, "--depth", "-d", help="Max traversal depth (1-3)"),
+    relation_type: Optional[str] = typer.Option(None, "--relation", "-r", help="Filter by relation type"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max related entities"),
+    output: str = typer.Option("table", "--format", "-f", help="Output format: table, json"),
+):
+    """Find entities related to a given entity (multi-hop traversal).
+
+    Relation types: mentions, uses, defines, imports, calls, extends, implements,
+                   returns, throws, related_to
+
+    Examples:
+        ai-mem related-entities abc123             # Direct relations
+        ai-mem related-entities abc123 --depth 2  # 2-hop traversal
+        ai-mem related-entities abc123 -r calls   # Only 'calls' relations
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            relation_types = [relation_type] if relation_type else None
+            results = await manager.db.get_related_entities(
+                entity_id=entity_id,
+                relation_types=relation_types,
+                max_depth=min(depth, 3),
+                limit=limit,
+            )
+
+            if output == "json":
+                print(json.dumps(results, indent=2))
+                return
+
+            if not results:
+                console.print(f"[yellow]No related entities found for {entity_id[:8]}...[/yellow]")
+                return
+
+            table = Table(title=f"Related to: {entity_id[:8]}...")
+            table.add_column("Entity ID", style="dim", max_width=10)
+            table.add_column("Name", style="cyan")
+            table.add_column("Type", style="magenta")
+            table.add_column("Relation", style="green")
+            table.add_column("Depth", style="yellow", justify="right")
+
+            for rel in results:
+                table.add_row(
+                    rel.get("entity_id", "")[:8] + "...",
+                    rel.get("name", ""),
+                    rel.get("entity_type", ""),
+                    rel.get("relation_type", ""),
+                    str(rel.get("depth", 1)),
+                )
+
+            console.print(table)
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="entity-observations")
+def entity_observations(
+    entity_id: str = typer.Argument(..., help="Entity ID to get observations for"),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max observations to show"),
+    output: str = typer.Option("table", "--format", "-f", help="Output format: table, json"),
+):
+    """Get observations that mention a specific entity.
+
+    Examples:
+        ai-mem entity-observations abc123
+        ai-mem entity-observations abc123 --limit 50 --format json
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            results = await manager.db.get_entity_observations(
+                entity_id=entity_id,
+                limit=limit,
+            )
+
+            if output == "json":
+                print(json.dumps(results, indent=2))
+                return
+
+            if not results:
+                console.print(f"[yellow]No observations found mentioning entity {entity_id[:8]}...[/yellow]")
+                return
+
+            table = Table(title=f"Observations mentioning: {entity_id[:8]}...")
+            table.add_column("Obs ID", style="dim", max_width=10)
+            table.add_column("Summary", style="cyan", max_width=50)
+            table.add_column("Type", style="magenta")
+            table.add_column("Project", style="green", max_width=25)
+
+            for obs in results:
+                summary = obs.get("summary") or obs.get("content", "")[:80] + "..."
+                table.add_row(
+                    obs.get("id", "")[:8] + "...",
+                    summary[:50] + "..." if len(summary) > 50 else summary,
+                    obs.get("type", "-"),
+                    obs.get("project", "-") or "-",
+                )
+
+            console.print(table)
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="graph-stats")
+def graph_stats(
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project path filter"),
+    all_projects: bool = typer.Option(False, "--all", "-a", help="Include all projects"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Show knowledge graph statistics.
+
+    Examples:
+        ai-mem graph-stats                  # Current project
+        ai-mem graph-stats --all            # All projects
+        ai-mem graph-stats --format json    # JSON output
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            if all_projects:
+                current_project = None
+            elif project:
+                current_project = project
+            else:
+                current_project = os.getcwd()
+
+            stats = await manager.db.get_graph_stats(project=current_project)
+
+            if output == "json":
+                print(json.dumps(stats, indent=2))
+                return
+
+            console.print("\n[bold cyan]Knowledge Graph Statistics[/bold cyan]\n")
+
+            # Overall stats
+            console.print(f"  Total Entities:   [green]{stats.get('total_entities', 0)}[/green]")
+            console.print(f"  Total Relations:  [green]{stats.get('total_relations', 0)}[/green]")
+
+            # Entity breakdown by type
+            by_type = stats.get("entities_by_type", {})
+            if by_type:
+                console.print("\n[bold]Entities by Type:[/bold]")
+                for etype, count in sorted(by_type.items(), key=lambda x: -x[1]):
+                    console.print(f"    {etype}: [yellow]{count}[/yellow]")
+
+            # Relation breakdown by type
+            by_rel = stats.get("relations_by_type", {})
+            if by_rel:
+                console.print("\n[bold]Relations by Type:[/bold]")
+                for rtype, count in sorted(by_rel.items(), key=lambda x: -x[1]):
+                    console.print(f"    {rtype}: [yellow]{count}[/yellow]")
+
+            # Top entities
+            top_entities = stats.get("top_entities", [])
+            if top_entities:
+                console.print("\n[bold]Most Referenced Entities:[/bold]")
+                for entity in top_entities[:10]:
+                    console.print(f"    {entity.get('name', '')} ({entity.get('entity_type', '')}) - [cyan]{entity.get('mention_count', 0)} mentions[/cyan]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+# =============================================================================
+# User Memory Commands (Phase 4)
+# =============================================================================
+
+
+@app.command(name="user-add")
+def user_add(
+    content: str = typer.Option(None, "--content", "-c", help="Memory content"),
+    content_file: Optional[str] = typer.Option(None, "--file", "-f", help="Read content from file"),
+    obs_type: str = typer.Option("preference", "--type", "-t", help="Observation type"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", help="Tags for the memory"),
+    no_summary: bool = typer.Option(False, "--no-summary", help="Skip summarization"),
+):
+    """Add a user-level (global) memory.
+
+    User memories are not tied to any project and persist across all projects.
+    Use for preferences, conventions, and cross-project context.
+
+    Examples:
+        ai-mem user-add -c "I prefer TypeScript over JavaScript"
+        ai-mem user-add -c "Use 4 spaces for indentation" -t coding-style
+        ai-mem user-add -f preferences.txt --type preference
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            content_text = _read_content(content, content_file)
+            if not content_text:
+                console.print("[red]No content provided. Use --content or --file[/red]")
+                raise typer.Exit(1)
+
+            obs = await manager.add_user_memory(
+                content=content_text,
+                obs_type=obs_type,
+                tags=tag or [],
+                summarize=not no_summary,
+            )
+
+            if obs:
+                console.print(f"[green]User memory added: {obs.id}[/green]")
+            else:
+                console.print("[yellow]Content was filtered[/yellow]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="user-list")
+def user_list(
+    limit: int = typer.Option(20, "--limit", "-l", help="Max memories to show"),
+    obs_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by type"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", help="Filter by tags"),
+    output: str = typer.Option("table", "--format", "-f", help="Output format: table, json"),
+):
+    """List user-level memories.
+
+    Examples:
+        ai-mem user-list                       # Show all user memories
+        ai-mem user-list --type preference     # Filter by type
+        ai-mem user-list --tag coding-style    # Filter by tag
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            results = await manager.get_user_memories(
+                limit=limit,
+                obs_type=obs_type,
+                tag_filters=tag,
+            )
+
+            if output == "json":
+                print(json.dumps([r.model_dump() for r in results], indent=2))
+                return
+
+            if not results:
+                console.print("[yellow]No user memories found[/yellow]")
+                return
+
+            table = Table(title="User Memories")
+            table.add_column("ID", style="dim", max_width=10)
+            table.add_column("Summary", style="cyan", max_width=50)
+            table.add_column("Type", style="magenta")
+
+            for mem in results:
+                table.add_row(
+                    mem.id[:8] + "...",
+                    mem.summary[:45] + "..." if len(mem.summary or "") > 45 else mem.summary or "",
+                    mem.type or "-",
+                )
+
+            console.print(table)
+            console.print(f"\n[dim]Showing {len(results)} user memories[/dim]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="user-search")
+def user_search(
+    query: str = typer.Argument(..., help="Search query"),
+    limit: int = typer.Option(10, "--limit", "-l", help="Max results"),
+    obs_type: Optional[str] = typer.Option(None, "--type", "-t", help="Filter by type"),
+    tag: Optional[List[str]] = typer.Option(None, "--tag", help="Filter by tags"),
+    output: str = typer.Option("table", "--format", "-f", help="Output format: table, json"),
+):
+    """Search user-level memories.
+
+    Examples:
+        ai-mem user-search "coding style"
+        ai-mem user-search "typescript" --type preference
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            results = await manager.search_user_memories(
+                query=query,
+                limit=limit,
+                obs_type=obs_type,
+                tag_filters=tag,
+            )
+
+            if output == "json":
+                print(json.dumps([r.model_dump() for r in results], indent=2))
+                return
+
+            if not results:
+                console.print("[yellow]No matching user memories found[/yellow]")
+                return
+
+            table = Table(title=f"User Memory Search: '{query}'")
+            table.add_column("ID", style="dim", max_width=10)
+            table.add_column("Summary", style="cyan", max_width=50)
+            table.add_column("Score", style="green", justify="right")
+
+            for mem in results:
+                table.add_row(
+                    mem.id[:8] + "...",
+                    mem.summary[:45] + "..." if len(mem.summary or "") > 45 else mem.summary or "",
+                    f"{mem.score:.3f}",
+                )
+
+            console.print(table)
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="user-export")
+def user_export(
+    output_path: Optional[str] = typer.Option(None, "--output", "-o", help="Output file path"),
+):
+    """Export user memories to JSON file.
+
+    Default path: ~/.config/ai-mem/user-memory.json
+
+    Examples:
+        ai-mem user-export                          # Export to default location
+        ai-mem user-export -o /backup/user-mem.json # Export to custom path
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            result = await manager.export_user_memories(output_path=output_path)
+            console.print(f"[green]Exported {result['count']} user memories to:[/green]")
+            console.print(f"  {result['path']}")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="user-import")
+def user_import(
+    input_path: Optional[str] = typer.Option(None, "--input", "-i", help="Input file path"),
+    replace: bool = typer.Option(False, "--replace", help="Replace all existing (don't merge)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview without importing"),
+):
+    """Import user memories from JSON file.
+
+    Default path: ~/.config/ai-mem/user-memory.json
+
+    Examples:
+        ai-mem user-import                       # Import from default location
+        ai-mem user-import -i /backup/mem.json   # Import from custom path
+        ai-mem user-import --replace             # Replace all existing memories
+        ai-mem user-import --dry-run             # Preview what would be imported
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            from pathlib import Path
+
+            path = input_path or str(Path.home() / ".config" / "ai-mem" / "user-memory.json")
+
+            if not os.path.exists(path):
+                console.print(f"[red]File not found: {path}[/red]")
+                raise typer.Exit(1)
+
+            if dry_run:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                count = len(data.get("memories", []))
+                console.print(f"[cyan]Would import {count} memories from: {path}[/cyan]")
+                if replace:
+                    console.print("[yellow]Mode: REPLACE (delete existing first)[/yellow]")
+                else:
+                    console.print("[green]Mode: MERGE (keep existing)[/green]")
+                return
+
+            result = await manager.import_user_memories(
+                input_path=path,
+                merge=not replace,
+            )
+
+            console.print(f"[green]Imported {result['imported']} user memories from:[/green]")
+            console.print(f"  {result['path']}")
+            if result['skipped'] > 0:
+                console.print(f"[yellow]Skipped: {result['skipped']}[/yellow]")
+            if result['errors']:
+                console.print(f"[red]Errors: {len(result['errors'])}[/red]")
+
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="user-count")
+def user_count():
+    """Show count of user-level memories.
+
+    Examples:
+        ai-mem user-count
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            count = await manager.get_user_memory_count()
+            console.print(f"User memories: [cyan]{count}[/cyan]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     app()

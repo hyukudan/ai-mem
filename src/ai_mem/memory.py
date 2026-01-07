@@ -21,6 +21,10 @@ from .vector_store import build_vector_store
 
 logger = get_logger("memory")
 
+# User-level memory scope constant
+# Used as a special "project" value to indicate user-global memories
+USER_SCOPE_PROJECT = "_user"
+
 
 def _build_chat_provider(config: AppConfig) -> ChatProvider:
     provider = config.llm.provider.lower()
@@ -269,14 +273,26 @@ class MemoryManager:
         self._last_search_cache_hit: Optional[bool] = None
         self._search_cache_hits: int = 0
         self._search_cache_misses: int = 0
+        # Entity graph for knowledge graph features (Phase 4)
+        self._entity_graph = None
+        self._extract_entities: bool = getattr(self.config.context, 'enable_entity_extraction', True)
 
     async def initialize(self) -> None:
         logger.debug("Initializing MemoryManager")
         start = time.perf_counter()
         await self.db.connect()
         await self.db.create_tables()
+        # Initialize entity graph
+        if self._extract_entities:
+            from .graph import EntityGraph
+            self._entity_graph = EntityGraph(db=self.db)
         duration_ms = (time.perf_counter() - start) * 1000
         logger.info(f"MemoryManager initialized in {duration_ms:.2f}ms")
+
+    @property
+    def entity_graph(self):
+        """Get the entity graph manager."""
+        return self._entity_graph
 
     async def close(self) -> None:
         logger.debug("Closing MemoryManager")
@@ -621,6 +637,18 @@ class MemoryManager:
             await self._store_assets(obs.id, obs.assets)
         self._index_observation(obs)
         self._notify_listeners(obs)
+
+        # Extract entities for knowledge graph (Phase 4)
+        if self._entity_graph and self._extract_entities:
+            try:
+                await self._entity_graph.extract_and_store(
+                    text=cleaned_content,
+                    observation_id=obs.id,
+                    project=project_name,
+                    created_at=obs.created_at,
+                )
+            except Exception as e:
+                logger.warning(f"Entity extraction failed: {e}")
 
         # Record event_id for idempotency tracking
         if event_id:
@@ -1373,3 +1401,637 @@ class MemoryManager:
         if deleted:
             self.vector_store.delete_where({"project": project})
         return deleted
+
+    # ==================== Memory Consolidation (Phase 3) ====================
+
+    def _compute_text_similarity(self, text1: str, text2: str) -> float:
+        """Compute Jaccard similarity between two texts.
+
+        Args:
+            text1: First text
+            text2: Second text
+
+        Returns:
+            Similarity score between 0 and 1
+        """
+        if not text1 or not text2:
+            return 0.0
+        # Tokenize into words
+        words1 = set(text1.lower().split())
+        words2 = set(text2.lower().split())
+        if not words1 or not words2:
+            return 0.0
+        intersection = len(words1 & words2)
+        union = len(words1 | words2)
+        return intersection / union if union > 0 else 0.0
+
+    def _compute_embedding_similarity(
+        self,
+        embedding1: List[float],
+        embedding2: List[float],
+    ) -> float:
+        """Compute cosine similarity between two embeddings.
+
+        Args:
+            embedding1: First embedding vector
+            embedding2: Second embedding vector
+
+        Returns:
+            Cosine similarity between -1 and 1
+        """
+        if not embedding1 or not embedding2:
+            return 0.0
+        # Compute dot product and magnitudes
+        dot_product = sum(a * b for a, b in zip(embedding1, embedding2))
+        mag1 = math.sqrt(sum(a * a for a in embedding1))
+        mag2 = math.sqrt(sum(b * b for b in embedding2))
+        if mag1 == 0 or mag2 == 0:
+            return 0.0
+        return dot_product / (mag1 * mag2)
+
+    async def find_similar_observations(
+        self,
+        project: str,
+        similarity_threshold: float = 0.85,
+        use_embeddings: bool = True,
+        obs_type: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Tuple[str, str, float]]:
+        """Find pairs of similar observations that might be duplicates.
+
+        Args:
+            project: Project to search in
+            similarity_threshold: Minimum similarity to consider as duplicate
+            use_embeddings: Use embedding similarity (more accurate but slower)
+            obs_type: Optional type filter
+            limit: Maximum observations to analyze
+
+        Returns:
+            List of (obs_id_1, obs_id_2, similarity_score) tuples
+        """
+        logger.info(f"Finding similar observations in project={project}, threshold={similarity_threshold}")
+        start = time.perf_counter()
+
+        observations = await self.db.get_similar_observations(
+            project=project,
+            obs_type=obs_type,
+            exclude_superseded=True,
+            limit=limit,
+        )
+
+        if len(observations) < 2:
+            return []
+
+        similar_pairs: List[Tuple[str, str, float]] = []
+
+        # Compute embeddings if using embedding similarity
+        embeddings_map: Dict[str, List[float]] = {}
+        if use_embeddings:
+            texts = [obs.get("summary") or obs.get("content", "")[:500] for obs in observations]
+            try:
+                all_embeddings = self.embedding_provider.embed(texts)
+                for i, obs in enumerate(observations):
+                    embeddings_map[obs["id"]] = all_embeddings[i]
+            except Exception as e:
+                logger.warning(f"Failed to compute embeddings for similarity: {e}")
+                use_embeddings = False
+
+        # Compare all pairs (O(n²) - consider optimization for large datasets)
+        for i in range(len(observations)):
+            for j in range(i + 1, len(observations)):
+                obs1 = observations[i]
+                obs2 = observations[j]
+
+                if use_embeddings and obs1["id"] in embeddings_map and obs2["id"] in embeddings_map:
+                    similarity = self._compute_embedding_similarity(
+                        embeddings_map[obs1["id"]],
+                        embeddings_map[obs2["id"]],
+                    )
+                else:
+                    # Fallback to text similarity
+                    text1 = obs1.get("summary") or obs1.get("content", "")
+                    text2 = obs2.get("summary") or obs2.get("content", "")
+                    similarity = self._compute_text_similarity(text1, text2)
+
+                if similarity >= similarity_threshold:
+                    similar_pairs.append((obs1["id"], obs2["id"], similarity))
+
+        # Sort by similarity (highest first)
+        similar_pairs.sort(key=lambda x: x[2], reverse=True)
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"Found {len(similar_pairs)} similar pairs in {duration_ms:.2f}ms")
+
+        return similar_pairs
+
+    async def consolidate_memories(
+        self,
+        project: str,
+        similarity_threshold: float = 0.85,
+        keep_strategy: str = "newest",
+        obs_type: Optional[str] = None,
+        dry_run: bool = False,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """Consolidate similar memories by marking older ones as superseded.
+
+        This helps reduce redundancy and keep memory lean over time.
+
+        Args:
+            project: Project to consolidate
+            similarity_threshold: Minimum similarity to consider as duplicate (0.0-1.0)
+            keep_strategy: "newest" keeps the most recent, "oldest" keeps the oldest,
+                          "highest_importance" keeps highest importance_score
+            obs_type: Optional type filter
+            dry_run: If True, don't actually modify anything
+            limit: Maximum observations to analyze
+
+        Returns:
+            Dict with consolidation stats:
+                - analyzed: Number of observations analyzed
+                - pairs_found: Number of similar pairs found
+                - consolidated: Number of observations marked as superseded
+                - kept_ids: IDs of observations that were kept
+                - superseded_ids: IDs of observations marked as superseded
+        """
+        logger.info(f"Consolidating memories for project={project}, strategy={keep_strategy}, dry_run={dry_run}")
+        start = time.perf_counter()
+
+        similar_pairs = await self.find_similar_observations(
+            project=project,
+            similarity_threshold=similarity_threshold,
+            use_embeddings=True,
+            obs_type=obs_type,
+            limit=limit,
+        )
+
+        if not similar_pairs:
+            return {
+                "analyzed": limit,
+                "pairs_found": 0,
+                "consolidated": 0,
+                "kept_ids": [],
+                "superseded_ids": [],
+            }
+
+        # Track which observations to keep and which to supersede
+        kept_ids: set = set()
+        superseded_ids: set = set()
+        supersede_map: Dict[str, str] = {}  # obs_id -> superseded_by_id
+
+        # Fetch full observation data for decision making
+        all_obs_ids = set()
+        for obs1_id, obs2_id, _ in similar_pairs:
+            all_obs_ids.add(obs1_id)
+            all_obs_ids.add(obs2_id)
+
+        observations_data = await self.db.get_observations(list(all_obs_ids))
+        obs_lookup = {obs["id"]: obs for obs in observations_data}
+
+        for obs1_id, obs2_id, similarity in similar_pairs:
+            # Skip if either observation is already superseded
+            if obs1_id in superseded_ids or obs2_id in superseded_ids:
+                continue
+
+            obs1 = obs_lookup.get(obs1_id)
+            obs2 = obs_lookup.get(obs2_id)
+
+            if not obs1 or not obs2:
+                continue
+
+            # Decide which to keep based on strategy
+            if keep_strategy == "newest":
+                keep, supersede = (obs1, obs2) if obs1["created_at"] >= obs2["created_at"] else (obs2, obs1)
+            elif keep_strategy == "oldest":
+                keep, supersede = (obs1, obs2) if obs1["created_at"] <= obs2["created_at"] else (obs2, obs1)
+            elif keep_strategy == "highest_importance":
+                score1 = obs1.get("importance_score", 0.5)
+                score2 = obs2.get("importance_score", 0.5)
+                keep, supersede = (obs1, obs2) if score1 >= score2 else (obs2, obs1)
+            else:
+                # Default to newest
+                keep, supersede = (obs1, obs2) if obs1["created_at"] >= obs2["created_at"] else (obs2, obs1)
+
+            kept_ids.add(keep["id"])
+            superseded_ids.add(supersede["id"])
+            supersede_map[supersede["id"]] = keep["id"]
+
+        # Apply changes if not dry run
+        consolidated_count = 0
+        if not dry_run:
+            for obs_id, superseded_by in supersede_map.items():
+                try:
+                    result = await self.db.mark_superseded(obs_id, superseded_by)
+                    if result:
+                        consolidated_count += 1
+                except Exception as e:
+                    logger.warning(f"Failed to mark {obs_id} as superseded: {e}")
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"Consolidation complete in {duration_ms:.2f}ms: consolidated={consolidated_count}")
+
+        return {
+            "analyzed": len(all_obs_ids),
+            "pairs_found": len(similar_pairs),
+            "consolidated": consolidated_count if not dry_run else len(superseded_ids),
+            "kept_ids": list(kept_ids),
+            "superseded_ids": list(superseded_ids),
+            "dry_run": dry_run,
+        }
+
+    async def cleanup_stale_memories(
+        self,
+        project: str,
+        max_age_days: int = 90,
+        min_access_count: int = 0,
+        dry_run: bool = False,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """Remove or flag old, rarely-accessed memories.
+
+        Args:
+            project: Project to clean up
+            max_age_days: Only consider observations older than this
+            min_access_count: Only consider observations with access count <= this
+            dry_run: If True, don't actually delete
+            limit: Maximum observations to consider
+
+        Returns:
+            Dict with cleanup stats
+        """
+        logger.info(f"Cleaning stale memories for project={project}, max_age={max_age_days}d, dry_run={dry_run}")
+
+        stale = await self.db.get_stale_observations(
+            project=project,
+            max_age_days=max_age_days,
+            min_access_count=min_access_count,
+            exclude_superseded=True,
+            limit=limit,
+        )
+
+        deleted_count = 0
+        deleted_ids: List[str] = []
+
+        if not dry_run:
+            for obs in stale:
+                try:
+                    result = await self.delete_observation(obs["id"])
+                    if result:
+                        deleted_count += 1
+                        deleted_ids.append(obs["id"])
+                except Exception as e:
+                    logger.warning(f"Failed to delete stale observation {obs['id']}: {e}")
+
+        return {
+            "candidates_found": len(stale),
+            "deleted": deleted_count if not dry_run else len(stale),
+            "deleted_ids": deleted_ids if not dry_run else [obs["id"] for obs in stale],
+            "dry_run": dry_run,
+        }
+
+    # ==================== Two-Stage Retrieval (Phase 3) ====================
+
+    def _rerank_results(
+        self,
+        query: str,
+        results: List[ObservationIndex],
+        top_k: int = 10,
+    ) -> List[ObservationIndex]:
+        """Rerank search results using embedding similarity as a second stage.
+
+        Stage 1 (BM25 + vector) provides recall, Stage 2 (reranking) improves precision.
+
+        Args:
+            query: Original search query
+            results: Results from Stage 1
+            top_k: Number of results to return after reranking
+
+        Returns:
+            Reranked list of results
+        """
+        if not results or len(results) <= 1:
+            return results[:top_k]
+
+        try:
+            # Get query embedding
+            query_embedding = self.embedding_provider.embed([query])[0]
+
+            # Get embeddings for result summaries
+            texts = [r.summary or "" for r in results]
+            result_embeddings = self.embedding_provider.embed(texts)
+
+            # Compute rerank scores
+            rerank_scores: List[Tuple[ObservationIndex, float]] = []
+            for i, result in enumerate(results):
+                similarity = self._compute_embedding_similarity(
+                    query_embedding,
+                    result_embeddings[i],
+                )
+                # Combine original score with rerank similarity
+                # Original score weighted 0.6, rerank weighted 0.4
+                combined = (result.score or 0.0) * 0.6 + similarity * 0.4
+                result.rerank_score = combined
+                rerank_scores.append((result, combined))
+
+            # Sort by combined score
+            rerank_scores.sort(key=lambda x: x[1], reverse=True)
+            reranked = [item[0] for item in rerank_scores[:top_k]]
+
+            return reranked
+
+        except Exception as e:
+            logger.warning(f"Reranking failed, returning original results: {e}")
+            return results[:top_k]
+
+    async def search_with_rerank(
+        self,
+        query: str,
+        limit: int = 10,
+        project: Optional[str] = None,
+        obs_type: Optional[str] = None,
+        session_id: Optional[str] = None,
+        date_start: Optional[str] = None,
+        date_end: Optional[str] = None,
+        since: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
+        stage1_limit: int = 50,
+    ) -> List[ObservationIndex]:
+        """Two-stage search with reranking for improved precision.
+
+        Stage 1: BM25 + Vector search (high recall)
+        Stage 2: Embedding-based reranking (high precision)
+
+        Args:
+            query: Search query
+            limit: Final number of results to return
+            project: Project filter
+            obs_type: Observation type filter
+            session_id: Session filter
+            date_start: Start date filter
+            date_end: End date filter
+            since: Alternative to date_start
+            tag_filters: Tag filters
+            stage1_limit: Number of candidates to fetch in Stage 1
+
+        Returns:
+            Reranked list of ObservationIndex
+        """
+        logger.debug(f"Two-stage search: query='{query}', limit={limit}, stage1_limit={stage1_limit}")
+        start = time.perf_counter()
+
+        # Stage 1: Get candidates using existing hybrid search
+        stage1_results = await self.search(
+            query=query,
+            limit=stage1_limit,
+            project=project,
+            obs_type=obs_type,
+            session_id=session_id,
+            date_start=date_start,
+            date_end=date_end,
+            since=since,
+            tag_filters=tag_filters,
+        )
+
+        if not stage1_results:
+            return []
+
+        # Stage 2: Rerank for precision
+        final_results = self._rerank_results(query, stage1_results, top_k=limit)
+
+        # Track access for retrieved results
+        for result in final_results[:5]:  # Track top 5 accessed
+            try:
+                await self.db.increment_access_count(result.id)
+            except Exception:
+                pass  # Don't fail search if access tracking fails
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.debug(f"Two-stage search completed in {duration_ms:.2f}ms, returned {len(final_results)} results")
+
+        return final_results
+
+    # =========================================================================
+    # User-Level Memory Methods
+    # =========================================================================
+
+    async def add_user_memory(
+        self,
+        content: str,
+        obs_type: str = "preference",
+        tags: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, object]] = None,
+        title: Optional[str] = None,
+        summarize: bool = True,
+    ) -> Optional[Observation]:
+        """Add a user-level (global) memory.
+
+        User memories are not tied to a specific project and persist across
+        all projects. Use for user preferences, conventions, and global context.
+
+        Args:
+            content: Memory content
+            obs_type: Observation type (default: "preference")
+            tags: List of tags
+            metadata: Additional metadata
+            title: Optional title
+            summarize: Whether to generate summary
+
+        Returns:
+            Created Observation or None if filtered
+        """
+        logger.debug("Adding user-level memory")
+        return await self.add_observation(
+            content=content,
+            obs_type=obs_type,
+            project=USER_SCOPE_PROJECT,
+            session_id=None,
+            tags=tags or [],
+            metadata=metadata,
+            title=title,
+            summarize=summarize,
+        )
+
+    async def get_user_memories(
+        self,
+        limit: int = 50,
+        obs_type: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
+    ) -> List[ObservationIndex]:
+        """Get user-level memories.
+
+        Args:
+            limit: Maximum memories to return
+            obs_type: Filter by observation type
+            tag_filters: Filter by tags
+
+        Returns:
+            List of user memory indices
+        """
+        logger.debug(f"Getting user memories: limit={limit}")
+        return await self.db.list_observations(
+            project=USER_SCOPE_PROJECT,
+            limit=limit,
+            obs_type=obs_type,
+            tag_filters=tag_filters,
+        )
+
+    async def search_user_memories(
+        self,
+        query: str,
+        limit: int = 10,
+        obs_type: Optional[str] = None,
+        tag_filters: Optional[List[str]] = None,
+    ) -> List[ObservationIndex]:
+        """Search user-level memories.
+
+        Args:
+            query: Search query
+            limit: Maximum results
+            obs_type: Filter by observation type
+            tag_filters: Filter by tags
+
+        Returns:
+            List of matching user memories
+        """
+        logger.debug(f"Searching user memories: query='{query}'")
+        return await self.search(
+            query=query,
+            limit=limit,
+            project=USER_SCOPE_PROJECT,
+            obs_type=obs_type,
+            tag_filters=tag_filters,
+        )
+
+    async def export_user_memories(
+        self,
+        output_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Export user memories to JSON file.
+
+        Args:
+            output_path: Path to output file (default: ~/.config/ai-mem/user-memory.json)
+
+        Returns:
+            Dict with export info and path
+        """
+        import os
+        from pathlib import Path
+
+        if output_path is None:
+            config_dir = Path.home() / ".config" / "ai-mem"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            output_path = str(config_dir / "user-memory.json")
+
+        logger.info(f"Exporting user memories to {output_path}")
+
+        # Get all user memories
+        memories_list = await self.db.list_observations(
+            project=USER_SCOPE_PROJECT,
+            limit=1000,
+        )
+
+        # Need full observation data for export
+        full_memories = []
+        for idx in memories_list:
+            obs_dict = await self.db.get_observation(idx.id)
+            if obs_dict:
+                full_memories.append(obs_dict)
+
+        export_data = {
+            "version": "1.0",
+            "exported_at": datetime.now().isoformat(),
+            "count": len(full_memories),
+            "memories": full_memories,
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(export_data, f, indent=2, default=str)
+
+        logger.info(f"Exported {len(full_memories)} user memories to {output_path}")
+
+        return {
+            "path": output_path,
+            "count": len(full_memories),
+        }
+
+    async def import_user_memories(
+        self,
+        input_path: Optional[str] = None,
+        merge: bool = True,
+    ) -> Dict[str, Any]:
+        """Import user memories from JSON file.
+
+        Args:
+            input_path: Path to input file (default: ~/.config/ai-mem/user-memory.json)
+            merge: If True, merge with existing; if False, replace all
+
+        Returns:
+            Dict with import info
+        """
+        from pathlib import Path
+
+        if input_path is None:
+            input_path = str(Path.home() / ".config" / "ai-mem" / "user-memory.json")
+
+        if not os.path.exists(input_path):
+            logger.warning(f"User memory file not found: {input_path}")
+            return {"imported": 0, "skipped": 0, "errors": [], "path": input_path}
+
+        logger.info(f"Importing user memories from {input_path}")
+
+        with open(input_path, "r", encoding="utf-8") as f:
+            import_data = json.load(f)
+
+        memories = import_data.get("memories", [])
+        imported = 0
+        skipped = 0
+        errors: List[str] = []
+
+        if not merge:
+            # Delete existing user memories
+            existing = await self.db.list_observations(project=USER_SCOPE_PROJECT, limit=10000)
+            for mem in existing:
+                await self.db.delete_observation(mem.id)  # ObservationIndex has .id attribute
+            logger.info(f"Cleared {len(existing)} existing user memories")
+
+        for mem in memories:
+            try:
+                content = mem.get("content")
+                if not content:
+                    skipped += 1
+                    continue
+
+                obs = await self.add_user_memory(
+                    content=content,
+                    obs_type=mem.get("type", "preference"),
+                    tags=mem.get("tags", []),
+                    metadata=mem.get("metadata"),
+                    summarize=False,
+                )
+
+                if obs:
+                    imported += 1
+                else:
+                    skipped += 1
+
+            except Exception as e:
+                errors.append(f"Error importing memory: {str(e)}")
+                logger.warning(f"Failed to import memory: {e}")
+
+        logger.info(f"Imported {imported} user memories, skipped {skipped}")
+
+        return {
+            "imported": imported,
+            "skipped": skipped,
+            "errors": errors,
+            "path": input_path,
+        }
+
+    async def get_user_memory_count(self) -> int:
+        """Get count of user-level memories.
+
+        Returns:
+            Number of user memories
+        """
+        stats = await self.db.get_stats(project=USER_SCOPE_PROJECT)
+        return stats.get("total", 0)

@@ -55,7 +55,7 @@ async def test_context_includes_scoreboard_metadata(manager):
         full_count=1,
         show_tokens=True,
     )
-    assert "<ai-mem-context>" in context_text
+    assert "<ai-mem-context" in context_text  # May have mode attribute
     assert "tokens" in meta
     assert meta["tokens"]["index"] > 0
     assert meta["tokens"]["full"] > 0
@@ -76,5 +76,5 @@ async def test_context_without_query_omits_scoreboard(manager):
         summary="Silent memory",
     )
     context_text, meta = await build_context(manager, project="proj")
-    assert "<ai-mem-context>" in context_text
+    assert "<ai-mem-context" in context_text  # May have mode attribute
     assert not meta.get("scoreboard")

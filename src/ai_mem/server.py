@@ -5,7 +5,7 @@ import json
 import os
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
@@ -314,6 +314,25 @@ class ContextRequest(BaseModel):
     full_field: Optional[str] = None
     show_tokens: Optional[bool] = None
     wrap: Optional[bool] = None
+
+
+class ConsolidateRequest(BaseModel):
+    """Request to consolidate similar memories."""
+    project: str = Field(..., description="Project to consolidate")
+    similarity_threshold: float = Field(default=0.85, ge=0.0, le=1.0, description="Similarity threshold (0.0-1.0)")
+    keep_strategy: str = Field(default="newest", description="Strategy: newest, oldest, highest_importance")
+    obs_type: Optional[str] = Field(default=None, description="Filter by observation type")
+    dry_run: bool = Field(default=False, description="Preview without making changes")
+    limit: int = Field(default=100, ge=1, le=1000, description="Max observations to analyze")
+
+
+class CleanupRequest(BaseModel):
+    """Request to cleanup stale memories."""
+    project: str = Field(..., description="Project to clean up")
+    max_age_days: int = Field(default=90, ge=1, description="Only consider observations older than this")
+    min_access_count: int = Field(default=0, ge=0, description="Only consider observations with access count <= this")
+    dry_run: bool = Field(default=False, description="Preview without deleting")
+    limit: int = Field(default=100, ge=1, le=1000, description="Max observations to consider")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -1295,6 +1314,462 @@ async def stream_memories(
             remove_listener()
 
     return StreamingResponse(_event_stream(), media_type="text/event-stream")
+
+
+# =============================================================================
+# Memory Maintenance Endpoints (Phase 3)
+# =============================================================================
+
+@app.post("/api/memory/consolidate")
+async def consolidate_memories(payload: ConsolidateRequest, request: Request):
+    """Consolidate similar memories by marking duplicates as superseded.
+
+    This helps reduce redundancy and keep memory lean over time.
+    Uses embedding similarity to find similar observations and marks
+    the older/less important ones as superseded based on the strategy.
+
+    Strategies:
+        - newest: Keep the most recent observation
+        - oldest: Keep the oldest observation
+        - highest_importance: Keep the one with highest importance_score
+
+    Returns:
+        - analyzed: Number of observations analyzed
+        - pairs_found: Number of similar pairs found
+        - consolidated: Number marked as superseded
+        - kept_ids: IDs of observations kept
+        - superseded_ids: IDs of observations marked as superseded
+        - dry_run: Whether this was a preview
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        result = await manager.consolidate_memories(
+            project=payload.project,
+            similarity_threshold=payload.similarity_threshold,
+            keep_strategy=payload.keep_strategy,
+            obs_type=payload.obs_type,
+            dry_run=payload.dry_run,
+            limit=payload.limit,
+        )
+        return result
+    except Exception as exc:
+        logger.error(f"Consolidation error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/memory/cleanup")
+async def cleanup_stale_memories(payload: CleanupRequest, request: Request):
+    """Remove old, rarely-accessed memories.
+
+    This implements memory decay - observations that are old and haven't
+    been accessed will be removed to keep the memory store efficient.
+
+    Returns:
+        - candidates_found: Number of stale observations found
+        - deleted: Number actually deleted (or would be if dry_run)
+        - deleted_ids: IDs of deleted observations
+        - dry_run: Whether this was a preview
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        result = await manager.cleanup_stale_memories(
+            project=payload.project,
+            max_age_days=payload.max_age_days,
+            min_access_count=payload.min_access_count,
+            dry_run=payload.dry_run,
+            limit=payload.limit,
+        )
+        return result
+    except Exception as exc:
+        logger.error(f"Cleanup error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/memory/similar")
+async def find_similar_observations(
+    request: Request,
+    project: str,
+    similarity_threshold: float = 0.85,
+    obs_type: Optional[str] = None,
+    limit: int = 100,
+):
+    """Find pairs of similar observations that might be duplicates.
+
+    Useful to preview what would be consolidated before running consolidate.
+
+    Returns:
+        List of (obs_id_1, obs_id_2, similarity_score) pairs
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        pairs = await manager.find_similar_observations(
+            project=project,
+            similarity_threshold=similarity_threshold,
+            use_embeddings=True,
+            obs_type=obs_type,
+            limit=min(limit, MAX_LIMIT),
+        )
+        return [
+            {"obs_id_1": p[0], "obs_id_2": p[1], "similarity": p[2]}
+            for p in pairs
+        ]
+    except Exception as exc:
+        logger.error(f"Find similar error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/search/rerank")
+async def search_with_rerank(
+    request: Request,
+    response: Response,
+    query: str,
+    limit: int = 10,
+    project: Optional[str] = None,
+    obs_type: Optional[str] = None,
+    session_id: Optional[str] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+    since: Optional[str] = None,
+    tags: Optional[str] = None,
+    stage1_limit: int = 50,
+    show_tokens: Optional[bool] = None,
+):
+    """Two-stage search with reranking for improved precision.
+
+    Stage 1: BM25 + Vector search (high recall) - fetches stage1_limit candidates
+    Stage 2: Embedding-based reranking (high precision) - returns top 'limit' results
+
+    This provides better ranking than standard search at the cost of slightly
+    more computation. Use for queries where precision matters.
+
+    Returns:
+        List of observations with rerank_score field added
+    """
+    _check_token(request)
+    if date_start is None and since is not None:
+        date_start = since
+    try:
+        limit = min(max(1, limit), MAX_LIMIT)
+        stage1_limit = min(max(1, stage1_limit), MAX_LIMIT)
+        manager = get_manager()
+        results = await manager.search_with_rerank(
+            query=query,
+            limit=limit,
+            project=project,
+            obs_type=obs_type,
+            session_id=session_id,
+            date_start=date_start,
+            date_end=date_end,
+            since=since,
+            tag_filters=_parse_list_param(tags),
+            stage1_limit=stage1_limit,
+        )
+        payload = [item.model_dump() for item in results]
+        response.headers["X-AI-MEM-Search-Type"] = "reranked"
+        if show_tokens:
+            for row, item in zip(payload, results):
+                row["token_estimate"] = estimate_tokens(item.summary or "")
+        return payload
+    except Exception as exc:
+        logger.error(f"Rerank search error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# =============================================================================
+# Entity Graph Endpoints (Phase 4)
+# =============================================================================
+
+@app.get("/api/entities")
+async def search_entities(
+    request: Request,
+    query: str,
+    project: Optional[str] = None,
+    entity_types: Optional[str] = None,
+    limit: int = 20,
+):
+    """Search for entities by name.
+
+    Args:
+        query: Search query
+        project: Filter by project
+        entity_types: Comma-separated entity types (file, function, class, etc.)
+        limit: Maximum entities to return
+
+    Returns:
+        List of matching entities
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        if not manager.entity_graph:
+            return {"error": "Entity graph not enabled"}
+
+        types = _parse_list_param(entity_types)
+        results = await manager.entity_graph.find_entities(
+            query=query,
+            project=project,
+            entity_types=types,
+            limit=min(limit, MAX_LIMIT),
+        )
+        return results
+    except Exception as exc:
+        logger.error(f"Entity search error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/entities/{entity_id}/related")
+async def get_related_entities(
+    entity_id: str,
+    request: Request,
+    relation_types: Optional[str] = None,
+    max_depth: int = 1,
+    limit: int = 20,
+):
+    """Get entities related to a given entity.
+
+    Supports multi-hop traversal for finding indirect relationships.
+
+    Args:
+        entity_id: Starting entity ID
+        relation_types: Comma-separated relation types to filter
+        max_depth: Maximum traversal depth (1 = direct, 2+ = multi-hop)
+        limit: Maximum entities to return
+
+    Returns:
+        List of related entities with relationship info
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        if not manager.entity_graph:
+            return {"error": "Entity graph not enabled"}
+
+        types = _parse_list_param(relation_types)
+        results = await manager.entity_graph.get_related_entities(
+            entity_id=entity_id,
+            relation_types=types,
+            max_depth=min(max_depth, 3),  # Limit depth to prevent expensive queries
+            limit=min(limit, MAX_LIMIT),
+        )
+        return results
+    except Exception as exc:
+        logger.error(f"Related entities error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/entities/{entity_id}/observations")
+async def get_entity_observations(
+    entity_id: str,
+    request: Request,
+    limit: int = 20,
+):
+    """Get observation IDs that mention an entity.
+
+    Args:
+        entity_id: Entity ID
+        limit: Maximum observations to return
+
+    Returns:
+        List of observation IDs
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        if not manager.entity_graph:
+            return {"error": "Entity graph not enabled"}
+
+        obs_ids = await manager.entity_graph.get_entity_observations(
+            entity_id=entity_id,
+            limit=min(limit, MAX_LIMIT),
+        )
+
+        # Optionally fetch full observations
+        if obs_ids:
+            observations = await manager.get_observations(obs_ids)
+            return {"observation_ids": obs_ids, "observations": observations}
+
+        return {"observation_ids": [], "observations": []}
+    except Exception as exc:
+        logger.error(f"Entity observations error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/graph/stats")
+async def get_graph_stats(
+    request: Request,
+    project: Optional[str] = None,
+):
+    """Get statistics about the entity graph.
+
+    Returns:
+        - entities: Total entity count
+        - relations: Total relation count
+        - entities_by_type: Count by entity type
+        - relations_by_type: Count by relation type
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        if not manager.entity_graph:
+            return {"error": "Entity graph not enabled", "entities": 0, "relations": 0}
+
+        stats = await manager.entity_graph.get_graph_stats(project=project)
+        return stats
+    except Exception as exc:
+        logger.error(f"Graph stats error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# =============================================================================
+# User Memory Endpoints (Phase 4)
+# =============================================================================
+
+
+class UserMemoryInput(BaseModel):
+    """Input for adding a user memory."""
+    content: str = Field(..., description="Memory content")
+    obs_type: str = Field(default="preference", description="Observation type")
+    tags: List[str] = Field(default_factory=list, description="Tags")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata")
+    title: Optional[str] = Field(default=None, description="Optional title")
+    summarize: bool = Field(default=True, description="Whether to summarize")
+
+
+@app.post("/api/user/memories")
+async def add_user_memory(
+    request: Request,
+    data: UserMemoryInput,
+):
+    """Add a user-level memory.
+
+    User memories are global and not tied to any project.
+    Use for user preferences, conventions, and cross-project context.
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        obs = await manager.add_user_memory(
+            content=data.content,
+            obs_type=data.obs_type,
+            tags=data.tags,
+            metadata=data.metadata,
+            title=data.title,
+            summarize=data.summarize,
+        )
+        if obs is None:
+            return {"ok": False, "message": "Content filtered"}
+        return {"ok": True, "id": obs.id}
+    except Exception as exc:
+        logger.error(f"Add user memory error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/user/memories")
+async def list_user_memories(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+    obs_type: Optional[str] = None,
+    tag: Optional[List[str]] = Query(default=None),
+):
+    """List user-level memories.
+
+    Returns all memories in user scope (not tied to any project).
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        results = await manager.get_user_memories(
+            limit=limit,
+            obs_type=obs_type,
+            tag_filters=tag,
+        )
+        return {"memories": [r.model_dump() for r in results], "count": len(results)}
+    except Exception as exc:
+        logger.error(f"List user memories error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/user/memories/search")
+async def search_user_memories(
+    request: Request,
+    q: str = Query(..., description="Search query"),
+    limit: int = Query(default=10, ge=1, le=100),
+    obs_type: Optional[str] = None,
+    tag: Optional[List[str]] = Query(default=None),
+):
+    """Search user-level memories.
+
+    Searches across user-scoped memories using hybrid FTS + vector search.
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        results = await manager.search_user_memories(
+            query=q,
+            limit=limit,
+            obs_type=obs_type,
+            tag_filters=tag,
+        )
+        return {"results": [r.model_dump() for r in results], "count": len(results)}
+    except Exception as exc:
+        logger.error(f"Search user memories error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/user/memories/export")
+async def export_user_memories(
+    request: Request,
+    path: Optional[str] = Query(default=None, description="Export path"),
+):
+    """Export user memories to JSON file.
+
+    Default path: ~/.config/ai-mem/user-memory.json
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        result = await manager.export_user_memories(output_path=path)
+        return result
+    except Exception as exc:
+        logger.error(f"Export user memories error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/user/memories/import")
+async def import_user_memories(
+    request: Request,
+    path: Optional[str] = Query(default=None, description="Import path"),
+    merge: bool = Query(default=True, description="Merge with existing"),
+):
+    """Import user memories from JSON file.
+
+    Default path: ~/.config/ai-mem/user-memory.json
+    Set merge=false to replace all existing user memories.
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        result = await manager.import_user_memories(input_path=path, merge=merge)
+        return result
+    except Exception as exc:
+        logger.error(f"Import user memories error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/user/memories/count")
+async def get_user_memory_count(request: Request):
+    """Get count of user-level memories."""
+    _check_token(request)
+    try:
+        manager = get_manager()
+        count = await manager.get_user_memory_count()
+        return {"count": count}
+    except Exception as exc:
+        logger.error(f"Get user memory count error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 def start_server(host: str = "0.0.0.0", port: int = 8000):

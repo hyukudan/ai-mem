@@ -67,6 +67,16 @@ class ContextConfig(BaseModel):
     full_observation_field: str = "content"
     show_token_estimates: bool = True
     wrap_context_tag: bool = True
+    # Progressive Disclosure settings (Phase 1 optimization)
+    disclosure_mode: str = "auto"  # "compact", "standard", "full", "auto"
+    compact_index_only: bool = False  # If True, only inject Layer 1 (compact index)
+    deduplication_threshold: float = 0.85  # Semantic similarity threshold for dedup
+    enable_deduplication: bool = True  # Enable/disable semantic deduplication
+    max_token_budget: Optional[int] = None  # Max tokens for context (None = no limit)
+    compression_level: float = 0.0  # 0.0 = no compression, 1.0 = max compression
+    # Entity Graph settings (Phase 4)
+    enable_entity_extraction: bool = True  # Extract entities from observations
+    include_related_entities: bool = True  # Include related entities in context
 
 
 class IngestionConfig(BaseModel):
@@ -234,6 +244,13 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
     context_full_field = os.environ.get("AI_MEM_CONTEXT_FULL_FIELD")
     context_show_tokens = _env_bool("AI_MEM_CONTEXT_SHOW_TOKENS")
     context_wrap = _env_bool("AI_MEM_CONTEXT_WRAP")
+    # Progressive Disclosure env vars
+    disclosure_mode = os.environ.get("AI_MEM_CONTEXT_DISCLOSURE_MODE")
+    compact_index = _env_bool("AI_MEM_CONTEXT_COMPACT_INDEX")
+    dedup_threshold = _env_float("AI_MEM_CONTEXT_DEDUP_THRESHOLD")
+    enable_dedup = _env_bool("AI_MEM_CONTEXT_ENABLE_DEDUP")
+    max_budget = _env_int("AI_MEM_CONTEXT_MAX_TOKENS")
+    compression = _env_float("AI_MEM_CONTEXT_COMPRESSION")
 
     if context_total is not None:
         config.context.total_observation_count = context_total
@@ -249,6 +266,19 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         config.context.show_token_estimates = context_show_tokens
     if context_wrap is not None:
         config.context.wrap_context_tag = context_wrap
+    # Apply Progressive Disclosure env overrides
+    if disclosure_mode:
+        config.context.disclosure_mode = disclosure_mode
+    if compact_index is not None:
+        config.context.compact_index_only = compact_index
+    if dedup_threshold is not None:
+        config.context.deduplication_threshold = dedup_threshold
+    if enable_dedup is not None:
+        config.context.enable_deduplication = enable_dedup
+    if max_budget is not None:
+        config.context.max_token_budget = max_budget
+    if compression is not None:
+        config.context.compression_level = compression
 
     vector_provider = os.environ.get("AI_MEM_VECTOR_PROVIDER")
     vector_collection = os.environ.get("AI_MEM_VECTOR_CHROMA_COLLECTION")
@@ -564,6 +594,26 @@ def _validate_context_config(context: ContextConfig, errors: List[str], warnings
             f"Unknown full_observation_field '{context.full_observation_field}', "
             f"valid options: {valid_fields}"
         )
+
+    # Validate Progressive Disclosure settings
+    valid_modes = {"compact", "standard", "full", "auto"}
+    if context.disclosure_mode not in valid_modes:
+        warnings.append(
+            f"Unknown disclosure_mode '{context.disclosure_mode}', valid: {valid_modes}"
+        )
+
+    if not 0.0 <= context.deduplication_threshold <= 1.0:
+        errors.append(
+            f"deduplication_threshold must be between 0.0 and 1.0, got {context.deduplication_threshold}"
+        )
+
+    if not 0.0 <= context.compression_level <= 1.0:
+        errors.append(
+            f"compression_level must be between 0.0 and 1.0, got {context.compression_level}"
+        )
+
+    if context.max_token_budget is not None and context.max_token_budget <= 0:
+        errors.append(f"max_token_budget must be positive, got {context.max_token_budget}")
 
 
 def load_and_validate_config(strict: bool = False) -> Tuple[AppConfig, List[str]]:
