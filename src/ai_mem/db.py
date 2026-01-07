@@ -7,6 +7,10 @@ from collections import Counter
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Iterable
 
+from .exceptions import (
+    DatabaseConnectionError,
+    DatabaseIntegrityError,
+)
 from .logging_config import get_logger, log_duration
 from .models import Observation, Session, ObservationIndex
 
@@ -22,12 +26,16 @@ class DatabaseManager:
     async def connect(self) -> None:
         logger.debug(f"Connecting to database: {self.db_path}")
         start = time.perf_counter()
-        self.conn = await aiosqlite.connect(self.db_path, check_same_thread=False)
-        self.conn.row_factory = aiosqlite.Row
-        await self._configure()
-        await self.create_tables()
-        duration_ms = (time.perf_counter() - start) * 1000
-        logger.info(f"Database connected in {duration_ms:.2f}ms: {self.db_path}")
+        try:
+            self.conn = await aiosqlite.connect(self.db_path, check_same_thread=False)
+            self.conn.row_factory = aiosqlite.Row
+            await self._configure()
+            await self.create_tables()
+            duration_ms = (time.perf_counter() - start) * 1000
+            logger.info(f"Database connected in {duration_ms:.2f}ms: {self.db_path}")
+        except Exception as e:
+            logger.error(f"Failed to connect to database: {self.db_path}: {e}")
+            raise DatabaseConnectionError(str(self.db_path), str(e)) from e
 
     async def close(self) -> None:
         if self.conn:
@@ -416,47 +424,54 @@ class DatabaseManager:
     async def add_observation(self, obs: Observation) -> None:
         if not self.conn:
             logger.warning("Cannot add observation: database not connected")
-            return
+            raise DatabaseConnectionError(str(self.db_path), "Database not connected")
         logger.debug(f"Adding observation: id={obs.id}, type={obs.type}, project={obs.project}")
         start = time.perf_counter()
-        await self.conn.execute(
-            """
-            INSERT OR REPLACE INTO observations (
-                id,
-                session_id,
-                project,
-                type,
-                title,
-                content,
-                summary,
-                content_hash,
-                created_at,
-                importance_score,
-                tags,
-                metadata,
-                diff
+        try:
+            await self.conn.execute(
+                """
+                INSERT OR REPLACE INTO observations (
+                    id,
+                    session_id,
+                    project,
+                    type,
+                    title,
+                    content,
+                    summary,
+                    content_hash,
+                    created_at,
+                    importance_score,
+                    tags,
+                    metadata,
+                    diff
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    obs.id,
+                    obs.session_id,
+                    obs.project,
+                    obs.type,
+                    obs.title,
+                    obs.content,
+                    obs.summary,
+                    obs.content_hash,
+                    obs.created_at,
+                    obs.importance_score,
+                    json.dumps(obs.tags),
+                    json.dumps(obs.metadata),
+                    obs.diff,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                obs.id,
-                obs.session_id,
-                obs.project,
-                obs.type,
-                obs.title,
-                obs.content,
-                obs.summary,
-                obs.content_hash,
-                obs.created_at,
-                obs.importance_score,
-                json.dumps(obs.tags),
-                json.dumps(obs.metadata),
-                obs.diff,
-            ),
-        )
-        await self.conn.commit()
-        duration_ms = (time.perf_counter() - start) * 1000
-        logger.debug(f"Observation added in {duration_ms:.2f}ms: {obs.id}")
+            await self.conn.commit()
+            duration_ms = (time.perf_counter() - start) * 1000
+            logger.debug(f"Observation added in {duration_ms:.2f}ms: {obs.id}")
+        except sqlite3.IntegrityError as e:
+            logger.error(f"Integrity error adding observation {obs.id}: {e}")
+            raise DatabaseIntegrityError(str(e), constraint="observations") from e
+        except Exception as e:
+            logger.error(f"Error adding observation {obs.id}: {e}")
+            raise
 
     async def find_observation_by_hash(
         self,

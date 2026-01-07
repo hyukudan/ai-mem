@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 import boto3
 
+from ..exceptions import APIError
 from .base import ChatProvider, ChatMessage
 
 DEFAULT_ANTHROPIC_VERSION = "bedrock-2023-05-31"
@@ -50,20 +51,23 @@ class BedrockProvider(ChatProvider):
         self.anthropic_version = anthropic_version
 
     def _invoke(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        response = self.client.invoke_model(
-            modelId=self.model_id,
-            body=json.dumps(payload),
-            accept="application/json",
-            contentType="application/json",
-        )
-        body = response.get("body")
-        if hasattr(body, "read"):
-            raw = body.read()
-        else:
-            raw = body
-        if isinstance(raw, (bytes, bytearray)):
-            raw = raw.decode("utf-8")
-        return json.loads(raw or "{}")
+        try:
+            response = self.client.invoke_model(
+                modelId=self.model_id,
+                body=json.dumps(payload),
+                accept="application/json",
+                contentType="application/json",
+            )
+            body = response.get("body")
+            if hasattr(body, "read"):
+                raw = body.read()
+            else:
+                raw = body
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8")
+            return json.loads(raw or "{}")
+        except Exception as e:
+            raise APIError("bedrock", None, f"Bedrock API error: {type(e).__name__}") from None
 
     def _sync_chat(
         self,

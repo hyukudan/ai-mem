@@ -7,7 +7,7 @@ import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 
@@ -18,10 +18,23 @@ from . import __version__
 from .memory import MemoryManager
 from .adapters import get_adapter
 from .events import ToolEvent, UserPromptEvent, SessionEvent
+from .exceptions import (
+    AiMemError,
+    ValidationError,
+    InvalidUUIDError,
+    ResourceNotFoundError,
+    ObservationNotFoundError,
+    SessionNotFoundError,
+    ProjectNotFoundError,
+    InvalidTokenError,
+    UnauthorizedError,
+    DatabaseError,
+    AdapterError,
+    UnknownHostError,
+    PayloadParseError,
+)
 
 import logging
-
-# ... imports ...
 
 logger = logging.getLogger("ai_mem.server")
 
@@ -50,6 +63,77 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="ai-mem Server", lifespan=lifespan)
+
+
+# =============================================================================
+# Exception Handlers
+# =============================================================================
+
+@app.exception_handler(InvalidUUIDError)
+async def invalid_uuid_handler(request: Request, exc: InvalidUUIDError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": exc.message, "field": exc.field, "value": exc.value},
+    )
+
+
+@app.exception_handler(ValidationError)
+async def validation_error_handler(request: Request, exc: ValidationError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": exc.message, "field": exc.field},
+    )
+
+
+@app.exception_handler(ResourceNotFoundError)
+async def not_found_handler(request: Request, exc: ResourceNotFoundError):
+    return JSONResponse(
+        status_code=404,
+        content={"detail": exc.message, "type": exc.resource_type, "id": exc.resource_id},
+    )
+
+
+@app.exception_handler(UnauthorizedError)
+async def unauthorized_handler(request: Request, exc: UnauthorizedError):
+    return JSONResponse(
+        status_code=401,
+        content={"detail": exc.message},
+    )
+
+
+@app.exception_handler(InvalidTokenError)
+async def invalid_token_handler(request: Request, exc: InvalidTokenError):
+    return JSONResponse(
+        status_code=401,
+        content={"detail": exc.message},
+    )
+
+
+@app.exception_handler(AdapterError)
+async def adapter_error_handler(request: Request, exc: AdapterError):
+    return JSONResponse(
+        status_code=400,
+        content={"detail": exc.message, "details": exc.details},
+    )
+
+
+@app.exception_handler(DatabaseError)
+async def database_error_handler(request: Request, exc: DatabaseError):
+    logger.error(f"Database error: {exc.message}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Database error occurred"},
+    )
+
+
+@app.exception_handler(AiMemError)
+async def ai_mem_error_handler(request: Request, exc: AiMemError):
+    logger.error(f"Application error: {exc.message}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": exc.message},
+    )
+
 
 _allowed_origins = os.environ.get("AI_MEM_ALLOWED_ORIGINS", "*").split(",")
 _allowed_origins = [o.strip() for o in _allowed_origins if o.strip()]
@@ -103,7 +187,7 @@ def _check_token(request: Request, query_token: Optional[str] = None) -> None:
     if not token and query_token:
         token = query_token
     if token != _api_token:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise InvalidTokenError()
 
 
 def _parse_list_param(value: Optional[str]) -> Optional[List[str]]:
@@ -169,7 +253,7 @@ def _validate_uuid(uid: str) -> None:
     try:
         uuid.UUID(uid)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid ID format")
+        raise InvalidUUIDError(uid)
 
 
 class SessionEndRequest(BaseModel):
@@ -320,9 +404,9 @@ async def ingest_event(req: EventIngestRequest, request: Request):
                 return {"status": "ok", "observation": obs.model_dump(), "event_type": "session"}
 
             # Could not parse the payload
-            raise HTTPException(
-                status_code=400,
-                detail=f"Could not parse payload with {req.host} adapter. Check payload format."
+            raise PayloadParseError(
+                req.host,
+                f"Could not parse payload with {req.host} adapter. Check payload format."
             )
 
         # Build content from tool event
@@ -373,7 +457,7 @@ async def ingest_event(req: EventIngestRequest, request: Request):
             "event_id": event.event_id,
         }
 
-    except HTTPException:
+    except (HTTPException, AiMemError):
         raise
     except Exception as exc:
         logger.error(f"Event ingestion error: {exc}", exc_info=True)
@@ -645,9 +729,9 @@ async def get_observation(obs_id: str, request: Request):
     try:
         results = await get_manager().get_observations([obs_id])
         if not results:
-            raise HTTPException(status_code=404, detail="Observation not found")
+            raise ObservationNotFoundError(obs_id)
         return results[0]
-    except HTTPException:
+    except (HTTPException, AiMemError):
         raise
     except Exception as exc:
         logger.error(f"Internal error: {exc}", exc_info=True)
@@ -659,10 +743,10 @@ async def update_observation(obs_id: str, payload: ObservationUpdate, request: R
     _check_token(request)
     _validate_uuid(obs_id)
     if payload.tags is None:
-        raise HTTPException(status_code=400, detail="No updates provided")
+        raise ValidationError(field="tags", message="No updates provided")
     updated = await get_manager().update_observation_tags(obs_id, payload.tags)
     if not updated:
-        raise HTTPException(status_code=404, detail="Observation not found")
+        raise ObservationNotFoundError(obs_id)
     return {"success": True}
 
 
@@ -704,7 +788,7 @@ async def get_session(session_id: str, request: Request):
     _check_token(request)
     session = await get_manager().get_session(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise SessionNotFoundError(session_id)
     return session
 
 
@@ -717,7 +801,7 @@ async def get_session_observations(
     _check_token(request)
     session = await get_manager().get_session(session_id)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise SessionNotFoundError(session_id)
     limit = min(max(1, limit), MAX_LIMIT) if limit is not None else None
     return await get_manager().export_observations(session_id=session_id, limit=limit)
 
@@ -742,7 +826,7 @@ async def end_session(payload: SessionEndRequest, request: Request):
     else:
         session = await get_manager().end_latest_session(payload.project)
     if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise SessionNotFoundError(payload.session_id or "latest")
     return session.model_dump()
 
 
@@ -891,7 +975,7 @@ async def delete_observation(obs_id: str, request: Request):
     _validate_uuid(obs_id)
     if await get_manager().delete_observation(obs_id):
         return {"success": True}
-    raise HTTPException(status_code=404, detail="Observation not found")
+    raise ObservationNotFoundError(obs_id)
 
 
 @app.post("/api/projects/delete")
