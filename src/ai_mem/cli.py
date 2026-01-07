@@ -486,6 +486,8 @@ def add(
     metadata_file: Optional[str] = typer.Option(None, help="JSON file with metadata"),
     attach_file: Optional[List[str]] = typer.Option(None, "--file", "-f", help="Attach file asset paths"),
     attach_diff: Optional[List[str]] = typer.Option(None, "--diff", help="Attach diff/patch asset paths"),
+    event_id: Optional[str] = typer.Option(None, "--event-id", help="Event ID for idempotency (skip if already processed)"),
+    host: Optional[str] = typer.Option(None, "--host", help="Host identifier (claude-code, gemini, cursor, etc.)"),
 ):
     """Store a new memory observation."""
     async def _run():
@@ -514,6 +516,8 @@ def add(
                 summarize=not no_summary,
                 metadata=metadata_payload or None,
                 assets=assets or None,
+                event_id=event_id,
+                host=host,
             )
             if not obs:
                 console.print("[yellow]Skipped: content marked as private.[/yellow]")

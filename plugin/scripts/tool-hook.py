@@ -9,7 +9,10 @@ This hook implements:
 - Minimum output filter (configurable via AI_MEM_MIN_OUTPUT_CHARS)
 - Failed tool filtering (configurable via AI_MEM_IGNORE_FAILED_TOOLS)
 - LLM-agnostic tagging (uses AI_MEM_HOST instead of hardcoded "claude-code")
+- Event ID idempotency (prevents duplicate observations from retried hooks)
 """
+
+import uuid
 
 from common import (
     emit_continue,
@@ -99,6 +102,9 @@ def main() -> int:
     if host and host != "unknown" and host not in tags:
         tags.append(host)
 
+    # Generate event_id for idempotency (prevents duplicates from retried hooks)
+    event_id = str(uuid.uuid4())
+
     args = ["add", content, "--obs-type", "tool_output"]
     for tag in tags:
         args += ["--tag", tag]
@@ -107,6 +113,11 @@ def main() -> int:
         args += ["--session-id", session_id]
     else:
         args += ["--project", project]
+
+    # Pass event_id and host for idempotency tracking
+    args += ["--event-id", event_id]
+    if host:
+        args += ["--host", host]
 
     run_ai_mem(args)
     emit_continue()

@@ -60,6 +60,10 @@
 ## Featured capabilities
 
 - **Model-agnostic context streaming** – Context chunks are formatted via the same helper no matter which model requests them, so your Claude Desktop session, Gemini CLI, or ChatGPT plugin can all read from a single source of truth.
+- **Multi-LLM simultaneous workflows** – Run Claude in one terminal, Gemini in another, Cursor in your IDE – all writing to the same shared memory. Each host tags its events so you can trace provenance.
+- **Ingestion filtering & redaction** – Skip noisy tools (TodoWrite, SlashCommand), truncate large outputs, and auto-redact secrets (API keys, passwords) before storage. See [Configuration Guide](docs/configuration.md#ingestion-filtering).
+- **Event Schema v1 + idempotency** – Canonical event format for all hosts, with event_id-based deduplication to prevent duplicate observations from retried hooks.
+- **Host adapters** – Built-in adapters translate Claude, Gemini, and custom payload formats to the unified Event Schema, so any LLM host can plug in without code changes.
 - **Shared metadata & scoreboard** – Responses include metadata that enumerates vector vs. FTS scores, recency, and cache hits/misses, letting you introspect model prompts before each completion.
 - **Endless Mode** – `ai-mem endless` polls the store at a configurable interval to keep total tokens within limits. See [Endless Mode Guide](docs/endless_mode.md).
 - **Snapshot-based syncing** – `ai-mem snapshot export`/`import`/`merge` round-trips checkpoints. See [Snapshots Guide](docs/snapshots.md).
