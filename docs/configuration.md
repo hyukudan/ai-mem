@@ -138,6 +138,99 @@ Cache hits are surfaced in the web viewer and by the `X-AI-MEM-Search-Cache` hea
 
 The viewer’s stats panel also reports cache hits/misses, TTL, and number of cached entries so you can watch reuse patterns while adjusting the settings.
 
+## Ingestion Filtering
+
+Control what tool executions get stored in memory. This reduces noise and protects sensitive data.
+
+```mermaid
+graph LR
+    A[Tool Event] --> B{Skip List?}
+    B -- Yes --> C[Discard]
+    B -- No --> D{Failed?}
+    D -- Yes & ignore_failed --> C
+    D -- No --> E{Min Output?}
+    E -- Too Short --> C
+    E -- OK --> F[Redact Secrets]
+    F --> G[Truncate]
+    G --> H[Store]
+```
+
+### Skip List (filter noise)
+
+Tools in the skip list are never stored:
+
+```bash
+# Default skip list
+export AI_MEM_SKIP_TOOL_NAMES="SlashCommand,Skill,TodoWrite,TodoRead,AskFollowupQuestion,AttemptCompletion"
+
+# Skip by prefix (e.g., all MCP tools)
+export AI_MEM_SKIP_TOOL_PREFIXES="mcp__,_internal"
+
+# Skip by category (if host provides category info)
+export AI_MEM_SKIP_TOOL_CATEGORIES="meta,admin"
+```
+
+### Truncation (control context size)
+
+Limit how much of tool input/output gets stored:
+
+```bash
+# Max characters to store (default 50000 output, 10000 input)
+export AI_MEM_MAX_OUTPUT_CHARS=50000
+export AI_MEM_MAX_INPUT_CHARS=10000
+
+# Skip tools with very short output (noise filter)
+export AI_MEM_MIN_OUTPUT_CHARS=50
+```
+
+### Failed Tools
+
+Optionally skip tools that failed:
+
+```bash
+export AI_MEM_IGNORE_FAILED_TOOLS=true
+```
+
+### Redaction Patterns
+
+Sensitive data matching these patterns is replaced with `[REDACTED]`:
+
+- API keys (`api_key=...`, `apikey:...`)
+- Authorization headers (`Authorization: Bearer ...`)
+- OpenAI keys (`sk-...`)
+- Google API keys (`AIza...`)
+
+Add custom patterns in `config.json`:
+
+```json
+{
+  "ingestion": {
+    "redaction_patterns": [
+      "(?i)api[_-]?key\\s*[=:]\\s*['\"]?[\\w\\-\\.]+",
+      "sk-[a-zA-Z0-9]{20,}",
+      "your-custom-pattern-here"
+    ]
+  }
+}
+```
+
+### Default Tags
+
+Tags added to all auto-ingested tool observations:
+
+```bash
+export AI_MEM_INGESTION_DEFAULT_TAGS="tool,auto-ingested"
+```
+
+### Host Identifier (LLM-agnostic)
+
+Tag observations with the host/agent that generated them:
+
+```bash
+# Set in your hook environment
+export AI_MEM_HOST=claude-code   # or gemini, cursor, custom
+```
+
 ## API Token (Optional)
 
 Set `AI_MEM_API_TOKEN` to require a bearer token on all API routes (including the UI).
