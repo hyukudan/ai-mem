@@ -192,6 +192,33 @@ def test_config_command_show():
             assert result.exit_code == 0
 
 
+def test_config_validate_help():
+    """Test the config-validate command help."""
+    result = runner.invoke(app, ["config-validate", "--help"])
+    assert result.exit_code == 0
+    assert "strict" in result.stdout.lower()
+    assert "quiet" in result.stdout.lower()
+
+
+def test_config_validate_default_valid():
+    """Test config-validate passes with default configuration."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = {"AI_MEM_DATA_DIR": tmpdir}
+        with patch.dict(os.environ, env):
+            result = runner.invoke(app, ["config-validate"])
+            assert result.exit_code == 0
+            assert "valid" in result.stdout.lower()
+
+
+def test_config_validate_quiet_mode():
+    """Test config-validate --quiet suppresses warnings."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        env = {"AI_MEM_DATA_DIR": tmpdir}
+        with patch.dict(os.environ, env):
+            result = runner.invoke(app, ["config-validate", "--quiet"])
+            assert result.exit_code == 0
+
+
 # =============================================================================
 # Test: Command argument validation
 # =============================================================================

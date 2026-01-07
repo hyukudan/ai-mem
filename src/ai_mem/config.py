@@ -1,9 +1,12 @@
 import json
 import os
+import re
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 
 from pydantic import BaseModel, Field, ConfigDict
+
+from .exceptions import ConfigurationError, InvalidConfigError, MissingConfigError
 
 
 class LLMConfig(BaseModel):
@@ -330,3 +333,251 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         config.ingestion.default_tags = default_tags
 
     return config
+
+
+# =============================================================================
+# Configuration Validation
+# =============================================================================
+
+# LLM providers that require API keys
+_LLM_API_KEY_REQUIRED = {"openai", "anthropic", "gemini", "azure-openai", "cohere"}
+
+# Embedding providers that require API keys
+_EMBEDDING_API_KEY_REQUIRED = {"openai", "cohere", "azure-openai", "voyageai"}
+
+# Vector providers that require external connections
+_VECTOR_EXTERNAL_PROVIDERS = {"pgvector", "qdrant"}
+
+
+def validate_config(config: AppConfig, strict: bool = False) -> Tuple[bool, List[str]]:
+    """Validate configuration settings.
+
+    Args:
+        config: The configuration to validate
+        strict: If True, treat warnings as errors
+
+    Returns:
+        Tuple of (is_valid, list of warning/error messages)
+
+    Raises:
+        MissingConfigError: If a required configuration value is missing
+        InvalidConfigError: If a configuration value is invalid
+    """
+    warnings: List[str] = []
+    errors: List[str] = []
+
+    # Validate LLM configuration
+    _validate_llm_config(config.llm, errors, warnings)
+
+    # Validate embedding configuration
+    _validate_embedding_config(config.embeddings, errors, warnings)
+
+    # Validate search configuration
+    _validate_search_config(config.search, errors, warnings)
+
+    # Validate vector store configuration
+    _validate_vector_config(config.vector, errors, warnings)
+
+    # Validate storage configuration
+    _validate_storage_config(config.storage, errors, warnings)
+
+    # Validate ingestion configuration
+    _validate_ingestion_config(config.ingestion, errors, warnings)
+
+    # Validate context configuration
+    _validate_context_config(config.context, errors, warnings)
+
+    # If strict mode, treat warnings as errors
+    if strict:
+        errors.extend(warnings)
+        warnings = []
+
+    if errors:
+        raise ConfigurationError(
+            f"Configuration validation failed with {len(errors)} error(s): {'; '.join(errors)}",
+            {"errors": errors, "warnings": warnings}
+        )
+
+    return len(errors) == 0, warnings
+
+
+def _validate_llm_config(llm: LLMConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate LLM configuration."""
+    provider = llm.provider.lower()
+
+    # Check API key requirements
+    if provider in _LLM_API_KEY_REQUIRED:
+        if not llm.api_key:
+            # Check environment variable fallbacks
+            env_key = os.environ.get(f"{provider.upper().replace('-', '_')}_API_KEY")
+            if not env_key:
+                errors.append(f"LLM provider '{provider}' requires an API key")
+
+    # Azure-specific validation
+    if provider == "azure-openai":
+        if not llm.base_url:
+            errors.append("Azure OpenAI requires 'base_url' (azure_endpoint)")
+        if not llm.api_version:
+            warnings.append("Azure OpenAI api_version not set, using default")
+
+    # Validate timeout
+    if llm.timeout_s <= 0:
+        errors.append(f"LLM timeout must be positive, got {llm.timeout_s}")
+    elif llm.timeout_s > 300:
+        warnings.append(f"LLM timeout is very high ({llm.timeout_s}s), may cause long hangs")
+
+
+def _validate_embedding_config(embeddings: EmbeddingConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate embedding configuration."""
+    provider = embeddings.provider.lower()
+
+    # Check API key requirements
+    if provider in _EMBEDDING_API_KEY_REQUIRED:
+        if not embeddings.api_key:
+            env_key = os.environ.get(f"{provider.upper().replace('-', '_')}_API_KEY")
+            if not env_key:
+                errors.append(f"Embedding provider '{provider}' requires an API key")
+
+
+def _validate_search_config(search: SearchConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate search configuration."""
+    # Validate chunk settings
+    if search.chunk_size <= 0:
+        errors.append(f"chunk_size must be positive, got {search.chunk_size}")
+    if search.chunk_overlap < 0:
+        errors.append(f"chunk_overlap must be non-negative, got {search.chunk_overlap}")
+    if search.chunk_overlap >= search.chunk_size:
+        errors.append(f"chunk_overlap ({search.chunk_overlap}) must be less than chunk_size ({search.chunk_size})")
+
+    # Validate top_k settings
+    if search.vector_top_k <= 0:
+        errors.append(f"vector_top_k must be positive, got {search.vector_top_k}")
+    if search.fts_top_k <= 0:
+        errors.append(f"fts_top_k must be positive, got {search.fts_top_k}")
+
+    # Validate cache settings
+    if search.cache_ttl_seconds < 0:
+        errors.append(f"cache_ttl_seconds must be non-negative, got {search.cache_ttl_seconds}")
+    if search.cache_max_entries < 0:
+        errors.append(f"cache_max_entries must be non-negative, got {search.cache_max_entries}")
+
+    # Validate weights (should be non-negative and reasonably sum)
+    if search.fts_weight < 0:
+        errors.append(f"fts_weight must be non-negative, got {search.fts_weight}")
+    if search.vector_weight < 0:
+        errors.append(f"vector_weight must be non-negative, got {search.vector_weight}")
+    if search.recency_weight < 0:
+        errors.append(f"recency_weight must be non-negative, got {search.recency_weight}")
+
+    total_weight = search.fts_weight + search.vector_weight + search.recency_weight
+    if total_weight == 0:
+        errors.append("At least one search weight (fts, vector, recency) must be positive")
+    elif total_weight > 10:
+        warnings.append(f"Total search weights ({total_weight}) are unusually high")
+
+    # Validate recency half-life
+    if search.recency_half_life_hours <= 0:
+        errors.append(f"recency_half_life_hours must be positive, got {search.recency_half_life_hours}")
+
+
+def _validate_vector_config(vector: VectorConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate vector store configuration."""
+    provider = vector.provider.lower()
+    valid_providers = {"chroma", "pgvector", "qdrant"}
+
+    if provider not in valid_providers:
+        warnings.append(f"Unknown vector provider '{provider}', valid options: {valid_providers}")
+
+    # PGVector-specific validation
+    if provider == "pgvector":
+        if not vector.pgvector_dsn:
+            env_dsn = os.environ.get("AI_MEM_PGVECTOR_DSN")
+            if not env_dsn:
+                errors.append("pgvector provider requires pgvector_dsn configuration")
+
+        if vector.pgvector_dimension <= 0:
+            errors.append(f"pgvector_dimension must be positive, got {vector.pgvector_dimension}")
+
+        valid_index_types = {"ivfflat", "hnsw"}
+        if vector.pgvector_index_type.lower() not in valid_index_types:
+            warnings.append(f"Unknown pgvector index type '{vector.pgvector_index_type}', valid: {valid_index_types}")
+
+        if vector.pgvector_lists <= 0:
+            errors.append(f"pgvector_lists must be positive, got {vector.pgvector_lists}")
+
+    # Qdrant-specific validation
+    if provider == "qdrant":
+        if not vector.qdrant_url:
+            env_url = os.environ.get("AI_MEM_QDRANT_URL")
+            if not env_url:
+                errors.append("qdrant provider requires qdrant_url configuration")
+
+        if vector.qdrant_vector_size <= 0:
+            errors.append(f"qdrant_vector_size must be positive, got {vector.qdrant_vector_size}")
+
+
+def _validate_storage_config(storage: StorageConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate storage configuration."""
+    # Check data_dir is a valid path format
+    try:
+        data_path = Path(storage.data_dir).expanduser()
+        # Check if parent directory exists or can be created
+        if data_path.exists() and not data_path.is_dir():
+            errors.append(f"data_dir '{storage.data_dir}' exists but is not a directory")
+    except Exception as e:
+        errors.append(f"Invalid data_dir path '{storage.data_dir}': {e}")
+
+
+def _validate_ingestion_config(ingestion: IngestionConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate ingestion configuration."""
+    # Validate character limits
+    if ingestion.max_output_chars <= 0:
+        errors.append(f"max_output_chars must be positive, got {ingestion.max_output_chars}")
+    if ingestion.max_input_chars <= 0:
+        errors.append(f"max_input_chars must be positive, got {ingestion.max_input_chars}")
+    if ingestion.min_output_chars < 0:
+        errors.append(f"min_output_chars must be non-negative, got {ingestion.min_output_chars}")
+
+    # Validate redaction patterns are valid regex
+    for i, pattern in enumerate(ingestion.redaction_patterns):
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            errors.append(f"Invalid regex in redaction_patterns[{i}]: {e}")
+
+
+def _validate_context_config(context: ContextConfig, errors: List[str], warnings: List[str]) -> None:
+    """Validate context configuration."""
+    if context.total_observation_count <= 0:
+        errors.append(f"total_observation_count must be positive, got {context.total_observation_count}")
+    if context.full_observation_count < 0:
+        errors.append(f"full_observation_count must be non-negative, got {context.full_observation_count}")
+    if context.full_observation_count > context.total_observation_count:
+        errors.append(
+            f"full_observation_count ({context.full_observation_count}) "
+            f"cannot exceed total_observation_count ({context.total_observation_count})"
+        )
+
+    valid_fields = {"content", "structured", "summary"}
+    if context.full_observation_field not in valid_fields:
+        warnings.append(
+            f"Unknown full_observation_field '{context.full_observation_field}', "
+            f"valid options: {valid_fields}"
+        )
+
+
+def load_and_validate_config(strict: bool = False) -> Tuple[AppConfig, List[str]]:
+    """Load and validate configuration.
+
+    Args:
+        strict: If True, treat warnings as errors
+
+    Returns:
+        Tuple of (validated config, list of warnings)
+
+    Raises:
+        ConfigurationError: If validation fails
+    """
+    config = load_config()
+    is_valid, warnings = validate_config(config, strict=strict)
+    return config, warnings

@@ -12,7 +12,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .config import load_config, update_config
+from .config import load_config, update_config, validate_config
+from .exceptions import ConfigurationError
 from .context import build_context, estimate_tokens
 from .memory import MemoryManager
 
@@ -472,6 +473,41 @@ def config(
 
     update_config(patch)
     console.print("[green]Configuration updated.[/green]")
+
+
+@app.command(name="config-validate")
+def config_validate(
+    strict: bool = typer.Option(False, "--strict", help="Treat warnings as errors"),
+    quiet: bool = typer.Option(False, "--quiet", "-q", help="Only show errors, suppress warnings"),
+):
+    """Validate the current configuration.
+
+    Checks for missing required values, invalid settings, and provider-specific requirements.
+    """
+    try:
+        config = load_config()
+        is_valid, warnings = validate_config(config, strict=strict)
+
+        if not quiet and warnings:
+            console.print("[yellow]Warnings:[/yellow]")
+            for warning in warnings:
+                console.print(f"  • {warning}")
+
+        console.print("[green]Configuration is valid.[/green]")
+
+    except ConfigurationError as e:
+        console.print(f"[red]Configuration validation failed:[/red]")
+        if hasattr(e, "details") and e.details:
+            errors = e.details.get("errors", [])
+            for error in errors:
+                console.print(f"  [red]✗[/red] {error}")
+            warnings = e.details.get("warnings", [])
+            if not quiet:
+                for warning in warnings:
+                    console.print(f"  [yellow]![/yellow] {warning}")
+        else:
+            console.print(f"  {e}")
+        raise typer.Exit(1)
 
 
 @app.command()
