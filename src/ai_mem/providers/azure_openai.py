@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from openai import AzureOpenAI
+from openai import AsyncAzureOpenAI
 
 from .base import ChatProvider, ChatMessage
 
@@ -14,7 +14,7 @@ class AzureOpenAIProvider(ChatProvider):
         deployment_name: str,
         timeout_s: float = 60.0,
     ):
-        self.client = AzureOpenAI(
+        self.client = AsyncAzureOpenAI(
             api_key=api_key,
             azure_endpoint=azure_endpoint,
             api_version=api_version,
@@ -22,13 +22,13 @@ class AzureOpenAIProvider(ChatProvider):
         )
         self.deployment_name = deployment_name
 
-    def chat(
+    async def chat(
         self,
         messages: List[ChatMessage],
         model: Optional[str] = None,
         temperature: float = 0.2,
     ) -> str:
-        response = self.client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=model or self.deployment_name,
             messages=[{"role": m.role, "content": m.content} for m in messages],
             temperature=temperature,

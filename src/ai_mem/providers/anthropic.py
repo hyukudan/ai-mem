@@ -35,9 +35,15 @@ class AnthropicProvider(ChatProvider):
         self.timeout_s = timeout_s
         self.anthropic_version = anthropic_version
         self.max_tokens = max_tokens
-        self.client = httpx.Client(timeout=timeout_s)
+        self._async_client: Optional[httpx.AsyncClient] = None
 
-    def chat(
+    def _get_async_client(self) -> httpx.AsyncClient:
+        """Get or create the async HTTP client."""
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(timeout=self.timeout_s)
+        return self._async_client
+
+    async def chat(
         self,
         messages: List[ChatMessage],
         model: Optional[str] = None,
@@ -54,7 +60,8 @@ class AnthropicProvider(ChatProvider):
             "anthropic-version": self.anthropic_version,
         }
         try:
-            response = self.client.post(
+            client = self._get_async_client()
+            response = await client.post(
                 f"{self.base_url}/v1/messages",
                 json=payload,
                 headers=headers,

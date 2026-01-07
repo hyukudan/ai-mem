@@ -1,3 +1,4 @@
+import asyncio
 import google.generativeai as genai
 from typing import List, Optional
 from .base import ChatProvider, ChatMessage
@@ -16,12 +17,12 @@ class GeminiProvider(ChatProvider):
         formatted.append("ASSISTANT:")
         return "\n".join(formatted)
 
-    def chat(
+    def _sync_chat(
         self,
         messages: List[ChatMessage],
-        model: Optional[str] = None,
         temperature: float = 0.2,
     ) -> str:
+        """Synchronous chat implementation."""
         prompt = self._format_messages(messages)
         try:
             response = self.model.generate_content(
@@ -32,6 +33,17 @@ class GeminiProvider(ChatProvider):
         except Exception as e:
             # Sanitize error to avoid leaking API key
             raise RuntimeError(f"Gemini API error: {type(e).__name__}") from None
+
+    async def chat(
+        self,
+        messages: List[ChatMessage],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+    ) -> str:
+        """Async chat using thread pool for blocking API call."""
+        return await asyncio.to_thread(
+            self._sync_chat, messages, temperature
+        )
 
     def get_name(self) -> str:
         return "gemini"

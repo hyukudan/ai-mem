@@ -545,8 +545,7 @@ class MemoryManager:
         if summary is None and len(cleaned_content) > 500:
             if summarize and self.allow_llm_summaries:
                 try:
-                    # TODO: Make chat_provider async in future refactor
-                    summary_text = await asyncio.to_thread(self.chat_provider.summarize, cleaned_content)
+                    summary_text = await self.chat_provider.summarize(cleaned_content)
                 except Exception:
                     summary_text = cleaned_content[:500] + "..."
             else:
@@ -1165,9 +1164,7 @@ class MemoryManager:
                 f"Observations:\n{source_text}"
             )
             try:
-                # TODO: Make chat_provider async in future refactor
-                summary_text = await asyncio.to_thread(
-                    self.chat_provider.chat,
+                summary_text = await self.chat_provider.chat(
                     [ChatMessage(role="user", content=prompt)],
                     temperature=0.2,
                 )

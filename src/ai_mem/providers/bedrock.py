@@ -1,5 +1,5 @@
+import asyncio
 import json
-import os
 from typing import Any, Dict, List, Optional
 
 import boto3
@@ -65,12 +65,13 @@ class BedrockProvider(ChatProvider):
             raw = raw.decode("utf-8")
         return json.loads(raw or "{}")
 
-    def chat(
+    def _sync_chat(
         self,
         messages: List[ChatMessage],
         model: Optional[str] = None,
         temperature: float = 0.2,
     ) -> str:
+        """Synchronous chat implementation."""
         model_id = model or self.model_id
         self.model_id = model_id
         if model_id.startswith("anthropic."):
@@ -136,6 +137,17 @@ class BedrockProvider(ChatProvider):
             if isinstance(value, str):
                 return value.strip()
         return ""
+
+    async def chat(
+        self,
+        messages: List[ChatMessage],
+        model: Optional[str] = None,
+        temperature: float = 0.2,
+    ) -> str:
+        """Async chat using thread pool for blocking API call."""
+        return await asyncio.to_thread(
+            self._sync_chat, messages, model, temperature
+        )
 
     def get_name(self) -> str:
         return "bedrock"
