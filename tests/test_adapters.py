@@ -5,8 +5,10 @@ import pytest
 from ai_mem.adapters import get_adapter
 from ai_mem.adapters.base import EventAdapter
 from ai_mem.adapters.claude import ClaudeAdapter
+from ai_mem.adapters.cursor import CursorAdapter
 from ai_mem.adapters.gemini import GeminiAdapter
 from ai_mem.adapters.generic import GenericAdapter
+from ai_mem.adapters.vscode import VSCodeAdapter
 from ai_mem.events import EventType, ToolCategory
 
 
@@ -27,12 +29,24 @@ class TestGetAdapter:
         adapter = get_adapter("gemini-cli")
         assert isinstance(adapter, GeminiAdapter)
 
+    def test_cursor_adapter(self):
+        adapter = get_adapter("cursor")
+        assert isinstance(adapter, CursorAdapter)
+
+    def test_cursor_ai_adapter(self):
+        adapter = get_adapter("cursor-ai")
+        assert isinstance(adapter, CursorAdapter)
+
+    def test_vscode_adapter(self):
+        adapter = get_adapter("vscode")
+        assert isinstance(adapter, VSCodeAdapter)
+
+    def test_vscode_copilot_adapter(self):
+        adapter = get_adapter("github-copilot")
+        assert isinstance(adapter, VSCodeAdapter)
+
     def test_generic_adapter_fallback(self):
         adapter = get_adapter("unknown-host")
-        assert isinstance(adapter, GenericAdapter)
-
-    def test_cursor_uses_generic(self):
-        adapter = get_adapter("cursor")
         assert isinstance(adapter, GenericAdapter)
 
 
@@ -289,3 +303,176 @@ class TestAdapterProjectContext:
         }
         event = adapter.parse_tool_event(payload)
         assert event.context.cwd == "/home/user"
+
+
+class TestCursorAdapter:
+    def test_parse_tool_event_basic(self):
+        adapter = CursorAdapter()
+        payload = {
+            "name": "edit_file",
+            "arguments": {"path": "/src/main.py", "content": "new code"},
+            "output": "File edited successfully",
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event is not None
+        assert event.tool.name == "edit_file"
+        assert event.tool.input == {"path": "/src/main.py", "content": "new code"}
+        assert event.tool.output == "File edited successfully"
+        assert event.source.host == "cursor"
+
+    def test_parse_tool_event_openai_format(self):
+        adapter = CursorAdapter()
+        # Cursor often uses OpenAI-compatible format
+        payload = {
+            "tool_call": {
+                "id": "call_123",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{"path": "/src/main.py"}',
+                },
+            },
+            "result": "file contents...",
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event is not None
+        assert event.tool.name == "read_file"
+        assert event.tool.output == "file contents..."
+        assert event.metadata.get("tool_call_id") == "call_123"
+
+    def test_parse_tool_event_with_latency(self):
+        adapter = CursorAdapter()
+        payload = {
+            "name": "run_terminal",
+            "latency_ms": 250,
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event.tool.latency_ms == 250
+
+    def test_parse_tool_event_failed(self):
+        adapter = CursorAdapter()
+        payload = {
+            "name": "read_file",
+            "error": "File not found",
+            "failed": True,
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event.tool.success is False
+        assert event.tool.error == "File not found"
+
+    def test_tool_category_mapping(self):
+        adapter = CursorAdapter()
+
+        edit_event = adapter.parse_tool_event({"name": "apply_edit"})
+        assert edit_event.tool.category == ToolCategory.FILESYSTEM
+
+        terminal_event = adapter.parse_tool_event({"name": "run_terminal"})
+        assert terminal_event.tool.category == ToolCategory.SHELL
+
+        search_event = adapter.parse_tool_event({"name": "search_codebase"})
+        assert search_event.tool.category == ToolCategory.SEARCH
+
+    def test_parse_returns_none_for_empty(self):
+        adapter = CursorAdapter()
+        event = adapter.parse_tool_event({})
+        assert event is None
+
+
+class TestVSCodeAdapter:
+    def test_parse_tool_event_basic(self):
+        adapter = VSCodeAdapter()
+        payload = {
+            "command": "editor.action.formatDocument",
+            "args": {"documentUri": "file:///src/main.py"},
+            "result": "Document formatted",
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event is not None
+        assert event.tool.name == "editor.action.formatDocument"
+        assert event.tool.output == "Document formatted"
+        assert event.source.host == "vscode"
+
+    def test_parse_tool_event_copilot(self):
+        adapter = VSCodeAdapter()
+        payload = {
+            "action": "copilot.chat.explain",
+            "input": {"selection": "function foo() {}"},
+            "output": "This function...",
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event is not None
+        assert event.tool.name == "copilot.chat.explain"
+        assert event.tool.input == {"selection": "function foo() {}"}
+
+    def test_parse_tool_event_with_file_context(self):
+        adapter = VSCodeAdapter()
+        payload = {
+            "command": "editor.action.refactor",
+            "activeFile": "/src/main.py",
+            "result": "Refactored",
+        }
+        event = adapter.parse_tool_event(payload)
+        assert "/src/main.py" in event.context.files_touched
+
+    def test_parse_tool_event_with_extension_id(self):
+        adapter = VSCodeAdapter()
+        payload = {
+            "command": "extension.myTool",
+            "extensionId": "publisher.my-extension",
+            "languageId": "python",
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event.metadata.get("extension_id") == "publisher.my-extension"
+        assert event.metadata.get("language") == "python"
+
+    def test_parse_tool_event_with_success_field(self):
+        adapter = VSCodeAdapter()
+        payload = {
+            "command": "test.run",
+            "success": True,
+        }
+        event = adapter.parse_tool_event(payload)
+        assert event.tool.success is True
+
+        payload["success"] = False
+        event = adapter.parse_tool_event(payload)
+        assert event.tool.success is False
+
+    def test_tool_category_mapping(self):
+        adapter = VSCodeAdapter()
+
+        # Editor actions
+        edit_event = adapter.parse_tool_event({"command": "editor.action.formatDocument"})
+        assert edit_event.tool.category == ToolCategory.FILESYSTEM
+
+        # Terminal actions
+        terminal_event = adapter.parse_tool_event({"command": "terminal.runCommand"})
+        assert terminal_event.tool.category == ToolCategory.SHELL
+
+        # Git actions
+        git_event = adapter.parse_tool_event({"command": "git.commit"})
+        assert git_event.tool.category == ToolCategory.SHELL
+
+        # Copilot actions
+        copilot_event = adapter.parse_tool_event({"command": "copilot.explain"})
+        assert copilot_event.tool.category == ToolCategory.META
+
+        # Workbench actions
+        workbench_event = adapter.parse_tool_event({"command": "workbench.action.showCommands"})
+        assert workbench_event.tool.category == ToolCategory.META
+
+    def test_parse_returns_none_for_empty(self):
+        adapter = VSCodeAdapter()
+        event = adapter.parse_tool_event({})
+        assert event is None
+
+
+class TestAdapterHostNames:
+    def test_cursor_adapter_host(self):
+        adapter = CursorAdapter()
+        event = adapter.parse_tool_event({"name": "test"})
+        assert event.source.host == "cursor"
+
+    def test_vscode_adapter_host(self):
+        adapter = VSCodeAdapter()
+        event = adapter.parse_tool_event({"command": "test"})
+        assert event.source.host == "vscode"
