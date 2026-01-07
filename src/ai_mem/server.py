@@ -1772,5 +1772,271 @@ async def get_user_memory_count(request: Request):
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+# =============================================================================
+# Query Expansion & Intent Detection Endpoints
+# =============================================================================
+
+
+@app.post("/api/intent/detect")
+async def detect_intent_endpoint(
+    request: Request,
+    prompt: str = Query(..., description="Prompt to analyze"),
+):
+    """Detect intent from a user prompt.
+
+    Analyzes the prompt to extract:
+    - Primary action (create, fix, update, etc.)
+    - Technical entities (files, functions, classes)
+    - Technical concepts
+    - Important keywords
+    - Generated search query
+    """
+    _check_token(request)
+    try:
+        from .intent import detect_intent, should_inject_context
+
+        intent = detect_intent(prompt)
+        should_inject, reason = should_inject_context(prompt)
+
+        return {
+            "action": intent.action,
+            "entities": intent.entities,
+            "concepts": intent.concepts,
+            "keywords": intent.keywords,
+            "query": intent.query,
+            "should_inject_context": should_inject,
+            "inject_reason": reason,
+        }
+    except Exception as exc:
+        logger.error(f"Detect intent error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/query/expand")
+async def expand_query_endpoint(
+    request: Request,
+    query: str = Query(..., description="Query to expand"),
+    max_synonyms: int = Query(2, description="Max synonyms per term"),
+    max_terms: int = Query(15, description="Max total expanded terms"),
+):
+    """Expand a search query with synonyms and variations.
+
+    This LLM-agnostic expansion:
+    - Adds technical synonyms (e.g., "auth" → "authentication", "login")
+    - Adds case variations (e.g., "get_user" → "getUser", "GetUser")
+    - Preserves original terms as highest priority
+    """
+    _check_token(request)
+    try:
+        from .intent import expand_query
+
+        result = expand_query(
+            query,
+            max_synonyms_per_term=max_synonyms,
+            max_total_terms=max_terms,
+        )
+
+        return {
+            "original": result.original,
+            "expanded_terms": result.expanded_terms,
+            "all_queries": result.all_queries,
+            "expansion_count": result.expansion_count,
+        }
+    except Exception as exc:
+        logger.error(f"Expand query error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/query/generate")
+async def generate_query_endpoint(
+    request: Request,
+    prompt: str = Query(..., description="Prompt to generate query from"),
+    expand: bool = Query(False, description="Also expand the generated query"),
+    max_queries: int = Query(3, description="Max query variants if expanding"),
+):
+    """Generate search query from a user prompt.
+
+    Optionally expands the query with synonyms for better recall.
+    """
+    _check_token(request)
+    try:
+        from .intent import generate_context_query, generate_expanded_queries
+
+        if expand:
+            queries = generate_expanded_queries(prompt, max_queries=max_queries)
+            return {
+                "prompt": prompt,
+                "queries": queries,
+                "expanded": True,
+            }
+        else:
+            query = generate_context_query(prompt)
+            return {
+                "prompt": prompt,
+                "query": query,
+                "expanded": False,
+            }
+    except Exception as exc:
+        logger.error(f"Generate query error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# =============================================================================
+# Inline Tags Endpoints
+# =============================================================================
+
+
+@app.post("/api/tags/parse")
+async def parse_tags_endpoint(
+    request: Request,
+    prompt: str = Query(..., description="Prompt with <mem> tags to parse"),
+):
+    """Parse inline <mem> tags in a prompt without expanding them.
+
+    Recognizes tags like:
+    - <mem query="auth"/>
+    - <mem query="database" limit="5" mode="compact"/>
+    - <mem query="user" type="decision" tags="api,backend"/>
+    """
+    _check_token(request)
+    try:
+        from .inline_tags import parse_prompt
+
+        parsed = parse_prompt(prompt)
+
+        return {
+            "original": parsed.original,
+            "has_tags": parsed.has_tags,
+            "cleaned": parsed.cleaned,
+            "tags": [
+                {
+                    "raw": t.raw,
+                    "query": t.query,
+                    "limit": t.limit,
+                    "project": t.project,
+                    "obs_type": t.obs_type,
+                    "tags": t.tags,
+                    "mode": t.mode,
+                }
+                for t in parsed.tags
+            ],
+        }
+    except Exception as exc:
+        logger.error(f"Parse tags error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/tags/expand")
+async def expand_tags_endpoint(
+    request: Request,
+    prompt: str = Query(..., description="Prompt with <mem> tags to expand"),
+    project: str = Query(None, description="Default project for queries"),
+):
+    """Expand inline <mem> tags in a prompt with actual memory content.
+
+    Replaces <mem> tags with retrieved memory context.
+    """
+    _check_token(request)
+    try:
+        from .inline_tags import expand_mem_tags, has_mem_tags
+
+        if not has_mem_tags(prompt):
+            return {
+                "original": prompt,
+                "expanded": prompt,
+                "expansions": [],
+                "has_tags": False,
+            }
+
+        manager = get_manager()
+        expanded, expansions = await expand_mem_tags(
+            prompt,
+            manager,
+            default_project=project,
+        )
+
+        return {
+            "original": prompt,
+            "expanded": expanded,
+            "expansions": expansions,
+            "has_tags": True,
+        }
+    except Exception as exc:
+        logger.error(f"Expand tags error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# =============================================================================
+# Token Budget Endpoints
+# =============================================================================
+
+
+@app.get("/api/tokens/budget")
+async def check_token_budget_endpoint(
+    request: Request,
+    tokens_used: int = Query(..., description="Number of tokens used"),
+    model: str = Query(None, description="Model for context window lookup"),
+    max_budget: int = Query(None, description="Override max budget"),
+):
+    """Check if token usage exceeds recommended thresholds.
+
+    Returns warning info if usage is above thresholds:
+    - info: >15% of budget
+    - warning: >30% of budget
+    - critical: >50% of budget
+    """
+    _check_token(request)
+    try:
+        from .context import check_token_budget, get_model_context_window
+
+        warning = check_token_budget(
+            tokens_used,
+            model=model,
+            max_budget=max_budget,
+        )
+
+        context_window = get_model_context_window(model)
+
+        if warning:
+            return {
+                "has_warning": True,
+                "level": warning.level,
+                "message": warning.message,
+                "tokens_used": warning.tokens_used,
+                "tokens_budget": warning.tokens_budget,
+                "percentage": warning.percentage,
+                "recommendations": warning.recommendations,
+                "model_context_window": context_window,
+            }
+        else:
+            return {
+                "has_warning": False,
+                "tokens_used": tokens_used,
+                "model_context_window": context_window,
+            }
+    except Exception as exc:
+        logger.error(f"Check token budget error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/api/tokens/models")
+async def list_model_context_windows(request: Request):
+    """List known model context window sizes.
+
+    Returns a mapping of model names to their context window sizes.
+    """
+    _check_token(request)
+    try:
+        from .context import MODEL_CONTEXT_WINDOWS
+
+        return {
+            "models": MODEL_CONTEXT_WINDOWS,
+            "default": MODEL_CONTEXT_WINDOWS.get("default", 16000),
+        }
+    except Exception as exc:
+        logger.error(f"List models error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 def start_server(host: str = "0.0.0.0", port: int = 8000):
     uvicorn.run(app, host=host, port=port)

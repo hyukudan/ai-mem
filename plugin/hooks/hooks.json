@@ -1,5 +1,5 @@
 {
-  "description": "ai-mem memory hooks",
+  "description": "ai-mem memory hooks with smart context injection",
   "hooks": {
     "SessionStart": [
       {
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/user-prompt-hook.py\"",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/smart-inject-hook.py\"",
             "timeout": 60
           }
         ]
