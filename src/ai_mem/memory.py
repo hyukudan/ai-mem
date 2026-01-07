@@ -630,6 +630,132 @@ class MemoryManager:
         logger.debug(f"Observation added in {duration_ms:.2f}ms: id={obs.id}, type={obs.type}")
         return obs
 
+    async def add_observations_batch(
+        self,
+        observations: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Add multiple observations in a batch.
+
+        Args:
+            observations: List of observation dicts with keys:
+                - content (required): Text content
+                - obs_type: Observation type (default: "note")
+                - project: Project path
+                - session_id: Session ID
+                - tags: List of tags
+                - metadata: Dict of metadata
+                - title: Optional title
+                - summarize: Whether to summarize (default: True)
+
+        Returns:
+            Dict with:
+                - added: Number of observations added
+                - skipped: Number skipped (private content)
+                - failed: Number that failed
+                - ids: List of added observation IDs
+                - errors: List of error messages for failed items
+        """
+        logger.info(f"Batch adding {len(observations)} observations")
+        start = time.perf_counter()
+
+        added = 0
+        skipped = 0
+        failed = 0
+        ids: List[str] = []
+        errors: List[Dict[str, Any]] = []
+
+        for i, obs_data in enumerate(observations):
+            try:
+                content = obs_data.get("content")
+                if not content:
+                    errors.append({"index": i, "error": "Missing required field: content"})
+                    failed += 1
+                    continue
+
+                obs = await self.add_observation(
+                    content=content,
+                    obs_type=obs_data.get("obs_type", "note"),
+                    project=obs_data.get("project"),
+                    session_id=obs_data.get("session_id"),
+                    tags=obs_data.get("tags"),
+                    metadata=obs_data.get("metadata"),
+                    title=obs_data.get("title"),
+                    summarize=obs_data.get("summarize", True),
+                    event_id=obs_data.get("event_id"),
+                    host=obs_data.get("host"),
+                )
+
+                if obs:
+                    added += 1
+                    ids.append(obs.id)
+                else:
+                    skipped += 1
+
+            except Exception as e:
+                errors.append({"index": i, "error": str(e)})
+                failed += 1
+                logger.warning(f"Batch add failed for item {i}: {e}")
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            f"Batch add complete in {duration_ms:.2f}ms: "
+            f"added={added}, skipped={skipped}, failed={failed}"
+        )
+
+        return {
+            "added": added,
+            "skipped": skipped,
+            "failed": failed,
+            "ids": ids,
+            "errors": errors,
+        }
+
+    async def delete_observations_batch(
+        self,
+        obs_ids: List[str],
+    ) -> Dict[str, Any]:
+        """Delete multiple observations in a batch.
+
+        Args:
+            obs_ids: List of observation IDs to delete
+
+        Returns:
+            Dict with:
+                - deleted: Number of observations deleted
+                - not_found: Number that were not found
+                - ids: List of deleted observation IDs
+        """
+        logger.info(f"Batch deleting {len(obs_ids)} observations")
+        start = time.perf_counter()
+
+        deleted = 0
+        not_found = 0
+        deleted_ids: List[str] = []
+
+        for obs_id in obs_ids:
+            try:
+                result = await self.delete_observation(obs_id)
+                if result:
+                    deleted += 1
+                    deleted_ids.append(obs_id)
+                else:
+                    not_found += 1
+            except Exception as e:
+                not_found += 1
+                logger.warning(f"Batch delete failed for {obs_id}: {e}")
+
+        duration_ms = (time.perf_counter() - start) * 1000
+        logger.info(
+            f"Batch delete complete in {duration_ms:.2f}ms: "
+            f"deleted={deleted}, not_found={not_found}"
+        )
+
+        return {
+            "deleted": deleted,
+            "not_found": not_found,
+            "ids": deleted_ids,
+        }
+
     def _normalize_assets(self, assets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized: List[Dict[str, Any]] = []
         for entry in assets:

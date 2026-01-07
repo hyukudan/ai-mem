@@ -530,3 +530,118 @@ def test_cors_preflight(client):
     )
     # Should not fail, may return 200 or 204
     assert response.status_code in [200, 204, 405]
+
+
+# =============================================================================
+# Test: Batch operations
+# =============================================================================
+
+
+def test_batch_add_memories_success(client, auth_headers):
+    """Test batch adding multiple memories."""
+    response = client.post(
+        "/api/memories/batch",
+        json={
+            "observations": [
+                {"content": "Batch test memory 1", "obs_type": "note"},
+                {"content": "Batch test memory 2", "obs_type": "note"},
+                {"content": "Batch test memory 3", "obs_type": "note"},
+            ]
+        },
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "added" in data
+    assert "skipped" in data
+    assert "failed" in data
+    assert "ids" in data
+    assert data["added"] == 3
+    assert len(data["ids"]) == 3
+
+
+def test_batch_add_memories_empty(client, auth_headers):
+    """Test batch adding with empty list."""
+    response = client.post(
+        "/api/memories/batch",
+        json={"observations": []},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["added"] == 0
+
+
+def test_batch_add_memories_wrong_token(client):
+    """Test batch add with wrong token fails."""
+    response = client.post(
+        "/api/memories/batch",
+        json={"observations": [{"content": "Test", "obs_type": "note"}]},
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    # May return 401 (if token is required) or 200 (if token not configured)
+    assert response.status_code in [200, 401]
+
+
+def test_batch_delete_observations_success(client, auth_headers):
+    """Test batch deleting observations."""
+    # First add some observations
+    add_response = client.post(
+        "/api/memories/batch",
+        json={
+            "observations": [
+                {"content": "To be deleted 1", "obs_type": "note"},
+                {"content": "To be deleted 2", "obs_type": "note"},
+            ]
+        },
+        headers=auth_headers,
+    )
+    assert add_response.status_code == 200
+    added_ids = add_response.json()["ids"]
+
+    # Now delete them
+    response = client.post(
+        "/api/observations/batch/delete",
+        json={"ids": added_ids},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "deleted" in data
+    assert "not_found" in data
+    assert "ids" in data
+    assert data["deleted"] == 2
+
+
+def test_batch_delete_not_found(client, auth_headers):
+    """Test batch delete with non-existent IDs."""
+    response = client.post(
+        "/api/observations/batch/delete",
+        json={"ids": ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]},
+        headers=auth_headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["deleted"] == 0
+    assert data["not_found"] == 2
+
+
+def test_batch_delete_invalid_uuid(client, auth_headers):
+    """Test batch delete with invalid UUID."""
+    response = client.post(
+        "/api/observations/batch/delete",
+        json={"ids": ["not-a-valid-uuid"]},
+        headers=auth_headers,
+    )
+    assert response.status_code == 400
+
+
+def test_batch_delete_wrong_token(client):
+    """Test batch delete with wrong token fails."""
+    response = client.post(
+        "/api/observations/batch/delete",
+        json={"ids": ["00000000-0000-0000-0000-000000000001"]},
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    # May return 401 (if token is required) or 200 (if token not configured)
+    assert response.status_code in [200, 401]
