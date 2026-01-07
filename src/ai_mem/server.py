@@ -221,6 +221,16 @@ class ObservationIds(BaseModel):
     ids: List[str]
 
 
+class BatchMemoryInput(BaseModel):
+    """Input for batch add memories."""
+    observations: List[MemoryInput] = Field(..., description="List of observations to add")
+
+
+class BatchDeleteInput(BaseModel):
+    """Input for batch delete observations."""
+    ids: List[str] = Field(..., description="List of observation IDs to delete")
+
+
 class ObservationUpdate(BaseModel):
     tags: Optional[List[str]] = None
 
@@ -333,6 +343,70 @@ async def add_memory(mem: MemoryInput, request: Request):
         return obs.model_dump()
     except Exception as exc:
         logger.error(f"Internal error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/memories/batch")
+async def add_memories_batch(batch: BatchMemoryInput, request: Request):
+    """Add multiple memories in a single batch request.
+
+    This is more efficient than making multiple individual requests when adding
+    many observations at once.
+
+    Returns:
+        - added: Number of observations successfully added
+        - skipped: Number skipped (e.g., private content)
+        - failed: Number that failed to add
+        - ids: List of added observation IDs
+        - errors: List of error details for failed items
+    """
+    _check_token(request)
+    try:
+        manager = get_manager()
+        observations = [
+            {
+                "content": mem.content,
+                "obs_type": mem.obs_type,
+                "project": mem.project,
+                "session_id": mem.session_id,
+                "tags": mem.tags,
+                "metadata": mem.metadata,
+                "title": mem.title,
+                "summarize": mem.summarize,
+            }
+            for mem in batch.observations
+        ]
+        result = await manager.add_observations_batch(observations)
+        return result
+    except Exception as exc:
+        logger.error(f"Batch add error: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/observations/batch/delete")
+async def delete_observations_batch(batch: BatchDeleteInput, request: Request):
+    """Delete multiple observations in a single batch request.
+
+    This is more efficient than making multiple individual delete requests.
+
+    Returns:
+        - deleted: Number of observations successfully deleted
+        - not_found: Number that were not found
+        - ids: List of deleted observation IDs
+    """
+    _check_token(request)
+    try:
+        # Validate all IDs are valid UUIDs
+        for obs_id in batch.ids:
+            _validate_uuid(obs_id)
+
+        manager = get_manager()
+        result = await manager.delete_observations_batch(batch.ids)
+        return result
+    except (HTTPException, AiMemError):
+        raise
+    except Exception as exc:
+        logger.error(f"Batch delete error: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
