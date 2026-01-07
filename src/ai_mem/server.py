@@ -869,7 +869,7 @@ async def list_observations(
     date_end: Optional[str] = None,
     since: Optional[str] = None,
     tags: Optional[str] = None,
-    limit: Optional[int] = None,
+    limit: int = 50,
 ):
     _check_token(request)
     if date_start is None and since is not None:
@@ -881,7 +881,7 @@ async def list_observations(
         date_start=date_start,
         date_end=date_end,
         tag_filters=_parse_list_param(tags),
-        limit=limit,
+        limit=min(limit, MAX_LIMIT),
     )
 
 
@@ -911,7 +911,7 @@ async def export_observations(
     date_end: Optional[str] = None,
     since: Optional[str] = None,
     tags: Optional[str] = None,
-    limit: Optional[int] = None,
+    limit: int = 1000,
     format: Optional[str] = None,
 ):
     _check_token(request)
@@ -924,7 +924,7 @@ async def export_observations(
         date_start=date_start,
         date_end=date_end,
         tag_filters=_parse_list_param(tags),
-        limit=limit,
+        limit=min(limit, MAX_LIMIT),
     )
     fmt = (format or "json").lower()
     if fmt == "json":
