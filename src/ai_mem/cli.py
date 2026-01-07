@@ -1267,13 +1267,10 @@ def tag_delete(
     date_start: Optional[str] = typer.Option(None, help="Start date (YYYY-MM-DD or epoch)"),
     date_end: Optional[str] = typer.Option(None, help="End date (YYYY-MM-DD or epoch)"),
     force: bool = typer.Option(False, help="Skip confirmation prompt"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without actually deleting"),
     filter_tag: Optional[List[str]] = typer.Option(None, "--filter-tag", help="Additional tag filter (any match)"),
 ):
     """Delete a tag across matching observations."""
-    if not force:
-        confirm = typer.confirm(f"Delete tag '{tag_value}' from matching observations?")
-        if not confirm:
-            raise typer.Exit(1)
     async def _run():
         manager = get_memory_manager()
         await manager.initialize()
@@ -1285,6 +1282,38 @@ def tag_delete(
                 project = os.getcwd()
             if all_projects:
                 project = None
+
+            if dry_run:
+                # Query observations that have this tag to show what would be affected
+                # We need to include the tag in filter_tag to find matching observations
+                tag_filters_with_target = list(filter_tag) if filter_tag else []
+                tag_filters_with_target.append(tag_value)
+                results = await manager.list_observations(
+                    project=project,
+                    session_id=session_id,
+                    obs_type=obs_type,
+                    date_start=date_start,
+                    date_end=date_end,
+                    tags=tag_filters_with_target,
+                    limit=1000,
+                )
+                count = len(results)
+                console.print(f"[yellow]DRY RUN - Would remove tag '{tag_value}' from {count} observation(s)[/yellow]")
+                if count > 0 and count <= 10:
+                    console.print("[dim]Affected observations:[/dim]")
+                    for obs in results:
+                        console.print(f"  - {obs.get('id')}: {obs.get('type', 'unknown')} ({obs.get('project', 'no project')})")
+                elif count > 10:
+                    console.print(f"[dim]First 10 of {count} affected observations:[/dim]")
+                    for obs in results[:10]:
+                        console.print(f"  - {obs.get('id')}: {obs.get('type', 'unknown')} ({obs.get('project', 'no project')})")
+                return
+
+            if not force:
+                confirm = typer.confirm(f"Delete tag '{tag_value}' from matching observations?")
+                if not confirm:
+                    raise typer.Exit(1)
+
             updated = await manager.delete_tag(
                 tag=tag_value,
                 project=project,
@@ -2149,17 +2178,42 @@ def snapshot_merge(
 def delete(
     obs_id: str = typer.Argument(..., help="Observation ID to delete"),
     force: bool = typer.Option(False, help="Skip confirmation prompt"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without actually deleting"),
 ):
     """Delete a single observation."""
-    if not force:
-        confirm = typer.confirm(f"Delete observation {obs_id}?")
-        if not confirm:
-            raise typer.Exit(1)
-    manager = get_memory_manager()
-    if manager.delete_observation(obs_id):
-        console.print(f"[green]Deleted observation {obs_id}[/green]")
-    else:
-        console.print(f"[yellow]Observation not found: {obs_id}[/yellow]")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            results = await manager.get_observations([obs_id])
+            if not results:
+                console.print(f"[yellow]Observation not found: {obs_id}[/yellow]")
+                raise typer.Exit(1)
+
+            if dry_run:
+                obs = results[0]
+                console.print("[yellow]DRY RUN - Would delete:[/yellow]")
+                console.print(f"  ID: {obs.get('id')}")
+                console.print(f"  Type: {obs.get('type')}")
+                console.print(f"  Title: {obs.get('title', 'N/A')}")
+                console.print(f"  Project: {obs.get('project')}")
+                console.print(f"  Created: {obs.get('created_at')}")
+                return
+
+            nonlocal force
+            if not force:
+                confirm = typer.confirm(f"Delete observation {obs_id}?")
+                if not confirm:
+                    raise typer.Exit(1)
+
+            if await manager.delete_observation(obs_id):
+                console.print(f"[green]Deleted observation {obs_id}[/green]")
+            else:
+                console.print(f"[yellow]Observation not found: {obs_id}[/yellow]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command(name="update-tags")
@@ -2189,20 +2243,45 @@ def update_tags(
 def delete_project(
     project: str = typer.Argument(..., help="Project path to delete"),
     force: bool = typer.Option(False, help="Skip confirmation prompt"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be deleted without actually deleting"),
 ):
     """Delete all observations for a project."""
-    if not force:
-        confirm = typer.confirm(f"Delete all observations for {project}?")
-        if not confirm:
-            raise typer.Exit(1)
-    manager = get_memory_manager()
-    deleted = manager.delete_project(project)
-    console.print(f"[green]Deleted {deleted} observations for {project}[/green]")
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            # Count observations that would be affected
+            stats = await manager.db.get_stats(project=project)
+            count = stats.get("total", 0)
+
+            if dry_run:
+                console.print("[yellow]DRY RUN - Would delete:[/yellow]")
+                console.print(f"  Project: {project}")
+                console.print(f"  Observations: {count}")
+                return
+
+            if count == 0:
+                console.print(f"[yellow]No observations found for project: {project}[/yellow]")
+                return
+
+            nonlocal force
+            if not force:
+                confirm = typer.confirm(f"Delete {count} observations for {project}?")
+                if not confirm:
+                    raise typer.Exit(1)
+
+            deleted = await manager.delete_project(project)
+            console.print(f"[green]Deleted {deleted} observations for {project}[/green]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
 
 
 @app.command()
 def cleanup_events(
     max_age_days: int = typer.Option(30, help="Delete event IDs older than this many days"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be cleaned up without actually deleting"),
 ):
     """Clean up old event idempotency records.
 
@@ -2214,6 +2293,21 @@ def cleanup_events(
         manager = get_memory_manager()
         await manager.initialize()
         try:
+            if dry_run:
+                # Count records that would be deleted
+                import time
+                cutoff = time.time() - (max_age_days * 86400)
+                async with manager.db.conn.execute(
+                    "SELECT COUNT(*) FROM event_idempotency WHERE processed_at < ?",
+                    (cutoff,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    count = row[0] if row else 0
+                console.print("[yellow]DRY RUN - Would clean up:[/yellow]")
+                console.print(f"  Records older than: {max_age_days} days")
+                console.print(f"  Records to delete: {count}")
+                return
+
             deleted = await manager.db.cleanup_old_event_ids(max_age_days=max_age_days)
             console.print(f"[green]Cleaned up {deleted} old event idempotency records (older than {max_age_days} days)[/green]")
         finally:
