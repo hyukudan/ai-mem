@@ -140,6 +140,16 @@ class DatabaseManager:
         await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_sessions_start ON sessions(start_time)"
         )
+        # Additional composite indexes for common query patterns
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observations_project_type ON observations(project, type)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observations_session_created ON observations(session_id, created_at DESC)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observations_type_created ON observations(type, created_at DESC)"
+        )
         await self.conn.commit()
         await self._ensure_columns()
         await self._ensure_asset_table()
