@@ -66,6 +66,45 @@ class ContextConfig(BaseModel):
     wrap_context_tag: bool = True
 
 
+class IngestionConfig(BaseModel):
+    """Configuration for event ingestion and filtering."""
+
+    # Tools to skip entirely (exact match)
+    skip_tool_names: list[str] = Field(
+        default_factory=lambda: [
+            "SlashCommand",
+            "Skill",
+            "TodoWrite",
+            "TodoRead",
+            "AskFollowupQuestion",
+            "AttemptCompletion",
+        ]
+    )
+    # Tool name prefixes to skip (e.g., "mcp__" for MCP tools, "_internal")
+    skip_tool_prefixes: list[str] = Field(default_factory=list)
+    # Tool categories to skip (if host provides category info)
+    skip_tool_categories: list[str] = Field(default_factory=list)
+    # Maximum output characters to store (truncate if exceeded)
+    max_output_chars: int = 50000
+    # Maximum input characters to store
+    max_input_chars: int = 10000
+    # Skip tools that failed (success=false)
+    ignore_failed_tools: bool = False
+    # Minimum output length to consider storing (filter noise)
+    min_output_chars: int = 0
+    # Regex patterns for content that should be fully redacted (replaced with [REDACTED])
+    redaction_patterns: list[str] = Field(
+        default_factory=lambda: [
+            r"(?i)(api[_-]?key|apikey|secret[_-]?key|password|passwd|token|bearer)\s*[=:]\s*['\"]?[\w\-\.]+['\"]?",
+            r"(?i)authorization:\s*bearer\s+[\w\-\.]+",
+            r"sk-[a-zA-Z0-9]{20,}",  # OpenAI API keys
+            r"AIza[a-zA-Z0-9_\-]{35}",  # Google API keys
+        ]
+    )
+    # Tags to add to all ingested tool observations
+    default_tags: list[str] = Field(default_factory=lambda: ["tool", "auto-ingested"])
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -75,6 +114,7 @@ class AppConfig(BaseModel):
     search: SearchConfig = Field(default_factory=SearchConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     vector: VectorConfig = Field(default_factory=VectorConfig)
+    ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
 
 
 def _config_path() -> Path:
@@ -261,5 +301,32 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
         config.vector.qdrant_collection = qdrant_collection
     if qdrant_vector_size is not None:
         config.vector.qdrant_vector_size = qdrant_vector_size
+
+    # Ingestion config overrides
+    skip_tools = _env_list("AI_MEM_SKIP_TOOL_NAMES")
+    skip_prefixes = _env_list("AI_MEM_SKIP_TOOL_PREFIXES")
+    skip_categories = _env_list("AI_MEM_SKIP_TOOL_CATEGORIES")
+    max_output = _env_int("AI_MEM_MAX_OUTPUT_CHARS")
+    max_input = _env_int("AI_MEM_MAX_INPUT_CHARS")
+    ignore_failed = _env_bool("AI_MEM_IGNORE_FAILED_TOOLS")
+    min_output = _env_int("AI_MEM_MIN_OUTPUT_CHARS")
+    default_tags = _env_list("AI_MEM_INGESTION_DEFAULT_TAGS")
+
+    if skip_tools is not None:
+        config.ingestion.skip_tool_names = skip_tools
+    if skip_prefixes is not None:
+        config.ingestion.skip_tool_prefixes = skip_prefixes
+    if skip_categories is not None:
+        config.ingestion.skip_tool_categories = skip_categories
+    if max_output is not None:
+        config.ingestion.max_output_chars = max_output
+    if max_input is not None:
+        config.ingestion.max_input_chars = max_input
+    if ignore_failed is not None:
+        config.ingestion.ignore_failed_tools = ignore_failed
+    if min_output is not None:
+        config.ingestion.min_output_chars = min_output
+    if default_tags is not None:
+        config.ingestion.default_tags = default_tags
 
     return config
