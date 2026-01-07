@@ -15,6 +15,7 @@ from .embeddings.base import EmbeddingProvider
 from .models import Observation, ObservationAsset, ObservationIndex, Session
 from .providers.base import ChatMessage, ChatProvider, NoOpChatProvider
 from .privacy import strip_memory_tags
+from .structured import combine_extraction, StructuredData
 from .vector_store import build_vector_store
 
 
@@ -541,6 +542,17 @@ class MemoryManager:
 
         if not session:
             return None
+
+        # Extract structured data from content
+        structured = combine_extraction(
+            content=cleaned_content,
+            tool_name=metadata.get("tool_name") if metadata else None,
+            tool_input=metadata.get("tool_input") if metadata else None,
+            tool_output=metadata.get("tool_output") if metadata else None,
+        )
+        if not structured.is_empty():
+            metadata = dict(metadata) if metadata else {}
+            metadata["structured"] = structured.to_dict()
 
         obs = Observation(
             session_id=session.id,

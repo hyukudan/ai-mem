@@ -1,46 +1,162 @@
 #!/usr/bin/env python3
-"""Tool hook for ai-mem: captures tool executions with filtering and redaction.
+"""Tool hook for ai-mem: captures tool executions via the /api/events endpoint.
 
 This hook implements:
 - Skip list filtering (configurable via AI_MEM_SKIP_TOOL_NAMES)
 - Prefix filtering (configurable via AI_MEM_SKIP_TOOL_PREFIXES)
-- Output truncation (configurable via AI_MEM_MAX_OUTPUT_CHARS)
-- Input truncation (configurable via AI_MEM_MAX_INPUT_CHARS)
-- Minimum output filter (configurable via AI_MEM_MIN_OUTPUT_CHARS)
 - Failed tool filtering (configurable via AI_MEM_IGNORE_FAILED_TOOLS)
-- LLM-agnostic tagging (uses AI_MEM_HOST instead of hardcoded "claude-code")
+- Minimum output filter (configurable via AI_MEM_MIN_OUTPUT_CHARS)
+- LLM-agnostic event ingestion (uses AI_MEM_HOST for adapter selection)
 - Event ID idempotency (prevents duplicate observations from retried hooks)
+
+The hook sends raw payloads to /api/events, which uses host-specific adapters
+to parse tool events into the canonical Event Schema v1 format.
 """
 
+import json
+import os
+import sys
+import urllib.request
+import urllib.error
 import uuid
 
 from common import (
     emit_continue,
     first_present,
-    get_default_tags,
     get_host_identifier,
     get_ignore_failed_tools,
-    get_max_input_chars,
-    get_max_output_chars,
     get_min_output_chars,
     load_payload,
     resolve_project,
     resolve_session_id,
-    run_ai_mem,
     should_skip_tool,
     stringify,
-    truncate_text,
 )
+
+
+def get_api_url() -> str:
+    """Get the ai-mem API URL from environment or use default."""
+    return os.environ.get("AI_MEM_API_URL", "http://localhost:37777")
+
+
+def get_api_token() -> str:
+    """Get the API token from environment."""
+    return os.environ.get("AI_MEM_API_TOKEN", "")
+
+
+def send_event_to_api(host: str, payload: dict, session_id: str = None, project: str = None) -> bool:
+    """Send a raw event payload to the /api/events endpoint.
+
+    Returns True if successful, False otherwise.
+    """
+    api_url = get_api_url()
+    token = get_api_token()
+
+    request_body = {
+        "host": host,
+        "payload": payload,
+        "summarize": True,
+    }
+
+    if session_id:
+        request_body["session_id"] = session_id
+    if project:
+        request_body["project"] = project
+
+    data = json.dumps(request_body).encode("utf-8")
+
+    headers = {
+        "Content-Type": "application/json",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        req = urllib.request.Request(
+            f"{api_url}/api/events",
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return response.status == 200
+    except urllib.error.URLError:
+        # Server not running or network error - fall back to CLI
+        return False
+    except Exception:
+        return False
+
+
+def fallback_to_cli(payload: dict, host: str, session_id: str, project: str) -> None:
+    """Fall back to using ai-mem CLI if API is not available."""
+    from common import (
+        get_default_tags,
+        get_max_input_chars,
+        get_max_output_chars,
+        run_ai_mem,
+        truncate_text,
+    )
+
+    # Extract tool info manually (old behavior)
+    tool_name = first_present(payload, ["tool_name", "tool", "name"])
+    tool_input = first_present(payload, ["tool_input", "input", "tool_args", "arguments"])
+    tool_output = first_present(payload, ["tool_response", "response", "result", "output"])
+
+    # Truncate if needed
+    max_input = get_max_input_chars()
+    max_output = get_max_output_chars()
+
+    input_str = stringify(tool_input) if tool_input is not None else ""
+    output_str = stringify(tool_output) if tool_output is not None else ""
+
+    if max_input > 0:
+        input_str = truncate_text(input_str, max_input)
+    if max_output > 0:
+        output_str = truncate_text(output_str, max_output)
+
+    # Build content
+    parts = []
+    if tool_name:
+        parts.append(f"Tool: {stringify(tool_name)}")
+    if input_str:
+        parts.append(f"Input: {input_str}")
+    if output_str:
+        parts.append(f"Output: {output_str}")
+
+    content = "\n".join(parts).strip()
+    if not content:
+        return
+
+    # Build tags
+    tags = get_default_tags()
+    if host and host != "unknown" and host not in tags:
+        tags.append(host)
+
+    event_id = str(uuid.uuid4())
+
+    args = ["add", content, "--obs-type", "tool_output"]
+    for tag in tags:
+        args += ["--tag", tag]
+
+    if session_id:
+        args += ["--session-id", session_id]
+    else:
+        args += ["--project", project]
+
+    args += ["--event-id", event_id]
+    if host:
+        args += ["--host", host]
+
+    run_ai_mem(args)
 
 
 def main() -> int:
     payload = load_payload()
 
-    # Extract tool information from payload (multiple possible field names for compatibility)
+    # Extract tool name for filtering (before sending to API)
     tool_name = first_present(payload, ["tool_name", "tool", "name"])
-    tool_input = first_present(payload, ["tool_input", "input", "tool_args", "arguments"])
-    tool_output = first_present(payload, ["tool_response", "response", "result", "output"])
     tool_success = first_present(payload, ["success", "tool_success", "succeeded"])
+    tool_output = first_present(payload, ["tool_response", "response", "result", "output"])
 
     # === FILTERING LOGIC ===
 
@@ -61,65 +177,24 @@ def main() -> int:
         emit_continue()
         return 0
 
-    # === CONTENT PREPARATION ===
-
-    # Truncate input/output if too large
-    max_input = get_max_input_chars()
-    max_output = get_max_output_chars()
-
-    input_str = stringify(tool_input) if tool_input is not None else ""
-    if max_input > 0:
-        input_str = truncate_text(input_str, max_input)
-    if max_output > 0:
-        output_str = truncate_text(output_str, max_output)
-
-    # Build content only if we have something meaningful
-    if not tool_name and not input_str and not output_str:
+    # 4. Skip if no tool name
+    if not tool_name:
         emit_continue()
         return 0
 
-    parts = []
-    if tool_name:
-        parts.append(f"Tool: {stringify(tool_name)}")
-    if input_str:
-        parts.append(f"Input: {input_str}")
-    if output_str:
-        parts.append(f"Output: {output_str}")
+    # === SEND TO API ===
 
-    content = "\n".join(parts).strip()
-    if not content:
-        emit_continue()
-        return 0
-
-    # === STORAGE ===
-
-    project = resolve_project(payload)
-    session_id = resolve_session_id(payload)
-
-    # Build tags: use configurable defaults + host identifier
-    tags = get_default_tags()
     host = get_host_identifier()
-    if host and host != "unknown" and host not in tags:
-        tags.append(host)
+    session_id = resolve_session_id(payload)
+    project = resolve_project(payload)
 
-    # Generate event_id for idempotency (prevents duplicates from retried hooks)
-    event_id = str(uuid.uuid4())
+    # Try to send via API (uses adapters server-side)
+    success = send_event_to_api(host, payload, session_id, project)
 
-    args = ["add", content, "--obs-type", "tool_output"]
-    for tag in tags:
-        args += ["--tag", tag]
+    if not success:
+        # Fall back to CLI if API is not available
+        fallback_to_cli(payload, host, session_id, project)
 
-    if session_id:
-        args += ["--session-id", session_id]
-    else:
-        args += ["--project", project]
-
-    # Pass event_id and host for idempotency tracking
-    args += ["--event-id", event_id]
-    if host:
-        args += ["--host", host]
-
-    run_ai_mem(args)
     emit_continue()
     return 0
 

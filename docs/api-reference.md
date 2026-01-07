@@ -28,10 +28,77 @@ When you run `ai-mem server`, interactive documentation is available at [http://
 | Method | Endpoint | Description | Key Parameters |
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/memories` | **Add Memory** | `content`, `project`, `session_id`, `tags` |
+| `POST` | `/api/events` | **Ingest Event** | `host`, `payload`, `session_id`, `tags` |
 | `GET` | `/api/search` | **Search** | `q`, `start_date`, `end_date`, `limit` |
 | `GET` | `/api/timeline` | **Timeline** | `session_id`, `depth_before`, `depth_after` |
 | `GET` | `/api/observations` | **List All** | `limit`, `since`, `project` |
 | `GET` | `/api/observations/{id}` | **Get One** | `id` |
+
+### Event Ingestion
+
+The `/api/events` endpoint accepts raw events from any LLM host and converts them to observations using host-specific adapters.
+
+**Request Format:**
+
+```json
+{
+  "host": "gemini",
+  "payload": {
+    "tool_name": "Read",
+    "tool_input": {"path": "/src/main.py"},
+    "tool_response": "file contents..."
+  },
+  "session_id": "optional-session-id",
+  "project": "/optional/project/path",
+  "tags": ["optional", "extra-tags"],
+  "summarize": true
+}
+```
+
+**Supported Hosts:**
+
+| Host Value | Adapter | Payload Format |
+| :--- | :--- | :--- |
+| `claude-code`, `claude-desktop` | ClaudeAdapter | `tool_name`, `tool_input`, `tool_response` |
+| `gemini`, `gemini-cli` | GeminiAdapter | `function_call.name`, `function_call.args`, `function_response.response` |
+| Any other | GenericAdapter | Auto-detects from common field names |
+
+**Response Format:**
+
+```json
+{
+  "status": "ok",
+  "observation": {
+    "id": "obs_abc123",
+    "content": "Tool: Read\nInput: {...}\nOutput: ...",
+    "type": "tool_output",
+    "tags": ["gemini", "tool", "auto-ingested"],
+    "created_at": 1704672000.0
+  },
+  "event_type": "tool_use",
+  "event_id": "uuid-for-idempotency"
+}
+```
+
+**Idempotency:**
+
+Each event is assigned an `event_id` for deduplication. If the same `event_id` is sent twice, the existing observation is returned without creating a duplicate.
+
+**Example with curl:**
+
+```bash
+curl -X POST http://localhost:37777/api/events \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $AI_MEM_API_TOKEN" \
+  -d '{
+    "host": "cursor",
+    "payload": {
+      "tool_name": "Bash",
+      "tool_input": {"command": "npm test"},
+      "tool_response": "All tests passed"
+    }
+  }'
+```
 
 ### Session Management
 
