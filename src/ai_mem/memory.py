@@ -935,22 +935,28 @@ class MemoryManager:
             item.vector_score = None
             obs_map[item.id] = item
 
+        # ⚡ Optimize: Batch fetch missing observations (avoid N+1)
+        missing_ids = [obs_id for obs_id in vector_hits.keys() if obs_id not in obs_map]
+        if missing_ids:
+            # Batch fetch all missing observations at once
+            missing_obs = await self.db.get_observations(missing_ids)
+            for obs in missing_obs:
+                score = vector_hits[obs["id"]]
+                obs_map[obs["id"]] = ObservationIndex(
+                    id=obs["id"],
+                    summary=obs["summary"] or "",
+                    project=obs["project"],
+                    type=obs["type"],
+                    created_at=obs["created_at"],
+                    fts_score=None,
+                    vector_score=score,
+                )
+        
+        # Update scores for observations that appear in both searches
         for obs_id, score in vector_hits.items():
             if obs_id in obs_map:
                 existing = obs_map[obs_id]
                 existing.vector_score = max(existing.vector_score or 0.0, score)
-            else:
-                obs = await self.db.get_observation(obs_id)
-                if obs:
-                    obs_map[obs_id] = ObservationIndex(
-                        id=obs["id"],
-                        summary=obs["summary"] or "",
-                        project=obs["project"],
-                        type=obs["type"],
-                        created_at=obs["created_at"],
-                        fts_score=None,
-                        vector_score=score,
-                    )
 
         combined_results: List[ObservationIndex] = []
         for item in obs_map.values():
