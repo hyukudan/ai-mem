@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 
 import uvicorn
@@ -450,6 +450,14 @@ else:
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ]
+    
+    # 🔐 Security: Warn if wildcard is in origins
+    if "*" in _allowed_origins:
+        logger.warning(
+            "SECURITY WARNING: CORS allow_origins contains '*' - "
+            "this allows any website to access the API. "
+            "Set AI_MEM_CORS_ORIGINS for production."
+        )
 
 app.add_middleware(
     CORSMiddleware,
@@ -457,22 +465,35 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-AI-Mem-Token"],
+    max_age=3600,  # Cache preflight for 1 hour
 )
 
-# Rate limiting (optional - requires slowapi)
-_rate_limit = os.environ.get("AI_MEM_RATE_LIMIT", "")
-if _rate_limit:
-    try:
-        from slowapi import Limiter, _rate_limit_exceeded_handler
-        from slowapi.util import get_remote_address
-        from slowapi.errors import RateLimitExceeded
-        
-        limiter = Limiter(key_func=get_remote_address, default_limits=[_rate_limit])
-        app.state.limiter = limiter
-        app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-        logger.info(f"Rate limiting enabled: {_rate_limit}")
-    except ImportError:
-        logger.warning("Rate limiting requested but slowapi is not installed. Run: pip install slowapi")
+# 🔐 Rate limiting for DoS protection
+try:
+    from slowapi import Limiter
+    from slowapi.util import get_remote_address
+    from slowapi.errors import RateLimitExceeded
+    
+    _rate_limit_default = os.environ.get("AI_MEM_RATE_LIMIT", "100 per minute")
+    
+    limiter = Limiter(key_func=get_remote_address, default_limits=[_rate_limit_default])
+    app.state.limiter = limiter
+    
+    @app.exception_handler(RateLimitExceeded)
+    async def _rate_limit_handler(request: Request, exc: RateLimitExceeded):
+        return JSONResponse(
+            status_code=429,
+            content={
+                "error": "rate_limit_exceeded",
+                "message": "Too many requests. Please try again later.",
+                "detail": str(exc.detail) if exc.detail else None,
+            }
+        )
+    
+    logger.info(f"🔐 Rate limiting enabled: {_rate_limit_default}")
+except ImportError:
+    logger.warning("slowapi not installed. Rate limiting disabled. Run: pip install slowapi")
+    limiter = None
 
 _manager: Optional[MemoryManager] = None
 _api_token = os.environ.get("AI_MEM_API_TOKEN")
@@ -527,12 +548,24 @@ class MemoryInput(BaseModel):
 
 class EventIngestRequest(BaseModel):
     """Request to ingest a raw event from any LLM host."""
-    host: str = Field(default="generic", description="Host identifier: claude-code, gemini, cursor, etc.")
+    host: str = Field(default="generic", description="Host identifier: claude-code, gemini, cursor, etc.", min_length=1, max_length=50)
     payload: Dict[str, Any] = Field(..., description="Raw event payload from the host")
     session_id: Optional[str] = Field(default=None, description="Session ID override")
     project: Optional[str] = Field(default=None, description="Project path override")
     tags: List[str] = Field(default_factory=list, description="Additional tags")
     summarize: bool = Field(default=True, description="Enable summarization")
+    
+    class Config:
+        extra = "forbid"  # 🔐 Security: Reject unknown fields
+    
+    @field_validator('host')
+    @classmethod
+    def validate_host_whitelist(cls, v: str) -> str:
+        """🔐 Validate host is in allowed list."""
+        ALLOWED_HOSTS = {"claude", "gemini", "vscode", "cursor", "generic", "claude-code", "claude-desktop", "anthropic"}
+        if v not in ALLOWED_HOSTS:
+            raise ValueError(f"Host '{v}' not allowed. Valid hosts: {', '.join(ALLOWED_HOSTS)}")
+        return v
 
 
 class ObservationIds(BaseModel):

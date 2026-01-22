@@ -23,6 +23,7 @@ dependencies = [
     "pgvector>=0.4.2",
     "aiosqlite>=0.19.0",
     "pytest-asyncio>=0.23.0",
+    "slowapi>=0.1.8",  # 🔐 Security: Rate limiting
 ]
 requires-python = ">=3.10"
 readme = "README.md"
