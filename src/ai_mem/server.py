@@ -496,7 +496,10 @@ except ImportError:
     limiter = None
 
 _manager: Optional[MemoryManager] = None
-_api_token = os.environ.get("AI_MEM_API_TOKEN")
+
+# 🔐 Get API token from secure storage (keyring) or environment
+from .secrets import SecretManager
+_api_token = SecretManager.get_api_token()
 
 # Constants
 MAX_LIMIT = 1000

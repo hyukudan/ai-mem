@@ -24,6 +24,7 @@ dependencies = [
     "aiosqlite>=0.19.0",
     "pytest-asyncio>=0.23.0",
     "slowapi>=0.1.8",  # 🔐 Security: Rate limiting
+    "keyring>=24.0.0",  # 🔐 Security: Secure credential storage
 ]
 requires-python = ">=3.10"
 readme = "README.md"
