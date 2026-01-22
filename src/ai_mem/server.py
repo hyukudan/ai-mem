@@ -85,27 +85,51 @@ async def root():
     """
 
 
+# Cache for dashboard HTML (read once, serve many)
+_dashboard_cache: Optional[str] = None
+_dashboard_cache_time: float = 0
+
+
 @app.get("/ui", response_class=HTMLResponse)
 async def serve_dashboard():
-    """Serve the main dashboard UI."""
+    """Serve the main dashboard UI with caching."""
+    global _dashboard_cache, _dashboard_cache_time
+    import time
+
     index_path = UI_DIR / "index.html"
-    if not index_path.exists():
-        raise HTTPException(status_code=404, detail="Dashboard UI not found")
-    return index_path.read_text()
+
+    # Check cache validity (refresh every hour in production)
+    current_time = time.time()
+    if _dashboard_cache is None or (current_time - _dashboard_cache_time) > CACHE_MAX_AGE:
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="Dashboard UI not found")
+        _dashboard_cache = index_path.read_text()
+        _dashboard_cache_time = current_time
+
+    return _dashboard_cache
 
 
 @app.get("/ui/{path:path}", response_class=HTMLResponse)
 async def serve_ui_files(path: str):
-    """Serve UI static files."""
+    """Serve UI static files with path traversal protection."""
+    # Security: validate path BEFORE constructing file path
+    # Reject any path with traversal attempts
+    if ".." in path or path.startswith("/") or "\\" in path:
+        raise HTTPException(status_code=403, detail="Access denied: invalid path")
+
     file_path = UI_DIR / path
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail="File not found")
-    # Security: ensure path is within UI_DIR
+    resolved_path = file_path.resolve()
+
+    # Security: ensure resolved path is within UI_DIR
     try:
-        file_path.resolve().relative_to(UI_DIR.resolve())
+        resolved_path.relative_to(UI_DIR.resolve())
     except ValueError:
-        raise HTTPException(status_code=403, detail="Access denied")
-    return file_path.read_text()
+        raise HTTPException(status_code=403, detail="Access denied: path outside UI directory")
+
+    if not resolved_path.exists() or not resolved_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return resolved_path.read_text()
 
 
 # =============================================================================
@@ -412,15 +436,27 @@ async def ai_mem_error_handler(request: Request, exc: AiMemError):
     )
 
 
-_allowed_origins = os.environ.get("AI_MEM_ALLOWED_ORIGINS", "*").split(",")
-_allowed_origins = [o.strip() for o in _allowed_origins if o.strip()]
+# CORS Configuration - secure by default
+# Set AI_MEM_ALLOWED_ORIGINS="*" to allow all origins (NOT recommended for production)
+# Example: AI_MEM_ALLOWED_ORIGINS="http://localhost:3000,https://myapp.com"
+_cors_env = os.environ.get("AI_MEM_ALLOWED_ORIGINS", "")
+if _cors_env:
+    _allowed_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+else:
+    # Secure default: only localhost variations
+    _allowed_origins = [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-AI-Mem-Token"],
 )
 
 # Rate limiting (optional - requires slowapi)
@@ -439,10 +475,12 @@ if _rate_limit:
         logger.warning("Rate limiting requested but slowapi is not installed. Run: pip install slowapi")
 
 _manager: Optional[MemoryManager] = None
-_manager: Optional[MemoryManager] = None
 _api_token = os.environ.get("AI_MEM_API_TOKEN")
+
+# Constants
 MAX_LIMIT = 1000
-MAX_LIMIT = 1000
+DEFAULT_LIMIT = 50
+CACHE_MAX_AGE = 3600  # 1 hour for static content
 
 
 def get_manager() -> MemoryManager:
@@ -452,7 +490,12 @@ def get_manager() -> MemoryManager:
     return _manager
 
 
-def _check_token(request: Request, query_token: Optional[str] = None) -> None:
+def _check_token(request: Request) -> None:
+    """Validate API token from headers only (not query params for security).
+
+    Tokens in query parameters are logged in server access logs, which is a security risk.
+    Use Authorization header or X-AI-Mem-Token header instead.
+    """
     if not _api_token:
         return
     auth = request.headers.get("authorization") or ""
@@ -461,8 +504,6 @@ def _check_token(request: Request, query_token: Optional[str] = None) -> None:
         token = auth.split(" ", 1)[1].strip()
     if not token:
         token = request.headers.get("x-ai-mem-token", "")
-    if not token and query_token:
-        token = query_token
     if token != _api_token:
         raise InvalidTokenError()
 
@@ -1650,9 +1691,12 @@ async def stream_memories(
     query: Optional[str] = None,
     obs_type: Optional[str] = None,
     tags: Optional[str] = None,
-    token: Optional[str] = None,
 ):
-    _check_token(request, query_token=token)
+    """Stream memories in real-time via Server-Sent Events.
+
+    Authentication: Use Authorization header (Bearer token) or X-AI-Mem-Token header.
+    """
+    _check_token(request)
     manager = get_manager()
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()

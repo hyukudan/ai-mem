@@ -806,11 +806,15 @@
                 return;
             }
 
-            listEl.innerHTML = observations.map(obs => `
+            listEl.innerHTML = observations.map(obs => {
+                const safeId = escapeHtml(obs.id || '');
+                const safeType = escapeHtml(obs.type || 'note');
+                const validType = /^[a-z_]+$/.test(obs.type) ? obs.type : 'note';
+                return `
                 <div class="observation-item ${selectedObservation?.id === obs.id ? 'selected' : ''}"
-                     onclick="selectObservation('${obs.id}')">
+                     data-obs-id="${safeId}">
                     <div class="obs-header">
-                        <span class="obs-type ${obs.type}">${obs.type}</span>
+                        <span class="obs-type ${validType}">${safeType}</span>
                         <span class="obs-time">${formatTime(obs.created_at)}</span>
                     </div>
                     <div class="obs-summary">${escapeHtml(obs.summary || '')}</div>
@@ -820,9 +824,19 @@
                             ${obs.tags.length > 3 ? `<span class="obs-tag">+${obs.tags.length - 3}</span>` : ''}
                         </div>
                     ` : ''}
-                    ${obs.token_estimate ? `<div class="obs-tokens">${obs.token_estimate} tokens</div>` : ''}
+                    ${obs.token_estimate ? `<div class="obs-tokens">${Number(obs.token_estimate) || 0} tokens</div>` : ''}
                 </div>
-            `).join('');
+            `;}).join('');
+
+            // Add click handlers safely (avoiding inline onclick XSS)
+            listEl.querySelectorAll('.observation-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const obsId = item.dataset.obsId;
+                    if (obsId && /^[a-f0-9-]+$/i.test(obsId)) {
+                        selectObservation(obsId);
+                    }
+                });
+            });
         }
 
         function renderDetails(obs) {
@@ -841,18 +855,27 @@
                 return;
             }
 
+            const safeId = escapeHtml(obs.id || '');
+            const safeType = escapeHtml(obs.type || 'note');
+            const validType = /^[a-z_]+$/.test(obs.type) ? obs.type : 'note';
+            const safeTimestamp = Number(obs.created_at) || 0;
+            const endlessData = obs.metadata?.endless || {};
+            const compressionRatio = Number(endlessData.compression_ratio) || 0;
+            const origTokens = Number(endlessData.original_tokens) || 0;
+            const compTokens = Number(endlessData.compressed_tokens) || 0;
+
             detailsEl.innerHTML = `
                 <div class="detail-section">
                     <div class="detail-label">ID</div>
-                    <div class="detail-value"><code>${obs.id}</code></div>
+                    <div class="detail-value"><code>${safeId}</code></div>
                 </div>
                 <div class="detail-section">
                     <div class="detail-label">Type</div>
-                    <div class="detail-value"><span class="obs-type ${obs.type}">${obs.type}</span></div>
+                    <div class="detail-value"><span class="obs-type ${validType}">${safeType}</span></div>
                 </div>
                 <div class="detail-section">
                     <div class="detail-label">Created</div>
-                    <div class="detail-value">${new Date(obs.created_at * 1000).toLocaleString()}</div>
+                    <div class="detail-value">${new Date(safeTimestamp * 1000).toLocaleString()}</div>
                 </div>
                 <div class="detail-section">
                     <div class="detail-label">Project</div>
@@ -880,8 +903,8 @@
                     <div class="detail-section">
                         <div class="detail-label">Endless Mode</div>
                         <div class="detail-value">
-                            Compressed ${obs.metadata.endless.compression_ratio?.toFixed(1)}x
-                            (${obs.metadata.endless.original_tokens} → ${obs.metadata.endless.compressed_tokens} tokens)
+                            Compressed ${compressionRatio.toFixed(1)}x
+                            (${origTokens} → ${compTokens} tokens)
                         </div>
                     </div>
                 ` : ''}

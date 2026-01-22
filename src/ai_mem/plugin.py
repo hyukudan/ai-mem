@@ -56,8 +56,9 @@ def get_plugin_info() -> PluginInfo:
     if VERSION_FILE.exists():
         try:
             version_data = json.loads(VERSION_FILE.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            # Graceful degradation - use defaults if file is corrupted
+            logger.debug(f"Could not read version file: {e}")
 
     return PluginInfo(
         name="ai-mem",
@@ -86,8 +87,8 @@ def save_version_info(
     if VERSION_FILE.exists():
         try:
             version_data = json.loads(VERSION_FILE.read_text())
-        except Exception:
-            pass
+        except (json.JSONDecodeError, OSError) as e:
+            logger.debug(f"Could not read existing version file: {e}")
 
     # Update data
     now = datetime.utcnow().isoformat() + "Z"

@@ -316,8 +316,9 @@ class MemoryManager:
         for listener in listeners:
             try:
                 listener(obs)
-            except Exception:
-                continue
+            except Exception as e:
+                # Log but don't propagate - one bad listener shouldn't break others
+                logger.warning(f"Listener error: {type(e).__name__}: {e}")
 
     @property
     def search_cache_hit(self) -> Optional[bool]:
@@ -585,7 +586,9 @@ class MemoryManager:
             if summarize and self.allow_llm_summaries:
                 try:
                     summary_text = await self.chat_provider.summarize(cleaned_content)
-                except Exception:
+                except Exception as e:
+                    # Graceful degradation: use truncation if LLM summarization fails
+                    logger.debug(f"Summarization failed, using truncation: {type(e).__name__}")
                     summary_text = cleaned_content[:500] + "..."
             else:
                 summary_text = cleaned_content[:500] + "..."
