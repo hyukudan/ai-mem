@@ -1,0 +1,103 @@
+{
+  "app": {
+    "name": "ai-mem",
+    "description": "LLM通用长期记忆系统",
+    "tagline": "适用于所有AI模型的持久记忆"
+  },
+  "cli": {
+    "add": {
+      "success": "记忆已保存！(ID: {id})",
+      "error": "保存记忆失败: {error}",
+      "help": "添加新的观察到记忆中"
+    },
+    "search": {
+      "results": "找到 {count} 个结果",
+      "no_results": "未找到匹配的记忆",
+      "help": "按查询搜索记忆"
+    },
+    "context": {
+      "generated": "上下文已生成 ({tokens} tokens)",
+      "empty": "未找到相关上下文",
+      "help": "生成注入上下文"
+    },
+    "session": {
+      "started": "会话已开始 (ID: {id})",
+      "ended": "会话已结束",
+      "help": "管理记忆会话"
+    },
+    "endless": {
+      "enabled": "无限模式已启用",
+      "disabled": "无限模式已禁用",
+      "stats": "压缩统计",
+      "help": "配置无限模式压缩"
+    },
+    "mode": {
+      "set": "模式已设置为: {mode}",
+      "cleared": "模式已清除",
+      "current": "当前模式: {mode}",
+      "help": "设置工作模式"
+    }
+  },
+  "modes": {
+    "code": {
+      "name": "代码模式",
+      "description": "针对软件开发和编码任务优化"
+    },
+    "email": {
+      "name": "邮件调查模式",
+      "description": "用于分析通信和邮件线程"
+    },
+    "chill": {
+      "name": "休闲模式",
+      "description": "轻松对话，最小记忆开销"
+    },
+    "research": {
+      "name": "研究模式",
+      "description": "用于深度研究和探索任务"
+    },
+    "debug": {
+      "name": "调试模式",
+      "description": "用于调试和故障排除"
+    }
+  },
+  "concepts": {
+    "how-it-works": "工作原理",
+    "why-it-exists": "存在原因",
+    "what-changed": "变更内容",
+    "problem-solution": "问题与解决方案",
+    "gotcha": "陷阱",
+    "workaround": "临时方案",
+    "pattern": "模式",
+    "anti-pattern": "反模式",
+    "trade-off": "权衡",
+    "architecture": "架构",
+    "interface": "接口",
+    "dependency": "依赖"
+  },
+  "ui": {
+    "dashboard": {
+      "title": "ai-mem 仪表板",
+      "observations": "观察",
+      "search": "搜索记忆...",
+      "settings": "设置",
+      "endless_mode": "无限模式",
+      "refresh": "刷新"
+    }
+  },
+  "errors": {
+    "not_found": "未找到: {resource}",
+    "invalid_input": "无效输入: {field}",
+    "connection_failed": "连接失败: {error}",
+    "unauthorized": "未授权访问",
+    "internal_error": "发生内部错误"
+  },
+  "messages": {
+    "loading": "加载中...",
+    "saving": "保存中...",
+    "success": "成功！",
+    "error": "错误",
+    "confirm": "确定吗？",
+    "cancel": "取消",
+    "ok": "确定"
+  }
+}

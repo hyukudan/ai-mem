@@ -91,6 +91,46 @@ class MCPServer:
                 "description": "Delete a tag across matching observations. Params: tag, project, session_id, obs_type, date_start, date_end, tags.",
                 "inputSchema": {"type": "object", "additionalProperties": True},
             },
+            # ai-skills integration tools
+            {
+                "name": "search_with_skills",
+                "description": "Search memory AND find relevant expert knowledge. Combines observations + ai-skills best practices. Params: query, observation_limit, skill_limit, project, session_id.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Search query"},
+                        "observation_limit": {"type": "integer", "default": 5},
+                        "skill_limit": {"type": "integer", "default": 3},
+                        "project": {"type": "string"},
+                        "session_id": {"type": "string"},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "find_skills",
+                "description": "Find expert knowledge skills relevant to a topic. Returns best practices and patterns from ai-skills. Params: query, limit.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Topic to find skills for"},
+                        "limit": {"type": "integer", "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+            {
+                "name": "get_skill",
+                "description": "Get full content of an expert knowledge skill. Params: skill_name, variables.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "skill_name": {"type": "string", "description": "Name of the skill"},
+                        "variables": {"type": "object", "description": "Optional variables to customize"},
+                    },
+                    "required": ["skill_name"],
+                },
+            },
         ]
 
     async def call_tool(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -116,6 +156,13 @@ class MCPServer:
             return await self._tag_rename(args)
         if name == "tag-delete":
             return await self._tag_delete(args)
+        # ai-skills integration handlers
+        if name == "search_with_skills":
+            return await self._search_with_skills(args)
+        if name == "find_skills":
+            return await self._find_skills(args)
+        if name == "get_skill":
+            return await self._get_skill(args)
         return self._wrap_text(f"Unknown tool: {name}", is_error=True)
 
     @staticmethod
@@ -417,6 +464,142 @@ class MCPServer:
             tag_filters=tags,
         )
         return self._wrap_text(json.dumps({"success": True, "updated": updated}, indent=2))
+
+    # =========================================================================
+    # ai-skills Integration Methods
+    # =========================================================================
+
+    async def _search_with_skills(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Search memory and find relevant expert knowledge in one call."""
+        from .integrations.skills import get_skills_integration
+
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return self._wrap_text("query is required", is_error=True)
+
+        observation_limit = int(args.get("observation_limit") or 5)
+        skill_limit = int(args.get("skill_limit") or 3)
+        project = args.get("project")
+        session_id = args.get("session_id")
+
+        integration = get_skills_integration()
+
+        # Search with skills integration
+        result = await integration.search_with_skills(
+            manager=self.manager,
+            query=query,
+            observation_limit=observation_limit,
+            skill_limit=skill_limit,
+            project=project,
+            session_id=session_id,
+        )
+
+        # Format output
+        lines = [f"Query: {result.query}", ""]
+
+        # Observations section
+        lines.append(f"=== Memory ({result.observation_count} observations) ===")
+        for obs in result.observations:
+            summary = obs.get("summary") or obs.get("content", "")[:100]
+            lines.append(f"- {obs.get('id')} | {obs.get('type', '-')} | {summary}")
+        lines.append("")
+
+        # Skills section
+        if integration.available and result.suggested_skills:
+            lines.append(f"=== Expert Knowledge ({result.skill_count} skills) ===")
+            for skill in result.suggested_skills:
+                lines.append(f"- {skill.name} ({skill.category}) [{skill.relevance_score:.0%}]")
+                lines.append(f"  {skill.description}")
+                if skill.tags:
+                    lines.append(f"  Tags: {', '.join(skill.tags[:5])}")
+            lines.append("")
+            lines.append(f"Use 'get_skill' tool to retrieve full skill content.")
+        elif not integration.available:
+            lines.append("=== Expert Knowledge ===")
+            lines.append("ai-skills not installed. Install with: pip install aiskills")
+        lines.append("")
+
+        lines.append(f"Estimated tokens: {result.total_tokens_estimate}")
+
+        return self._wrap_text("\n".join(lines))
+
+    async def _find_skills(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Find expert knowledge skills relevant to a topic."""
+        from .integrations.skills import get_skills_integration
+
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return self._wrap_text("query is required", is_error=True)
+
+        limit = int(args.get("limit") or 5)
+        integration = get_skills_integration()
+
+        if not integration.available:
+            return self._wrap_text(
+                "ai-skills not installed.\n\n"
+                "Install with: pip install aiskills\n\n"
+                "ai-skills provides 80+ expert knowledge skills covering:\n"
+                "- API design, authentication, caching\n"
+                "- Testing, debugging, refactoring\n"
+                "- DevOps, security, performance\n"
+                "- And more..."
+            )
+
+        skills = integration.find_relevant_skills(query, limit=limit)
+
+        if not skills:
+            return self._wrap_text(f"No skills found for: {query}")
+
+        lines = [f"Found {len(skills)} relevant skills for: {query}", ""]
+
+        for skill in skills:
+            lines.append(f"## {skill.name}")
+            lines.append(f"Category: {skill.category}")
+            lines.append(f"Relevance: {skill.relevance_score:.0%}")
+            lines.append(f"Est. tokens: {skill.tokens_estimate}")
+            lines.append(f"Description: {skill.description}")
+            if skill.tags:
+                lines.append(f"Tags: {', '.join(skill.tags)}")
+            lines.append("")
+
+        lines.append("Use 'get_skill' tool to retrieve full content.")
+
+        return self._wrap_text("\n".join(lines))
+
+    async def _get_skill(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Get full content of an expert knowledge skill."""
+        from .integrations.skills import get_skills_integration
+
+        skill_name = str(args.get("skill_name") or args.get("name") or "").strip()
+        if not skill_name:
+            return self._wrap_text("skill_name is required", is_error=True)
+
+        variables = args.get("variables") or {}
+        integration = get_skills_integration()
+
+        if not integration.available:
+            return self._wrap_text(
+                "ai-skills not installed. Install with: pip install aiskills",
+                is_error=True,
+            )
+
+        content = integration.get_skill_content(skill_name, variables)
+
+        if not content:
+            return self._wrap_text(
+                f"Skill not found: {skill_name}\n\n"
+                f"Use 'find_skills' to search for available skills.",
+                is_error=True,
+            )
+
+        # Include header
+        lines = [
+            f"## Skill: {skill_name}",
+            "",
+            content,
+        ]
+
+        return self._wrap_text("\n".join(lines))
 
     @staticmethod
     def _wrap_text(text: str, is_error: bool = False) -> Dict[str, Any]:

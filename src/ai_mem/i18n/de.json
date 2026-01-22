@@ -1,0 +1,103 @@
+{
+  "app": {
+    "name": "ai-mem",
+    "description": "Universeller Langzeitspeicher für LLMs",
+    "tagline": "Persistenter Speicher für alle KI-Modelle"
+  },
+  "cli": {
+    "add": {
+      "success": "Erinnerung gespeichert! (ID: {id})",
+      "error": "Speichern fehlgeschlagen: {error}",
+      "help": "Neue Beobachtung zum Speicher hinzufügen"
+    },
+    "search": {
+      "results": "{count} Ergebnisse gefunden",
+      "no_results": "Keine passenden Erinnerungen gefunden",
+      "help": "Erinnerungen nach Abfrage durchsuchen"
+    },
+    "context": {
+      "generated": "Kontext generiert ({tokens} Tokens)",
+      "empty": "Kein relevanter Kontext gefunden",
+      "help": "Kontext für Injektion generieren"
+    },
+    "session": {
+      "started": "Sitzung gestartet (ID: {id})",
+      "ended": "Sitzung beendet",
+      "help": "Speichersitzungen verwalten"
+    },
+    "endless": {
+      "enabled": "Endless-Modus aktiviert",
+      "disabled": "Endless-Modus deaktiviert",
+      "stats": "Komprimierungsstatistik",
+      "help": "Endless-Modus-Komprimierung konfigurieren"
+    },
+    "mode": {
+      "set": "Modus gesetzt: {mode}",
+      "cleared": "Modus gelöscht",
+      "current": "Aktueller Modus: {mode}",
+      "help": "Arbeitsmodus festlegen"
+    }
+  },
+  "modes": {
+    "code": {
+      "name": "Code-Modus",
+      "description": "Optimiert für Softwareentwicklung und Programmieraufgaben"
+    },
+    "email": {
+      "name": "E-Mail-Untersuchungsmodus",
+      "description": "Für die Analyse von Kommunikation und E-Mail-Threads"
+    },
+    "chill": {
+      "name": "Entspannter Modus",
+      "description": "Lockere Unterhaltung mit minimalem Speicheraufwand"
+    },
+    "research": {
+      "name": "Forschungsmodus",
+      "description": "Für tiefgehende Forschung und Explorationsaufgaben"
+    },
+    "debug": {
+      "name": "Debug-Modus",
+      "description": "Für Debugging und Fehlerbehebung"
+    }
+  },
+  "concepts": {
+    "how-it-works": "Wie es funktioniert",
+    "why-it-exists": "Warum es existiert",
+    "what-changed": "Was sich geändert hat",
+    "problem-solution": "Problem und Lösung",
+    "gotcha": "Fallstrick",
+    "workaround": "Workaround",
+    "pattern": "Muster",
+    "anti-pattern": "Anti-Muster",
+    "trade-off": "Kompromiss",
+    "architecture": "Architektur",
+    "interface": "Schnittstelle",
+    "dependency": "Abhängigkeit"
+  },
+  "ui": {
+    "dashboard": {
+      "title": "ai-mem Dashboard",
+      "observations": "Beobachtungen",
+      "search": "Erinnerungen suchen...",
+      "settings": "Einstellungen",
+      "endless_mode": "Endless-Modus",
+      "refresh": "Aktualisieren"
+    }
+  },
+  "errors": {
+    "not_found": "Nicht gefunden: {resource}",
+    "invalid_input": "Ungültige Eingabe: {field}",
+    "connection_failed": "Verbindung fehlgeschlagen: {error}",
+    "unauthorized": "Nicht autorisierter Zugriff",
+    "internal_error": "Ein interner Fehler ist aufgetreten"
+  },
+  "messages": {
+    "loading": "Laden...",
+    "saving": "Speichern...",
+    "success": "Erfolg!",
+    "error": "Fehler",
+    "confirm": "Sind Sie sicher?",
+    "cancel": "Abbrechen",
+    "ok": "OK"
+  }
+}

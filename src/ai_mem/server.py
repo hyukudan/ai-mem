@@ -66,6 +66,283 @@ app = FastAPI(title="ai-mem Server", lifespan=lifespan)
 
 
 # =============================================================================
+# Web UI Routes
+# =============================================================================
+
+from pathlib import Path
+
+UI_DIR = Path(__file__).parent / "ui"
+
+
+@app.get("/", response_class=HTMLResponse)
+async def root():
+    """Redirect to dashboard."""
+    return """
+    <html>
+        <head><meta http-equiv="refresh" content="0; url=/ui" /></head>
+        <body>Redirecting to <a href="/ui">dashboard</a>...</body>
+    </html>
+    """
+
+
+@app.get("/ui", response_class=HTMLResponse)
+async def serve_dashboard():
+    """Serve the main dashboard UI."""
+    index_path = UI_DIR / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Dashboard UI not found")
+    return index_path.read_text()
+
+
+@app.get("/ui/{path:path}", response_class=HTMLResponse)
+async def serve_ui_files(path: str):
+    """Serve UI static files."""
+    file_path = UI_DIR / path
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
+    # Security: ensure path is within UI_DIR
+    try:
+        file_path.resolve().relative_to(UI_DIR.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return file_path.read_text()
+
+
+# =============================================================================
+# Citation URLs - Observation Viewer
+# =============================================================================
+
+@app.get("/view/{observation_id}", response_class=HTMLResponse)
+async def view_observation_html(observation_id: str, request: Request):
+    """View an observation as a rendered HTML page.
+
+    This provides a human-readable view of an observation with all its details.
+    Accessible via citation URLs like /view/{id}.
+    """
+    _validate_uuid(observation_id)
+    try:
+        results = await get_manager().get_observations([observation_id])
+        if not results:
+            raise ObservationNotFoundError(observation_id)
+        obs = results[0]
+
+        # Format metadata
+        from datetime import datetime
+        from .models import CONCEPT_ICONS, TYPE_ICONS
+
+        created = datetime.fromtimestamp(obs.get("created_at", 0)).strftime("%Y-%m-%d %H:%M:%S")
+        obs_type = obs.get("type", "note")
+        concept = obs.get("concept")
+        tags = obs.get("tags") or []
+        project = obs.get("project", "-")
+        session_id = obs.get("session_id", "-")
+
+        # Get icons
+        type_icon = TYPE_ICONS.get(obs_type, "") if hasattr(__import__('ai_mem.models', fromlist=['TYPE_ICONS']), 'TYPE_ICONS') else ""
+        concept_icon = CONCEPT_ICONS.get(concept, "") if concept else ""
+        icon = concept_icon or type_icon
+
+        # Content
+        summary = obs.get("summary") or ""
+        content = obs.get("content") or ""
+        metadata = obs.get("metadata") or {}
+
+        # Escape HTML
+        import html
+        summary_html = html.escape(summary)
+        content_html = html.escape(content).replace("\n", "<br>")
+        metadata_html = html.escape(json.dumps(metadata, indent=2))
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Observation {observation_id[:8]} | ai-mem</title>
+    <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e4e4e7;
+            min-height: 100vh;
+            padding: 2rem;
+        }}
+        .container {{
+            max-width: 800px;
+            margin: 0 auto;
+            background: rgba(255,255,255,0.05);
+            border-radius: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+            overflow: hidden;
+        }}
+        .header {{
+            background: linear-gradient(90deg, #4f46e5, #7c3aed);
+            padding: 1.5rem 2rem;
+        }}
+        .header h1 {{
+            font-size: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }}
+        .header .id {{
+            font-family: monospace;
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-top: 0.5rem;
+        }}
+        .meta {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            padding: 1.5rem 2rem;
+            background: rgba(0,0,0,0.2);
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }}
+        .meta-item {{
+            display: flex;
+            flex-direction: column;
+        }}
+        .meta-item label {{
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #a1a1aa;
+            margin-bottom: 0.25rem;
+        }}
+        .meta-item span {{
+            font-weight: 500;
+        }}
+        .tags {{
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }}
+        .tag {{
+            background: rgba(79, 70, 229, 0.3);
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.8rem;
+        }}
+        .section {{
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }}
+        .section:last-child {{
+            border-bottom: none;
+        }}
+        .section h2 {{
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: #a1a1aa;
+            margin-bottom: 1rem;
+        }}
+        .section p {{
+            line-height: 1.6;
+        }}
+        .content {{
+            background: rgba(0,0,0,0.2);
+            padding: 1rem;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            overflow-x: auto;
+        }}
+        .footer {{
+            padding: 1rem 2rem;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #71717a;
+        }}
+        .footer a {{
+            color: #818cf8;
+            text-decoration: none;
+        }}
+        .footer a:hover {{
+            text-decoration: underline;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{icon} Observation</h1>
+            <div class="id">{observation_id}</div>
+        </div>
+
+        <div class="meta">
+            <div class="meta-item">
+                <label>Type</label>
+                <span>{obs_type}</span>
+            </div>
+            <div class="meta-item">
+                <label>Concept</label>
+                <span>{concept or '-'}</span>
+            </div>
+            <div class="meta-item">
+                <label>Created</label>
+                <span>{created}</span>
+            </div>
+            <div class="meta-item">
+                <label>Project</label>
+                <span>{project}</span>
+            </div>
+        </div>
+
+        {"<div class='section'><h2>Tags</h2><div class='tags'>" + "".join(f"<span class='tag'>{html.escape(t)}</span>" for t in tags) + "</div></div>" if tags else ""}
+
+        <div class="section">
+            <h2>Summary</h2>
+            <p>{summary_html}</p>
+        </div>
+
+        {"<div class='section'><h2>Content</h2><div class='content'>" + content_html + "</div></div>" if content else ""}
+
+        <div class="footer">
+            <a href="/ui">← Back to Dashboard</a> |
+            <a href="/api/observation/{observation_id}">View JSON</a>
+        </div>
+    </div>
+</body>
+</html>"""
+    except (HTTPException, AiMemError):
+        raise
+    except Exception as exc:
+        logger.error(f"Error viewing observation: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.get("/obs/{short_id}")
+async def redirect_short_observation(short_id: str, request: Request):
+    """Redirect from short observation ID to full view.
+
+    Short IDs are the first 8 characters of the observation UUID.
+    This enables compact citation URLs like /obs/abc12345.
+    """
+    if len(short_id) < 4 or len(short_id) > 36:
+        raise HTTPException(status_code=400, detail="Invalid short ID")
+
+    # Search for observation by prefix
+    try:
+        observations = await get_manager().db.list_observations(limit=100)
+        for obs in observations:
+            if obs.id.startswith(short_id):
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse(url=f"/view/{obs.id}", status_code=302)
+
+        raise HTTPException(status_code=404, detail=f"No observation found with ID prefix: {short_id}")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Error finding observation: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# =============================================================================
 # Exception Handlers
 # =============================================================================
 
@@ -509,8 +786,34 @@ async def ingest_event(req: EventIngestRequest, request: Request):
         if event.tool.input:
             input_str = json.dumps(event.tool.input) if isinstance(event.tool.input, dict) else str(event.tool.input)
             parts.append(f"Input: {input_str}")
+
+        # Get tool output
+        output_str = ""
         if event.tool.output:
             output_str = json.dumps(event.tool.output) if isinstance(event.tool.output, dict) else str(event.tool.output)
+
+        # Endless Mode: compress output if enabled
+        endless_metadata = None
+        from .endless import get_endless_manager, compress_if_endless_mode
+
+        endless_manager = get_endless_manager()
+        if endless_manager.enabled and output_str and len(output_str) >= endless_manager.config.min_output_for_compression:
+            # Generate observation ID early for archive linking
+            obs_id = str(uuid.uuid4())
+            compressed_output, endless_metadata = await compress_if_endless_mode(
+                content=output_str,
+                tool_name=event.tool.name or "unknown",
+                tool_input=event.tool.input,
+                observation_id=obs_id,
+                session_id=req.session_id or event.session_id or "",
+                project=req.project or event.context.project or "",
+                metadata={"original_length": len(output_str)},
+            )
+            if compressed_output:
+                output_str = compressed_output
+                logger.debug(f"Endless Mode compressed output: {endless_metadata}")
+
+        if output_str:
             parts.append(f"Output: {output_str}")
 
         content = "\n".join(parts)
@@ -519,6 +822,19 @@ async def ingest_event(req: EventIngestRequest, request: Request):
 
         # Merge tags: event tags + request tags + host
         tags = list(set(req.tags + [req.host, "tool", "auto-ingested"]))
+        if endless_metadata:
+            tags.append("endless-compressed")
+
+        # Build metadata
+        obs_metadata = {
+            "tool_name": event.tool.name,
+            "tool_success": event.tool.success,
+            "tool_latency_ms": event.tool.latency_ms,
+            "source_host": event.source.host,
+            **event.metadata,
+        }
+        if endless_metadata:
+            obs_metadata["endless"] = endless_metadata
 
         # Create observation with idempotency
         manager = get_manager()
@@ -528,13 +844,7 @@ async def ingest_event(req: EventIngestRequest, request: Request):
             project=req.project or event.context.project,
             session_id=req.session_id or event.session_id,
             tags=tags,
-            metadata={
-                "tool_name": event.tool.name,
-                "tool_success": event.tool.success,
-                "tool_latency_ms": event.tool.latency_ms,
-                "source_host": event.source.host,
-                **event.metadata,
-            },
+            metadata=obs_metadata,
             summarize=req.summarize,
             event_id=event.event_id,
             host=req.host,
@@ -543,12 +853,19 @@ async def ingest_event(req: EventIngestRequest, request: Request):
         if not obs:
             return {"status": "skipped", "reason": "private"}
 
-        return {
+        response_data = {
             "status": "ok",
             "observation": obs.model_dump(),
             "event_type": "tool_use",
             "event_id": event.event_id,
         }
+        if endless_metadata:
+            response_data["endless_mode"] = {
+                "compressed": True,
+                "compression_ratio": endless_metadata.get("compression_ratio"),
+                "tokens_saved": endless_metadata.get("original_tokens", 0) - endless_metadata.get("compressed_tokens", 0),
+            }
+        return response_data
 
     except (HTTPException, AiMemError):
         raise
@@ -1237,6 +1554,92 @@ def readiness(request: Request):
 def version(request: Request):
     _check_token(request)
     return {"version": __version__}
+
+
+# =============================================================================
+# Endless Mode Endpoints
+# =============================================================================
+
+class EndlessModeRequest(BaseModel):
+    """Request body for enabling Endless Mode."""
+    session_id: Optional[str] = None
+
+
+@app.get("/api/endless/stats")
+async def get_endless_stats(request: Request):
+    """Get Endless Mode statistics."""
+    _check_token(request)
+    from .endless import get_endless_manager
+    manager = get_endless_manager()
+    stats = manager.get_stats()
+    return {
+        "enabled": manager.enabled,
+        "stats": stats.to_dict(),
+        "config": {
+            "target_observation_tokens": manager.config.target_observation_tokens,
+            "compression_ratio": manager.config.compression_ratio,
+            "compression_method": manager.config.compression_method,
+            "enable_archive": manager.config.enable_archive,
+        },
+    }
+
+
+@app.post("/api/endless/enable")
+async def enable_endless_mode(payload: EndlessModeRequest, request: Request):
+    """Enable Endless Mode for extended sessions."""
+    _check_token(request)
+    from .endless import get_endless_manager
+    manager = get_endless_manager()
+    manager.enable(session_id=payload.session_id)
+    return {
+        "status": "enabled",
+        "session_id": payload.session_id,
+        "config": {
+            "target_observation_tokens": manager.config.target_observation_tokens,
+            "compression_ratio": manager.config.compression_ratio,
+        },
+    }
+
+
+@app.post("/api/endless/disable")
+async def disable_endless_mode(request: Request):
+    """Disable Endless Mode."""
+    _check_token(request)
+    from .endless import get_endless_manager
+    manager = get_endless_manager()
+    final_stats = manager.get_stats()
+    manager.disable()
+    return {
+        "status": "disabled",
+        "final_stats": final_stats.to_dict(),
+    }
+
+
+@app.get("/api/endless/archive/{observation_id}")
+async def get_archive_entry(
+    observation_id: str,
+    session_id: str,
+    project: str,
+    request: Request,
+):
+    """Get the full (uncompressed) output from archive memory."""
+    _check_token(request)
+    from .endless import get_endless_manager
+    manager = get_endless_manager()
+
+    if not manager.archive:
+        raise HTTPException(status_code=404, detail="Archive memory not enabled")
+
+    full_output = manager.get_full_output(observation_id, session_id, project)
+    if not full_output:
+        raise HTTPException(status_code=404, detail="Archive entry not found")
+
+    return {
+        "observation_id": observation_id,
+        "full_output": full_output,
+        "session_id": session_id,
+        "project": project,
+    }
 
 
 @app.get("/api/stream")

@@ -651,8 +651,11 @@ def _filter_observations(
 
 
 def _format_index_line(obs: Dict[str, Any], token_count: int, show_tokens: bool) -> str:
+    from .models import CONCEPT_ICONS
+
     summary = obs.get("summary") or ""
     obs_type = obs.get("type") or "-"
+    concept = obs.get("concept")
     tags = obs.get("tags") or []
     tag_text = f" | tags: {', '.join(tags)}" if tags else ""
     tokens = f" (~{token_count} tok)" if show_tokens else ""
@@ -661,7 +664,29 @@ def _format_index_line(obs: Dict[str, Any], token_count: int, show_tokens: bool)
     similar_count = obs.get("_similar_count", 0)
     similar_text = f" [+{similar_count} similar]" if similar_count > 0 else ""
 
-    return f"- {obs.get('id')} | {obs_type} | {summary}{tag_text}{tokens}{similar_text}"
+    # Get icon for concept (if present) or use type icon
+    icon = ""
+    if concept and concept in CONCEPT_ICONS:
+        icon = f"{CONCEPT_ICONS[concept]} "
+    elif obs_type:
+        # Default type icons
+        type_icons = {
+            "bugfix": "\U0001f41e",        # Bug
+            "feature": "\u2728",           # Sparkles
+            "decision": "\U0001f914",      # Thinking
+            "gotcha": "\U0001f534",        # Red circle
+            "trade-off": "\u2696\ufe0f",   # Balance scale
+        }
+        icon = type_icons.get(obs_type, "")
+        if icon:
+            icon = f"{icon} "
+
+    # Format concept/type display
+    type_display = f"{obs_type}"
+    if concept:
+        type_display = f"{obs_type}/{concept}"
+
+    return f"- {icon}{obs.get('id')} | {type_display} | {summary}{tag_text}{tokens}{similar_text}"
 
 
 def _determine_disclosure_mode(
@@ -810,6 +835,7 @@ async def build_context(
     obs_type: Optional[str] = None,
     obs_types: Optional[List[str]] = None,
     tag_filters: Optional[List[str]] = None,
+    concepts: Optional[List[str]] = None,  # Filter by concepts (gotcha, trade-off, etc.)
     session_id: Optional[str] = None,
     total_count: Optional[int] = None,
     full_count: Optional[int] = None,
@@ -910,6 +936,13 @@ async def build_context(
              observations = await manager.get_observations(ids)
 
     observations = _filter_observations(observations, obs_type_filters, tag_filters)
+
+    # Apply concept filter if specified
+    if concepts:
+        observations = [
+            obs for obs in observations
+            if obs.get("concept") in concepts
+        ]
 
     # Apply deduplication if enabled
     dedup_count = 0
@@ -1038,6 +1071,7 @@ async def build_context(
         "economics": economics,
         "full_field": full_field,
         "obs_types": obs_type_filters,
+        "concepts": concepts,
         "scoreboard": scoreboard if query else {},
     }
     return context_text, metadata

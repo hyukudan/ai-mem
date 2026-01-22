@@ -3457,5 +3457,454 @@ def reindex_cmd(
     asyncio.run(_run())
 
 
+# =============================================================================
+# Endless Mode Commands
+# =============================================================================
+
+
+@app.command(name="endless")
+def endless_cmd(
+    enable: bool = typer.Option(None, "--enable", "-e", help="Enable Endless Mode"),
+    disable: bool = typer.Option(None, "--disable", "-d", help="Disable Endless Mode"),
+    stats: bool = typer.Option(False, "--stats", "-s", help="Show Endless Mode statistics"),
+    session_id: Optional[str] = typer.Option(None, help="Session ID for endless mode"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Manage Endless Mode for extended coding sessions.
+
+    Endless Mode compresses tool outputs in real-time, achieving:
+    - ~20x more tool uses before context exhaustion
+    - O(N) linear scaling instead of O(N²)
+    - Full outputs preserved in archive memory
+
+    Examples:
+        ai-mem endless --enable              # Enable Endless Mode
+        ai-mem endless --disable             # Disable Endless Mode
+        ai-mem endless --stats               # Show statistics
+        ai-mem endless -e --session-id abc   # Enable for specific session
+    """
+    from .endless import get_endless_manager
+
+    manager = get_endless_manager()
+
+    if enable:
+        manager.enable(session_id=session_id)
+        if output == "json":
+            print(json.dumps({
+                "status": "enabled",
+                "session_id": session_id,
+                "config": {
+                    "target_observation_tokens": manager.config.target_observation_tokens,
+                    "compression_ratio": manager.config.compression_ratio,
+                },
+            }, indent=2))
+        else:
+            console.print("[green]✓ Endless Mode enabled[/green]")
+            console.print(f"  Target tokens: {manager.config.target_observation_tokens}")
+            console.print(f"  Compression ratio: {manager.config.compression_ratio}x")
+            if manager.config.enable_archive:
+                console.print(f"  Archive: {manager.archive_dir}")
+        return
+
+    if disable:
+        final_stats = manager.get_stats()
+        manager.disable()
+        if output == "json":
+            print(json.dumps({
+                "status": "disabled",
+                "final_stats": final_stats.to_dict(),
+            }, indent=2))
+        else:
+            console.print("[yellow]✓ Endless Mode disabled[/yellow]")
+            console.print(f"  Tokens saved: {final_stats.tokens_saved:,}")
+            console.print(f"  Observations compressed: {final_stats.compressed_observations}")
+        return
+
+    # Default: show stats
+    endless_stats = manager.get_stats()
+
+    if output == "json":
+        print(json.dumps({
+            "enabled": manager.enabled,
+            "stats": endless_stats.to_dict(),
+            "config": {
+                "target_observation_tokens": manager.config.target_observation_tokens,
+                "compression_ratio": manager.config.compression_ratio,
+                "compression_method": manager.config.compression_method,
+                "enable_archive": manager.config.enable_archive,
+            },
+        }, indent=2))
+        return
+
+    console.print("[bold]Endless Mode Status[/bold]")
+    status = "[green]ENABLED[/green]" if manager.enabled else "[dim]DISABLED[/dim]"
+    console.print(f"  Status: {status}")
+    console.print()
+    console.print("[bold]Configuration[/bold]")
+    console.print(f"  Target tokens/observation: {manager.config.target_observation_tokens}")
+    console.print(f"  Compression ratio: {manager.config.compression_ratio}x")
+    console.print(f"  Method: {manager.config.compression_method}")
+    console.print(f"  Archive enabled: {manager.config.enable_archive}")
+    console.print()
+    console.print("[bold]Statistics[/bold]")
+    console.print(f"  Total observations: {endless_stats.total_observations}")
+    console.print(f"  Compressed: {endless_stats.compressed_observations}")
+    console.print(f"  Original tokens: {endless_stats.total_original_tokens:,}")
+    console.print(f"  Compressed tokens: {endless_stats.total_compressed_tokens:,}")
+    console.print(f"  Tokens saved: {endless_stats.tokens_saved:,}")
+    if endless_stats.average_compression_ratio > 0:
+        console.print(f"  Avg compression: {endless_stats.average_compression_ratio:.1f}x")
+    if endless_stats.archive_entries > 0:
+        console.print(f"  Archive entries: {endless_stats.archive_entries}")
+        size_mb = endless_stats.archive_size_bytes / (1024 * 1024)
+        console.print(f"  Archive size: {size_mb:.2f} MB")
+
+
+@app.command(name="mode")
+def mode_cmd(
+    mode: Optional[str] = typer.Argument(None, help="Mode to set (code, email, chill, research, debug)"),
+    show: bool = typer.Option(False, "--show", "-s", help="Show current mode"),
+    list_modes: bool = typer.Option(False, "--list", "-l", help="List available modes"),
+    clear: bool = typer.Option(False, "--clear", "-c", help="Clear current mode"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Manage work modes for different workflows.
+
+    Modes adjust ai-mem settings for different types of work:
+    - code: Software development (default)
+    - email: Communication analysis
+    - chill: Casual conversation
+    - research: Deep exploration
+    - debug: Troubleshooting
+
+    Examples:
+        ai-mem mode code          # Set code mode
+        ai-mem mode --list        # List all modes
+        ai-mem mode --show        # Show current mode
+        ai-mem mode --clear       # Clear mode
+    """
+    from .modes import get_mode_manager, list_modes as get_all_modes, MODES
+
+    manager = get_mode_manager()
+
+    if list_modes:
+        modes_info = get_all_modes()
+        if output == "json":
+            print(json.dumps(modes_info, indent=2))
+        else:
+            console.print("[bold]Available Modes[/bold]")
+            for m in modes_info:
+                status = "[green]ACTIVE[/green]" if m["key"] == manager.current_mode else ""
+                console.print(f"\n  [bold]{m['key']}[/bold] {status}")
+                console.print(f"    {m['description']}")
+                console.print(f"    Context: {m['context_total']} observations")
+                endless = "enabled" if m["endless_enabled"] else "disabled"
+                console.print(f"    Endless Mode: {endless}")
+        return
+
+    if show or (mode is None and not clear):
+        current = manager.current_mode
+        if output == "json":
+            result = {"current_mode": current}
+            if current and current in MODES:
+                cfg = MODES[current]
+                result["config"] = {
+                    "name": cfg.name,
+                    "description": cfg.description,
+                    "context_total": cfg.context_total,
+                    "endless_enabled": cfg.endless_enabled,
+                }
+            print(json.dumps(result, indent=2))
+        else:
+            if current:
+                cfg = MODES.get(current)
+                console.print(f"[bold]Current Mode:[/bold] {current}")
+                if cfg:
+                    console.print(f"  {cfg.description}")
+                    console.print(f"  Context: {cfg.context_total} observations")
+            else:
+                console.print("[dim]No mode active (using default settings)[/dim]")
+        return
+
+    if clear:
+        manager.clear_mode()
+        if output == "json":
+            print(json.dumps({"status": "cleared"}))
+        else:
+            console.print("[yellow]Mode cleared[/yellow]")
+        return
+
+    if mode:
+        success = manager.set_mode(mode.lower())
+        if output == "json":
+            print(json.dumps({"status": "set" if success else "error", "mode": mode}))
+        else:
+            if success:
+                cfg = MODES.get(mode.lower())
+                console.print(f"[green]Mode set to: {mode}[/green]")
+                if cfg:
+                    console.print(f"  {cfg.description}")
+            else:
+                console.print(f"[red]Unknown mode: {mode}[/red]")
+                console.print("Use --list to see available modes")
+
+
+@app.command(name="folder-context")
+def folder_context_cmd(
+    folder: Optional[str] = typer.Argument(None, help="Folder path (default: current dir)"),
+    project: Optional[str] = typer.Option(None, help="Project path"),
+    max_entries: int = typer.Option(20, help="Maximum entries in the file"),
+    filename: str = typer.Option("CLAUDE.md", help="Output filename"),
+    all_folders: bool = typer.Option(False, "--all", help="Generate for all folders in project"),
+):
+    """Generate CLAUDE.md context file for a folder.
+
+    Creates a markdown file with recent activity timeline for the specified
+    folder, making it easy to understand the context of that directory.
+
+    Examples:
+        ai-mem folder-context                     # Current folder
+        ai-mem folder-context /path/to/folder     # Specific folder
+        ai-mem folder-context --all               # All folders in project
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        try:
+            project_path = project or os.getcwd()
+            folder_path = folder or os.getcwd()
+
+            if all_folders:
+                from .folder_context import update_project_claudemds
+                created = await update_project_claudemds(
+                    manager=manager,
+                    project=project_path,
+                    max_entries=max_entries,
+                    filename=filename,
+                )
+                if created:
+                    console.print(f"[green]Created {len(created)} folder context files[/green]")
+                    for path in created[:10]:
+                        console.print(f"  - {path}")
+                    if len(created) > 10:
+                        console.print(f"  ... and {len(created) - 10} more")
+                else:
+                    console.print("[yellow]No folders with enough activity to generate context[/yellow]")
+            else:
+                from .folder_context import update_folder_claudemd
+                result = await update_folder_claudemd(
+                    manager=manager,
+                    folder_path=folder_path,
+                    project=project_path,
+                    max_entries=max_entries,
+                    filename=filename,
+                )
+                if result:
+                    console.print(f"[green]Created: {result}[/green]")
+                else:
+                    console.print("[yellow]No observations found for this folder[/yellow]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
+@app.command(name="endless-archive")
+def endless_archive_cmd(
+    observation_id: str = typer.Argument(..., help="Observation ID to retrieve"),
+    session_id: str = typer.Option(..., help="Session ID"),
+    project: Optional[str] = typer.Option(None, help="Project path (default: current dir)"),
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Retrieve full (uncompressed) output from Endless Mode archive.
+
+    When Endless Mode compresses tool outputs, the full outputs are preserved
+    in archive memory on disk. Use this command to retrieve them.
+
+    Examples:
+        ai-mem endless-archive abc123 --session-id sess-456
+        ai-mem endless-archive abc123 --session-id sess-456 -f json
+    """
+    from .endless import get_endless_manager
+
+    manager = get_endless_manager()
+
+    if not manager.archive:
+        console.print("[red]Archive memory not enabled[/red]")
+        raise typer.Exit(1)
+
+    project_path = project or os.getcwd()
+    entry = manager.archive.get_entry(observation_id, session_id, project_path)
+
+    if not entry:
+        console.print(f"[red]Archive entry not found: {observation_id}[/red]")
+        raise typer.Exit(1)
+
+    if output == "json":
+        print(json.dumps({
+            "observation_id": entry.observation_id,
+            "tool_name": entry.tool_name,
+            "tool_input": entry.tool_input,
+            "tool_output": entry.tool_output,
+            "compressed_output": entry.compressed_output,
+            "compression_ratio": entry.compression_ratio,
+            "original_tokens": entry.original_tokens,
+            "compressed_tokens": entry.compressed_tokens,
+            "created_at": entry.created_at,
+        }, indent=2))
+        return
+
+    console.print(f"[bold]Archive Entry: {observation_id[:8]}...[/bold]")
+    console.print(f"  Tool: {entry.tool_name}")
+    console.print(f"  Compression: {entry.compression_ratio:.1f}x ({entry.original_tokens} → {entry.compressed_tokens} tokens)")
+    console.print()
+    console.print("[bold]Full Output:[/bold]")
+    console.print(entry.tool_output)
+
+
+# =============================================================================
+# Plugin Marketplace Commands
+# =============================================================================
+
+@app.command(name="plugin-info")
+def plugin_info_cmd(
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Show plugin installation information.
+
+    Displays version, installation date, and configuration status.
+
+    Examples:
+        ai-mem plugin-info
+        ai-mem plugin-info -f json
+    """
+    from .plugin import get_plugin_info, verify
+
+    info = get_plugin_info()
+    verification = verify()
+
+    if output == "json":
+        print(json.dumps({
+            "name": info.name,
+            "version": info.version,
+            "installed_at": info.installed_at,
+            "updated_at": info.updated_at,
+            "hooks_enabled": info.hooks_enabled,
+            "mcp_enabled": info.mcp_enabled,
+            "verification": verification,
+        }, indent=2))
+        return
+
+    console.print(f"[bold cyan]ai-mem Plugin Information[/bold cyan]")
+    console.print()
+    console.print(f"  Version:       {info.version}")
+    console.print(f"  Installed:     {info.installed_at}")
+    console.print(f"  Last updated:  {info.updated_at or 'N/A'}")
+    console.print(f"  Hooks enabled: {info.hooks_enabled}")
+    console.print(f"  MCP enabled:   {info.mcp_enabled}")
+    console.print()
+    console.print("[bold]Verification:[/bold]")
+    console.print(f"  Status:        {verification['status']}")
+    console.print(f"  Database:      {verification.get('database', 'unknown')}")
+    console.print(f"  MCP Server:    {verification.get('mcp_server', 'unknown')}")
+
+    if verification.get("missing_dependencies"):
+        console.print()
+        console.print("[yellow]Missing optional dependencies:[/yellow]")
+        for dep in verification["missing_dependencies"]:
+            console.print(f"  - {dep}")
+
+
+@app.command(name="plugin-verify")
+def plugin_verify_cmd(
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Verify plugin installation and dependencies.
+
+    Checks that all components are working correctly.
+
+    Examples:
+        ai-mem plugin-verify
+        ai-mem plugin-verify -f json
+    """
+    from .plugin import verify
+
+    results = verify()
+
+    if output == "json":
+        print(json.dumps(results, indent=2))
+        return
+
+    status_icon = "[green]OK[/green]" if results["status"] == "ok" else "[red]ERROR[/red]"
+    console.print(f"[bold]Plugin Verification: {status_icon}[/bold]")
+    console.print()
+
+    for key, value in results.items():
+        if key == "status":
+            continue
+        if key == "missing_dependencies":
+            if value:
+                console.print(f"  {key}: [yellow]{len(value)} missing[/yellow]")
+            else:
+                console.print(f"  {key}: [green]all installed[/green]")
+        elif isinstance(value, bool):
+            icon = "[green]Yes[/green]" if value else "[red]No[/red]"
+            console.print(f"  {key}: {icon}")
+        elif "error" in str(value).lower():
+            console.print(f"  {key}: [red]{value}[/red]")
+        else:
+            console.print(f"  {key}: {value}")
+
+
+@app.command(name="plugin-config")
+def plugin_config_cmd(
+    output: str = typer.Option("text", "--format", "-f", help="Output format: text, json"),
+):
+    """Generate Claude Code configuration for MCP integration.
+
+    Outputs the configuration snippet to add to Claude Code settings.
+
+    Examples:
+        ai-mem plugin-config
+        ai-mem plugin-config >> ~/.claude/settings.json
+    """
+    from .plugin import get_mcp_config
+
+    config = get_mcp_config()
+
+    if output == "json" or output == "text":
+        print(json.dumps(config, indent=2))
+        return
+
+    console.print("[bold]Claude Code MCP Configuration[/bold]")
+    console.print()
+    console.print("Add this to your Claude Code settings:")
+    console.print()
+    console.print(json.dumps(config, indent=2))
+
+
+@app.command(name="bug-report")
+def bug_report_cmd(
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Save to file"),
+):
+    """Generate a bug report with diagnostic information.
+
+    Collects system info, configuration, and recent logs for troubleshooting.
+
+    Examples:
+        ai-mem bug-report
+        ai-mem bug-report -o bug-report.md
+    """
+    from .plugin import generate_bug_report
+
+    report = generate_bug_report()
+
+    if output:
+        Path(output).write_text(report)
+        console.print(f"[green]Bug report saved to: {output}[/green]")
+    else:
+        print(report)
+
+
 if __name__ == "__main__":
     app()

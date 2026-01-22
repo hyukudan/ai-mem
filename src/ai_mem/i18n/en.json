@@ -1,0 +1,128 @@
+{
+  "app": {
+    "name": "ai-mem",
+    "description": "Universal Long-Term Memory for LLMs",
+    "tagline": "Persistent memory that works across all AI models"
+  },
+  "cli": {
+    "add": {
+      "success": "Memory stored! (ID: {id})",
+      "error": "Failed to store memory: {error}",
+      "help": "Add a new observation to memory"
+    },
+    "search": {
+      "results": "Found {count} results",
+      "no_results": "No matching memories found",
+      "help": "Search memories by query"
+    },
+    "context": {
+      "generated": "Context generated ({tokens} tokens)",
+      "empty": "No relevant context found",
+      "help": "Generate context for injection"
+    },
+    "session": {
+      "started": "Session started (ID: {id})",
+      "ended": "Session ended",
+      "help": "Manage memory sessions"
+    },
+    "endless": {
+      "enabled": "Endless Mode enabled",
+      "disabled": "Endless Mode disabled",
+      "stats": "Compression stats",
+      "help": "Configure Endless Mode compression"
+    },
+    "mode": {
+      "set": "Mode set to: {mode}",
+      "cleared": "Mode cleared",
+      "current": "Current mode: {mode}",
+      "help": "Set work mode (code, email, research, debug, chill)"
+    }
+  },
+  "modes": {
+    "code": {
+      "name": "Code Mode",
+      "description": "Optimized for software development and coding tasks"
+    },
+    "email": {
+      "name": "Email Investigation Mode",
+      "description": "For analyzing communications and email threads"
+    },
+    "chill": {
+      "name": "Chill Mode",
+      "description": "Casual conversation with minimal memory overhead"
+    },
+    "research": {
+      "name": "Research Mode",
+      "description": "For deep research and exploration tasks"
+    },
+    "debug": {
+      "name": "Debug Mode",
+      "description": "For debugging and troubleshooting"
+    }
+  },
+  "concepts": {
+    "how-it-works": "How It Works",
+    "why-it-exists": "Why It Exists",
+    "what-changed": "What Changed",
+    "problem-solution": "Problem & Solution",
+    "gotcha": "Gotcha",
+    "workaround": "Workaround",
+    "pattern": "Pattern",
+    "anti-pattern": "Anti-Pattern",
+    "trade-off": "Trade-off",
+    "architecture": "Architecture",
+    "interface": "Interface",
+    "dependency": "Dependency"
+  },
+  "types": {
+    "bugfix": "Bug Fix",
+    "feature": "Feature",
+    "decision": "Decision",
+    "refactor": "Refactor",
+    "discovery": "Discovery",
+    "change": "Change",
+    "note": "Note",
+    "code_review": "Code Review",
+    "test": "Test",
+    "tool_output": "Tool Output",
+    "interaction": "Interaction",
+    "preference": "Preference",
+    "summary": "Summary"
+  },
+  "ui": {
+    "dashboard": {
+      "title": "ai-mem Dashboard",
+      "observations": "Observations",
+      "search": "Search memories...",
+      "settings": "Settings",
+      "endless_mode": "Endless Mode",
+      "refresh": "Refresh"
+    },
+    "observation": {
+      "type": "Type",
+      "concept": "Concept",
+      "created": "Created",
+      "project": "Project",
+      "tags": "Tags",
+      "summary": "Summary",
+      "content": "Content",
+      "view_json": "View JSON"
+    }
+  },
+  "errors": {
+    "not_found": "Not found: {resource}",
+    "invalid_input": "Invalid input: {field}",
+    "connection_failed": "Connection failed: {error}",
+    "unauthorized": "Unauthorized access",
+    "internal_error": "Internal error occurred"
+  },
+  "messages": {
+    "loading": "Loading...",
+    "saving": "Saving...",
+    "success": "Success!",
+    "error": "Error",
+    "confirm": "Are you sure?",
+    "cancel": "Cancel",
+    "ok": "OK"
+  }
+}

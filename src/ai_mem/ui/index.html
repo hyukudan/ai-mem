@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ai-mem Dashboard</title>
+    <style>
+        :root {
+            --bg-primary: #0f0f0f;
+            --bg-secondary: #1a1a1a;
+            --bg-tertiary: #252525;
+            --text-primary: #e0e0e0;
+            --text-secondary: #888;
+            --accent-blue: #3b82f6;
+            --accent-green: #22c55e;
+            --accent-yellow: #eab308;
+            --accent-red: #ef4444;
+            --border-color: #333;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .header h1 span {
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-green));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--bg-tertiary);
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+
+        .btn-secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover {
+            background: #303030;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .stat-label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 600;
+        }
+
+        .stat-value.green { color: var(--accent-green); }
+        .stat-value.blue { color: var(--accent-blue); }
+        .stat-value.yellow { color: var(--accent-yellow); }
+
+        /* Main Content */
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 24px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Observations Panel */
+        .observations-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .panel-title {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 8px;
+        }
+
+        .search-box input {
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            width: 200px;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .observations-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .observation-item {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .observation-item:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .observation-item.selected {
+            background: rgba(59, 130, 246, 0.1);
+            border-left: 3px solid var(--accent-blue);
+        }
+
+        .obs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 8px;
+        }
+
+        .obs-type {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            font-weight: 500;
+        }
+
+        .obs-type.tool_output { background: rgba(59, 130, 246, 0.2); color: var(--accent-blue); }
+        .obs-type.decision { background: rgba(234, 179, 8, 0.2); color: var(--accent-yellow); }
+        .obs-type.bugfix { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
+        .obs-type.feature { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
+        .obs-type.note { background: rgba(136, 136, 136, 0.2); color: var(--text-secondary); }
+
+        .obs-time {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        .obs-summary {
+            font-size: 0.9rem;
+            color: var(--text-primary);
+            line-height: 1.5;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .obs-tags {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+
+        .obs-tag {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        .obs-tokens {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 8px;
+        }
+
+        /* Details Panel */
+        .details-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .details-content {
+            padding: 20px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+
+        .detail-section {
+            margin-bottom: 20px;
+        }
+
+        .detail-label {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+
+        .detail-value {
+            font-size: 0.9rem;
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .detail-value code {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 0.85rem;
+        }
+
+        /* Endless Mode Section */
+        .endless-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 16px;
+        }
+
+        .endless-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
+        .endless-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toggle-switch {
+            position: relative;
+            width: 48px;
+            height: 24px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .toggle-switch.active {
+            background: var(--accent-green);
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.3s;
+        }
+
+        .toggle-switch.active::after {
+            transform: translateX(24px);
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state svg {
+            width: 48px;
+            height: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            justify-content: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border-color);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #444;
+        }
+
+        /* Config Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 1.5rem;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .form-select {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+        }
+
+        .modal-footer {
+            padding: 20px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <path d="M12 6v6l4 2"/>
+                </svg>
+                <span>ai-mem</span> Dashboard
+            </h1>
+            <div class="header-actions">
+                <div class="status-badge">
+                    <div class="status-dot"></div>
+                    <span id="connection-status">Connected</span>
+                </div>
+                <button class="btn btn-secondary" onclick="openConfigModal()">
+                    Settings
+                </button>
+                <button class="btn btn-primary" onclick="refreshData()">
+                    Refresh
+                </button>
+            </div>
+        </header>
+
+        <!-- Stats Grid -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Total Observations</div>
+                <div class="stat-value blue" id="stat-total">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Active Sessions</div>
+                <div class="stat-value green" id="stat-sessions">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Tokens Saved</div>
+                <div class="stat-value yellow" id="stat-tokens-saved">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Cache Hit Rate</div>
+                <div class="stat-value" id="stat-cache-rate">-</div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Observations Panel -->
+            <div class="observations-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">Recent Observations</h2>
+                    <div class="search-box">
+                        <input type="text" id="search-input" placeholder="Search..." onkeyup="handleSearch(event)">
+                        <button class="btn btn-secondary" onclick="search()">Search</button>
+                    </div>
+                </div>
+                <div class="observations-list" id="observations-list">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Details Panel -->
+            <div class="details-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">Details</h2>
+                </div>
+                <div class="details-content" id="details-content">
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                            <polyline points="10 9 9 9 8 9"/>
+                        </svg>
+                        <p>Select an observation to view details</p>
+                    </div>
+                </div>
+
+                <!-- Endless Mode Section -->
+                <div class="endless-section">
+                    <div class="endless-header">
+                        <span class="panel-title">Endless Mode</span>
+                        <div class="endless-toggle">
+                            <div class="toggle-switch" id="endless-toggle" onclick="toggleEndlessMode()"></div>
+                            <span id="endless-status">Disabled</span>
+                        </div>
+                    </div>
+                    <div class="stats-grid" style="margin: 0;">
+                        <div>
+                            <div class="stat-label">Compressed</div>
+                            <div class="stat-value" style="font-size: 1.25rem;" id="endless-compressed">0</div>
+                        </div>
+                        <div>
+                            <div class="stat-label">Saved</div>
+                            <div class="stat-value green" style="font-size: 1.25rem;" id="endless-saved">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Config Modal -->
+    <div class="modal-overlay" id="config-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Settings</h3>
+                <button class="modal-close" onclick="closeConfigModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">API URL</label>
+                    <input type="text" class="form-input" id="config-api-url" value="http://localhost:37777">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">API Token</label>
+                    <input type="password" class="form-input" id="config-api-token" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Project Filter</label>
+                    <input type="text" class="form-input" id="config-project" placeholder="Filter by project path">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Observation Type</label>
+                    <select class="form-select" id="config-obs-type">
+                        <option value="">All Types</option>
+                        <option value="tool_output">Tool Output</option>
+                        <option value="decision">Decision</option>
+                        <option value="bugfix">Bugfix</option>
+                        <option value="feature">Feature</option>
+                        <option value="note">Note</option>
+                        <option value="summary">Summary</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Context Observations</label>
+                    <input type="number" class="form-input" id="config-context-count" value="12" min="1" max="100">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeConfigModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="saveConfig()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        let config = {
+            apiUrl: localStorage.getItem('ai-mem-api-url') || 'http://localhost:37777',
+            apiToken: localStorage.getItem('ai-mem-api-token') || '',
+            project: localStorage.getItem('ai-mem-project') || '',
+            obsType: localStorage.getItem('ai-mem-obs-type') || '',
+            contextCount: parseInt(localStorage.getItem('ai-mem-context-count')) || 12,
+        };
+
+        let observations = [];
+        let selectedObservation = null;
+        let eventSource = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadConfig();
+            refreshData();
+            connectSSE();
+        });
+
+        // API Helpers
+        async function api(endpoint, options = {}) {
+            const url = `${config.apiUrl}${endpoint}`;
+            const headers = {
+                'Content-Type': 'application/json',
+            };
+            if (config.apiToken) {
+                headers['Authorization'] = `Bearer ${config.apiToken}`;
+            }
+
+            try {
+                const response = await fetch(url, { ...options, headers });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error('API Error:', error);
+                updateConnectionStatus(false);
+                throw error;
+            }
+        }
+
+        // Data Loading
+        async function refreshData() {
+            try {
+                await Promise.all([
+                    loadStats(),
+                    loadObservations(),
+                    loadEndlessStats(),
+                ]);
+                updateConnectionStatus(true);
+            } catch (error) {
+                console.error('Refresh failed:', error);
+            }
+        }
+
+        async function loadStats() {
+            try {
+                const data = await api('/api/stats');
+                document.getElementById('stat-total').textContent = data.total?.toLocaleString() || '0';
+                document.getElementById('stat-sessions').textContent = data.active_sessions || '0';
+
+                // Load search cache stats separately
+                const cacheData = await api('/api/stats?include_cache=true');
+                const hitRate = cacheData.cache?.hit_rate_percent || 0;
+                document.getElementById('stat-cache-rate').textContent = `${hitRate}%`;
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        async function loadObservations(query = '') {
+            const listEl = document.getElementById('observations-list');
+            listEl.innerHTML = '<div class="loading"><div class="spinner"></div></div>';
+
+            try {
+                let endpoint = '/api/search?limit=50';
+                if (query) {
+                    endpoint += `&query=${encodeURIComponent(query)}`;
+                }
+                if (config.project) {
+                    endpoint += `&project=${encodeURIComponent(config.project)}`;
+                }
+                if (config.obsType) {
+                    endpoint += `&obs_type=${encodeURIComponent(config.obsType)}`;
+                }
+
+                const data = await api(endpoint);
+                observations = data.results || [];
+                renderObservations();
+            } catch (error) {
+                listEl.innerHTML = '<div class="empty-state"><p>Failed to load observations</p></div>';
+            }
+        }
+
+        async function loadEndlessStats() {
+            try {
+                const data = await api('/api/endless/stats');
+                const toggle = document.getElementById('endless-toggle');
+                const status = document.getElementById('endless-status');
+
+                if (data.enabled) {
+                    toggle.classList.add('active');
+                    status.textContent = 'Enabled';
+                } else {
+                    toggle.classList.remove('active');
+                    status.textContent = 'Disabled';
+                }
+
+                document.getElementById('endless-compressed').textContent =
+                    data.stats?.compressed_observations?.toLocaleString() || '0';
+                document.getElementById('endless-saved').textContent =
+                    (data.stats?.tokens_saved?.toLocaleString() || '0') + ' tokens';
+                document.getElementById('stat-tokens-saved').textContent =
+                    data.stats?.tokens_saved?.toLocaleString() || '0';
+            } catch (error) {
+                console.error('Failed to load endless stats:', error);
+            }
+        }
+
+        // Rendering
+        function renderObservations() {
+            const listEl = document.getElementById('observations-list');
+
+            if (observations.length === 0) {
+                listEl.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/>
+                            <path d="M21 21l-4.35-4.35"/>
+                        </svg>
+                        <p>No observations found</p>
+                    </div>
+                `;
+                return;
+            }
+
+            listEl.innerHTML = observations.map(obs => `
+                <div class="observation-item ${selectedObservation?.id === obs.id ? 'selected' : ''}"
+                     onclick="selectObservation('${obs.id}')">
+                    <div class="obs-header">
+                        <span class="obs-type ${obs.type}">${obs.type}</span>
+                        <span class="obs-time">${formatTime(obs.created_at)}</span>
+                    </div>
+                    <div class="obs-summary">${escapeHtml(obs.summary || '')}</div>
+                    ${obs.tags?.length ? `
+                        <div class="obs-tags">
+                            ${obs.tags.slice(0, 3).map(tag => `<span class="obs-tag">${escapeHtml(tag)}</span>`).join('')}
+                            ${obs.tags.length > 3 ? `<span class="obs-tag">+${obs.tags.length - 3}</span>` : ''}
+                        </div>
+                    ` : ''}
+                    ${obs.token_estimate ? `<div class="obs-tokens">${obs.token_estimate} tokens</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function renderDetails(obs) {
+            const detailsEl = document.getElementById('details-content');
+
+            if (!obs) {
+                detailsEl.innerHTML = `
+                    <div class="empty-state">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <p>Select an observation to view details</p>
+                    </div>
+                `;
+                return;
+            }
+
+            detailsEl.innerHTML = `
+                <div class="detail-section">
+                    <div class="detail-label">ID</div>
+                    <div class="detail-value"><code>${obs.id}</code></div>
+                </div>
+                <div class="detail-section">
+                    <div class="detail-label">Type</div>
+                    <div class="detail-value"><span class="obs-type ${obs.type}">${obs.type}</span></div>
+                </div>
+                <div class="detail-section">
+                    <div class="detail-label">Created</div>
+                    <div class="detail-value">${new Date(obs.created_at * 1000).toLocaleString()}</div>
+                </div>
+                <div class="detail-section">
+                    <div class="detail-label">Project</div>
+                    <div class="detail-value"><code>${escapeHtml(obs.project || 'N/A')}</code></div>
+                </div>
+                ${obs.title ? `
+                    <div class="detail-section">
+                        <div class="detail-label">Title</div>
+                        <div class="detail-value">${escapeHtml(obs.title)}</div>
+                    </div>
+                ` : ''}
+                <div class="detail-section">
+                    <div class="detail-label">Content</div>
+                    <div class="detail-value">${escapeHtml(obs.content || obs.summary || '')}</div>
+                </div>
+                ${obs.tags?.length ? `
+                    <div class="detail-section">
+                        <div class="detail-label">Tags</div>
+                        <div class="obs-tags">
+                            ${obs.tags.map(tag => `<span class="obs-tag">${escapeHtml(tag)}</span>`).join('')}
+                        </div>
+                    </div>
+                ` : ''}
+                ${obs.metadata?.endless ? `
+                    <div class="detail-section">
+                        <div class="detail-label">Endless Mode</div>
+                        <div class="detail-value">
+                            Compressed ${obs.metadata.endless.compression_ratio?.toFixed(1)}x
+                            (${obs.metadata.endless.original_tokens} → ${obs.metadata.endless.compressed_tokens} tokens)
+                        </div>
+                    </div>
+                ` : ''}
+            `;
+        }
+
+        // Event Handlers
+        async function selectObservation(id) {
+            try {
+                const data = await api(`/api/observations/${id}`);
+                selectedObservation = data;
+                renderObservations();
+                renderDetails(data);
+            } catch (error) {
+                console.error('Failed to load observation:', error);
+            }
+        }
+
+        function handleSearch(event) {
+            if (event.key === 'Enter') {
+                search();
+            }
+        }
+
+        function search() {
+            const query = document.getElementById('search-input').value;
+            loadObservations(query);
+        }
+
+        async function toggleEndlessMode() {
+            const toggle = document.getElementById('endless-toggle');
+            const isEnabled = toggle.classList.contains('active');
+
+            try {
+                if (isEnabled) {
+                    await api('/api/endless/disable', { method: 'POST' });
+                } else {
+                    await api('/api/endless/enable', { method: 'POST', body: '{}' });
+                }
+                await loadEndlessStats();
+            } catch (error) {
+                console.error('Failed to toggle endless mode:', error);
+            }
+        }
+
+        // SSE Connection
+        function connectSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            let url = `${config.apiUrl}/api/stream`;
+            if (config.apiToken) {
+                url += `?token=${encodeURIComponent(config.apiToken)}`;
+            }
+
+            try {
+                eventSource = new EventSource(url);
+
+                eventSource.onmessage = (event) => {
+                    const data = JSON.parse(event.data);
+                    if (data.id) {
+                        // New observation received
+                        observations.unshift(data);
+                        observations = observations.slice(0, 50);
+                        renderObservations();
+
+                        // Update stats
+                        const totalEl = document.getElementById('stat-total');
+                        const current = parseInt(totalEl.textContent.replace(/,/g, '')) || 0;
+                        totalEl.textContent = (current + 1).toLocaleString();
+                    }
+                };
+
+                eventSource.onerror = () => {
+                    updateConnectionStatus(false);
+                    // Reconnect after 5 seconds
+                    setTimeout(connectSSE, 5000);
+                };
+
+                eventSource.onopen = () => {
+                    updateConnectionStatus(true);
+                };
+            } catch (error) {
+                console.error('SSE connection failed:', error);
+            }
+        }
+
+        // Config Modal
+        function openConfigModal() {
+            document.getElementById('config-api-url').value = config.apiUrl;
+            document.getElementById('config-api-token').value = config.apiToken;
+            document.getElementById('config-project').value = config.project;
+            document.getElementById('config-obs-type').value = config.obsType;
+            document.getElementById('config-context-count').value = config.contextCount;
+            document.getElementById('config-modal').classList.add('active');
+        }
+
+        function closeConfigModal() {
+            document.getElementById('config-modal').classList.remove('active');
+        }
+
+        function saveConfig() {
+            config.apiUrl = document.getElementById('config-api-url').value;
+            config.apiToken = document.getElementById('config-api-token').value;
+            config.project = document.getElementById('config-project').value;
+            config.obsType = document.getElementById('config-obs-type').value;
+            config.contextCount = parseInt(document.getElementById('config-context-count').value);
+
+            localStorage.setItem('ai-mem-api-url', config.apiUrl);
+            localStorage.setItem('ai-mem-api-token', config.apiToken);
+            localStorage.setItem('ai-mem-project', config.project);
+            localStorage.setItem('ai-mem-obs-type', config.obsType);
+            localStorage.setItem('ai-mem-context-count', config.contextCount);
+
+            closeConfigModal();
+            connectSSE();
+            refreshData();
+        }
+
+        function loadConfig() {
+            document.getElementById('config-api-url').value = config.apiUrl;
+            document.getElementById('config-api-token').value = config.apiToken;
+        }
+
+        // Utilities
+        function updateConnectionStatus(connected) {
+            const statusEl = document.getElementById('connection-status');
+            const dotEl = statusEl.previousElementSibling;
+
+            if (connected) {
+                statusEl.textContent = 'Connected';
+                dotEl.style.background = 'var(--accent-green)';
+            } else {
+                statusEl.textContent = 'Disconnected';
+                dotEl.style.background = 'var(--accent-red)';
+            }
+        }
+
+        function formatTime(timestamp) {
+            const date = new Date(timestamp * 1000);
+            const now = new Date();
+            const diff = (now - date) / 1000;
+
+            if (diff < 60) return 'Just now';
+            if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+            return date.toLocaleDateString();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

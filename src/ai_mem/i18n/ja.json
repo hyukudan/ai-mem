@@ -1,0 +1,103 @@
+{
+  "app": {
+    "name": "ai-mem",
+    "description": "LLM用ユニバーサル長期記憶",
+    "tagline": "すべてのAIモデルで動作する永続メモリ"
+  },
+  "cli": {
+    "add": {
+      "success": "メモリを保存しました！(ID: {id})",
+      "error": "メモリの保存に失敗: {error}",
+      "help": "新しい観察をメモリに追加"
+    },
+    "search": {
+      "results": "{count}件の結果が見つかりました",
+      "no_results": "一致するメモリが見つかりません",
+      "help": "クエリでメモリを検索"
+    },
+    "context": {
+      "generated": "コンテキストを生成しました ({tokens} トークン)",
+      "empty": "関連するコンテキストが見つかりません",
+      "help": "インジェクション用コンテキストを生成"
+    },
+    "session": {
+      "started": "セッションを開始しました (ID: {id})",
+      "ended": "セッションを終了しました",
+      "help": "メモリセッションを管理"
+    },
+    "endless": {
+      "enabled": "エンドレスモードを有効にしました",
+      "disabled": "エンドレスモードを無効にしました",
+      "stats": "圧縮統計",
+      "help": "エンドレスモード圧縮を設定"
+    },
+    "mode": {
+      "set": "モードを設定: {mode}",
+      "cleared": "モードをクリア",
+      "current": "現在のモード: {mode}",
+      "help": "作業モードを設定"
+    }
+  },
+  "modes": {
+    "code": {
+      "name": "コードモード",
+      "description": "ソフトウェア開発とコーディングタスクに最適化"
+    },
+    "email": {
+      "name": "メール調査モード",
+      "description": "コミュニケーションとメールスレッドの分析用"
+    },
+    "chill": {
+      "name": "チルモード",
+      "description": "最小限のメモリオーバーヘッドでカジュアルな会話"
+    },
+    "research": {
+      "name": "リサーチモード",
+      "description": "深い研究と探索タスク用"
+    },
+    "debug": {
+      "name": "デバッグモード",
+      "description": "デバッグとトラブルシューティング用"
+    }
+  },
+  "concepts": {
+    "how-it-works": "仕組み",
+    "why-it-exists": "存在理由",
+    "what-changed": "変更点",
+    "problem-solution": "問題と解決策",
+    "gotcha": "落とし穴",
+    "workaround": "回避策",
+    "pattern": "パターン",
+    "anti-pattern": "アンチパターン",
+    "trade-off": "トレードオフ",
+    "architecture": "アーキテクチャ",
+    "interface": "インターフェース",
+    "dependency": "依存関係"
+  },
+  "ui": {
+    "dashboard": {
+      "title": "ai-mem ダッシュボード",
+      "observations": "観察",
+      "search": "メモリを検索...",
+      "settings": "設定",
+      "endless_mode": "エンドレスモード",
+      "refresh": "更新"
+    }
+  },
+  "errors": {
+    "not_found": "見つかりません: {resource}",
+    "invalid_input": "無効な入力: {field}",
+    "connection_failed": "接続に失敗: {error}",
+    "unauthorized": "アクセス権限がありません",
+    "internal_error": "内部エラーが発生しました"
+  },
+  "messages": {
+    "loading": "読み込み中...",
+    "saving": "保存中...",
+    "success": "成功！",
+    "error": "エラー",
+    "confirm": "よろしいですか？",
+    "cancel": "キャンセル",
+    "ok": "OK"
+  }
+}

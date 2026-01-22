@@ -440,6 +440,7 @@ This workflow keeps Claude, Gemini, and other assistants aligned with the same p
 
 See the `docs/` folder for targeted guides:
 
+### Core Documentation
 - [🚀 Getting Started](docs/getting-started.md) – Installation, configuration, quick-start, and baseline workflows.
 - [⚙️ Configuration](docs/configuration.md) – Vector stores, cache policies, connectors, and token budget controls.
 - [🔌 Proxies & Hooks](docs/proxies.md) – OpenAI, Gemini, Anthropic, Azure, Bedrock proxies plus IDE integrations.
@@ -452,6 +453,318 @@ See the `docs/` folder for targeted guides:
 - [📸 Snapshots](docs/snapshots.md) – Backup, export, and merging strategies.
 - [💻 Development](docs/development.md) – Testing, roadmap, contributor guide, and venv tips.
 
-## Credits & inspiration
+### v2.0 Feature Guides
+- [🔄 Endless Mode (Compression)](docs/features/endless-mode.md) – Real-time compression, archive memory, O(N) scaling.
+- [🎯 Work Modes](docs/features/work-modes.md) – Predefined configurations for code, email, research, debug, chill.
+- [🌍 Multi-Language (i18n)](docs/features/i18n.md) – 28+ language support and localization.
+- [🔗 OpenRouter Provider](docs/features/openrouter.md) – Access 200+ LLM models including free tier.
 
-Inspired by [claude-mem](https://github.com/thedotmack/claude-mem). We highlight the shared-memory story, CLI helpers, and documentation so any LLM can plug in and tap into persistent context.
+## New in v2.0
+
+### Endless Mode (Real-Time Compression)
+
+Transform O(N²) context scaling to O(N) with two-tier memory:
+
+```bash
+# Enable Endless Mode
+ai-mem endless --enable
+
+# Check compression stats
+ai-mem endless --stats
+
+# Retrieve full archive (uncompressed) output
+ai-mem endless-archive <observation-id> --session-id <session-id>
+```
+
+Endless Mode compresses tool outputs in real-time (~500 tokens per observation) while preserving full outputs in archive memory on disk. This enables ~20x more tool uses before context exhaustion.
+
+Configuration:
+```bash
+AI_MEM_ENDLESS_ENABLED=true
+AI_MEM_ENDLESS_TARGET_TOKENS=500
+AI_MEM_ENDLESS_COMPRESSION_RATIO=4.0
+```
+
+### Web Dashboard
+
+Real-time memory visualization at `http://localhost:8000/ui`:
+
+- Live observation stream with SSE
+- Search and filter capabilities
+- Endless Mode toggle and stats
+- Settings modal for configuration
+- Click-through to observation details
+
+```bash
+# Start server with UI
+ai-mem server
+
+# Open dashboard
+open http://localhost:8000/ui
+```
+
+### Observation Concepts
+
+Semantic categorization beyond types for better retrieval:
+
+```bash
+# Add observation with concept
+ai-mem add "Gotcha: API requires auth header" --type discovery --concept gotcha
+
+# Search by concept
+ai-mem search --concept trade-off
+```
+
+**Available concepts:**
+- `how-it-works` - Explanations of behavior
+- `why-it-exists` - Rationale and history
+- `gotcha` - Important caveats (🔴)
+- `pattern` - Reusable patterns (💡)
+- `trade-off` - Design decisions (⚖️)
+- `workaround` - Temporary solutions (⚠️)
+- `architecture` - System design (🏗️)
+- And more...
+
+### Work Modes
+
+Predefined configurations for different workflows:
+
+```bash
+# List available modes
+ai-mem mode --list
+
+# Activate a mode
+ai-mem mode code
+
+# Check current mode
+ai-mem mode --show
+
+# Clear mode
+ai-mem mode --clear
+```
+
+**Available modes:**
+| Mode | Description | Context | Endless |
+|------|-------------|---------|---------|
+| `code` | Software development | 12 obs | Yes |
+| `email` | Email investigation | 20 obs | Yes |
+| `research` | Deep exploration | 25 obs | Yes |
+| `debug` | Troubleshooting | 15 obs | Yes |
+| `chill` | Casual conversation | 5 obs | No |
+
+Set via environment: `AI_MEM_MODE=code`
+
+### ai-skills Integration
+
+Combine persistent memory with expert knowledge (80+ skills):
+
+```bash
+# Search memory + find relevant skills
+ai-mem search-with-skills "JWT authentication"
+
+# Find expert skills by topic
+ai-mem find-skills "security best practices"
+```
+
+**MCP Tools:**
+- `search_with_skills` - Unified memory + skills search
+- `find_skills` - Discover relevant expertise
+- `get_skill` - Retrieve full skill content
+
+Requires [ai-skills](https://github.com/sergiocayuqueo/ai-skills) as optional dependency.
+
+### Folder Context (CLAUDE.md)
+
+Auto-generated context files per directory:
+
+```bash
+# Generate CLAUDE.md for current folder
+ai-mem folder-context
+
+# Generate for all project folders
+ai-mem folder-context --all
+```
+
+Each `CLAUDE.md` contains:
+- Timeline of activity for that directory
+- Table: ID, time, type, title, token cost
+- Updated automatically with observations
+
+Enable via: `AI_MEM_FOLDER_CLAUDEMD_ENABLED=true`
+
+### Citation URLs
+
+Reference observations via clickable URLs:
+
+```
+/obs/{short-id}     → Redirect to full observation
+/view/{full-id}     → HTML viewer with details
+/api/observation/{id} → JSON API
+```
+
+Example: `http://localhost:8000/obs/abc12345`
+
+Configuration:
+```bash
+AI_MEM_CITATIONS_BASE_URL=http://localhost:8000
+AI_MEM_CITATIONS_FORMAT=compact  # compact, full, id_only
+```
+
+### Plugin Marketplace
+
+Claude Code integration via hooks.json:
+
+```bash
+# Check plugin status
+ai-mem plugin-info
+
+# Verify installation
+ai-mem plugin-verify
+
+# Generate MCP config
+ai-mem plugin-config
+
+# Generate bug report
+ai-mem bug-report -o report.md
+```
+
+The `hooks.json` file provides:
+- Lifecycle hooks (PreToolUse, PostToolUse, etc.)
+- MCP server configuration
+- Skills integration (mem-search, mem-remember)
+
+### Multi-Language Support (i18n)
+
+ai-mem supports 28+ languages:
+
+```bash
+# Set language
+export AI_MEM_LANGUAGE=es  # Spanish
+export AI_MEM_LANGUAGE=zh  # Chinese
+export AI_MEM_LANGUAGE=ja  # Japanese
+```
+
+**Supported languages:** English, Spanish, Chinese (Simplified/Traditional), Japanese, Korean, French, German, Italian, Portuguese, Russian, Arabic, Hindi, Vietnamese, Thai, Indonesian, Turkish, Polish, Dutch, Swedish, and more.
+
+```python
+from ai_mem.i18n import t, set_language
+
+set_language("es")
+print(t("cli.add.success", id="abc-123"))
+# → "¡Memoria guardada! (ID: abc-123)"
+```
+
+### OpenRouter Provider
+
+Access 200+ LLM models including free options:
+
+```python
+from ai_mem.providers import OpenRouterProvider, quick_chat
+
+# Quick chat with free model
+response = await quick_chat("What is Python?")
+
+# Use specific model
+provider = OpenRouterProvider()
+response = await provider.chat(
+    prompt="Explain async/await",
+    model="claude-3.5-sonnet",
+)
+```
+
+**Free models available:**
+- Llama 3.2 (3B, 1B)
+- Gemma 2 9B
+- Qwen 2 7B
+- Mistral 7B
+
+Configuration:
+```bash
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_DEFAULT_MODEL=meta-llama/llama-3.2-3b-instruct:free
+```
+
+### Resumable Sessions
+
+Continue sessions across conversations:
+
+```python
+from ai_mem.resumable_sessions import create_session, resume_session
+
+# Create a resumable session
+session = create_session(
+    project="/path/to/project",
+    goal="Implement authentication",
+)
+
+# ... work happens ...
+
+# Resume later
+session = resume_session(session.session_id)
+if session:
+    print(f"Resumed with {session.state.observation_count} observations")
+    session.checkpoint("Phase 1 complete")
+```
+
+```bash
+# List resumable sessions
+ai-mem sessions --resumable
+
+# Environment config
+AI_MEM_SESSIONS_PERSIST=true
+```
+
+### Path Validation
+
+Robust path handling to prevent issues:
+
+```python
+from ai_mem.path_validation import validate_file_path, safe_join
+
+# Validate and normalize paths
+path = validate_file_path("~/project/src", must_exist=True)
+
+# Safe path joining (prevents traversal)
+safe = safe_join("/base/dir", user_input)
+```
+
+Features:
+- Tilde expansion validation
+- Path traversal prevention
+- URL/path detection
+- Control character filtering
+
+## Why ai-mem?
+
+### Unique Advantages
+
+| Feature | ai-mem | Typical Memory Systems |
+|---------|--------|------------------------|
+| **Multi-LLM Native** | ✅ Same memory for Claude, Gemini, GPT | ❌ Single-model focus |
+| **Knowledge Graph** | ✅ Entities + relationships | ❌ Text-only storage |
+| **Query Expansion** | ✅ Technical synonyms | ❌ Literal matching |
+| **Intent Detection** | ✅ Smart context injection | ❌ Manual retrieval |
+| **Multiple Vector Stores** | ✅ Chroma/PostgreSQL/Qdrant | ❌ Single backend |
+| **Enterprise Proxies** | ✅ Azure/Bedrock/Anthropic | ❌ Direct API only |
+| **Endless Mode** | ✅ O(N) scaling, 20x capacity | ⚠️ Limited compression |
+| **Skills Integration** | ✅ 80+ expert practices | ❌ Memory only |
+| **Inline Tags `<mem>`** | ✅ Embed in prompts | ❌ Separate queries |
+| **Progressive Disclosure** | ✅ 3-layer context | ❌ All-or-nothing |
+| **Multi-Language (i18n)** | ✅ 28+ languages | ❌ English only |
+| **OpenRouter** | ✅ 200+ models, free tier | ❌ Limited providers |
+| **Resumable Sessions** | ✅ Cross-conversation continuity | ❌ Session-bound |
+| **Path Validation** | ✅ Secure path handling | ⚠️ Basic validation |
+
+### Architecture Highlights
+
+- **Event Schema v1** - LLM-agnostic event format
+- **Host Adapters** - Claude, Gemini, Generic support
+- **Idempotency** - Event-based deduplication
+- **Batch Embeddings** - Async bulk operations
+- **Semantic Compression** - Reduce tokens without losing meaning
+- **Memory Decay** - Automatic stale cleanup
+- **Snapshots** - Export/Import/Merge workflows
+
+## License
+
+AGPL-3.0 - See [LICENSE](LICENSE) for details.

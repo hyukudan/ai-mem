@@ -1,0 +1,103 @@
+{
+  "app": {
+    "name": "ai-mem",
+    "description": "Mémoire Persistante Universelle pour LLMs",
+    "tagline": "Mémoire persistante compatible avec tous les modèles d'IA"
+  },
+  "cli": {
+    "add": {
+      "success": "Mémoire enregistrée ! (ID: {id})",
+      "error": "Échec de l'enregistrement : {error}",
+      "help": "Ajouter une nouvelle observation à la mémoire"
+    },
+    "search": {
+      "results": "{count} résultats trouvés",
+      "no_results": "Aucune mémoire correspondante trouvée",
+      "help": "Rechercher des mémoires par requête"
+    },
+    "context": {
+      "generated": "Contexte généré ({tokens} tokens)",
+      "empty": "Aucun contexte pertinent trouvé",
+      "help": "Générer un contexte pour l'injection"
+    },
+    "session": {
+      "started": "Session démarrée (ID: {id})",
+      "ended": "Session terminée",
+      "help": "Gérer les sessions de mémoire"
+    },
+    "endless": {
+      "enabled": "Mode Endless activé",
+      "disabled": "Mode Endless désactivé",
+      "stats": "Statistiques de compression",
+      "help": "Configurer la compression du Mode Endless"
+    },
+    "mode": {
+      "set": "Mode défini : {mode}",
+      "cleared": "Mode effacé",
+      "current": "Mode actuel : {mode}",
+      "help": "Définir le mode de travail"
+    }
+  },
+  "modes": {
+    "code": {
+      "name": "Mode Code",
+      "description": "Optimisé pour le développement logiciel et les tâches de programmation"
+    },
+    "email": {
+      "name": "Mode Investigation Email",
+      "description": "Pour analyser les communications et les fils de discussion"
+    },
+    "chill": {
+      "name": "Mode Détente",
+      "description": "Conversation décontractée avec un minimum de charge mémoire"
+    },
+    "research": {
+      "name": "Mode Recherche",
+      "description": "Pour la recherche approfondie et les tâches d'exploration"
+    },
+    "debug": {
+      "name": "Mode Débogage",
+      "description": "Pour le débogage et la résolution de problèmes"
+    }
+  },
+  "concepts": {
+    "how-it-works": "Comment ça marche",
+    "why-it-exists": "Pourquoi ça existe",
+    "what-changed": "Ce qui a changé",
+    "problem-solution": "Problème et Solution",
+    "gotcha": "Piège",
+    "workaround": "Contournement",
+    "pattern": "Patron",
+    "anti-pattern": "Anti-patron",
+    "trade-off": "Compromis",
+    "architecture": "Architecture",
+    "interface": "Interface",
+    "dependency": "Dépendance"
+  },
+  "ui": {
+    "dashboard": {
+      "title": "Tableau de bord ai-mem",
+      "observations": "Observations",
+      "search": "Rechercher des mémoires...",
+      "settings": "Paramètres",
+      "endless_mode": "Mode Endless",
+      "refresh": "Actualiser"
+    }
+  },
+  "errors": {
+    "not_found": "Non trouvé : {resource}",
+    "invalid_input": "Entrée invalide : {field}",
+    "connection_failed": "Connexion échouée : {error}",
+    "unauthorized": "Accès non autorisé",
+    "internal_error": "Une erreur interne s'est produite"
+  },
+  "messages": {
+    "loading": "Chargement...",
+    "saving": "Enregistrement...",
+    "success": "Succès !",
+    "error": "Erreur",
+    "confirm": "Êtes-vous sûr ?",
+    "cancel": "Annuler",
+    "ok": "OK"
+  }
+}

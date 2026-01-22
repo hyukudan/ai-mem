@@ -73,6 +73,7 @@ class DatabaseManager:
                 session_id TEXT NOT NULL,
                 project TEXT NOT NULL,
                 type TEXT NOT NULL,
+                concept TEXT,
                 title TEXT,
                 content TEXT NOT NULL,
                 summary TEXT,
@@ -121,6 +122,9 @@ class DatabaseManager:
         )
         await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_type ON observations(type)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observations_concept ON observations(concept)"
         )
         await self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_observations_created ON observations(created_at)"
@@ -224,6 +228,10 @@ class DatabaseManager:
             await self.conn.commit()
         if "index_version" not in existing:
             await self.conn.execute("ALTER TABLE observations ADD COLUMN index_version INTEGER DEFAULT 0")
+            await self.conn.commit()
+        # Concept field for semantic categorization (gotcha, trade-off, pattern, etc.)
+        if "concept" not in existing:
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN concept TEXT")
             await self.conn.commit()
 
     async def _ensure_asset_table(self) -> None:
@@ -843,6 +851,7 @@ class DatabaseManager:
                     session_id,
                     project,
                     type,
+                    concept,
                     title,
                     content,
                     summary,
@@ -853,13 +862,14 @@ class DatabaseManager:
                     metadata,
                     diff
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     obs.id,
                     obs.session_id,
                     obs.project,
                     obs.type,
+                    obs.concept,
                     obs.title,
                     obs.content,
                     obs.summary,
@@ -1760,6 +1770,7 @@ class DatabaseManager:
             "session_id": row["session_id"],
             "project": row["project"],
             "type": row["type"],
+            "concept": row["concept"] if "concept" in row.keys() else None,
             "title": row["title"],
             "content": row["content"],
             "summary": row["summary"],

@@ -1,0 +1,128 @@
+{
+  "app": {
+    "name": "ai-mem",
+    "description": "Memoria Persistente Universal para LLMs",
+    "tagline": "Memoria persistente que funciona con todos los modelos de IA"
+  },
+  "cli": {
+    "add": {
+      "success": "¡Memoria guardada! (ID: {id})",
+      "error": "Error al guardar memoria: {error}",
+      "help": "Añadir una nueva observación a la memoria"
+    },
+    "search": {
+      "results": "Encontrados {count} resultados",
+      "no_results": "No se encontraron memorias coincidentes",
+      "help": "Buscar memorias por consulta"
+    },
+    "context": {
+      "generated": "Contexto generado ({tokens} tokens)",
+      "empty": "No se encontró contexto relevante",
+      "help": "Generar contexto para inyección"
+    },
+    "session": {
+      "started": "Sesión iniciada (ID: {id})",
+      "ended": "Sesión finalizada",
+      "help": "Gestionar sesiones de memoria"
+    },
+    "endless": {
+      "enabled": "Modo Endless activado",
+      "disabled": "Modo Endless desactivado",
+      "stats": "Estadísticas de compresión",
+      "help": "Configurar compresión del Modo Endless"
+    },
+    "mode": {
+      "set": "Modo establecido: {mode}",
+      "cleared": "Modo limpiado",
+      "current": "Modo actual: {mode}",
+      "help": "Establecer modo de trabajo (code, email, research, debug, chill)"
+    }
+  },
+  "modes": {
+    "code": {
+      "name": "Modo Código",
+      "description": "Optimizado para desarrollo de software y tareas de programación"
+    },
+    "email": {
+      "name": "Modo Investigación de Email",
+      "description": "Para analizar comunicaciones y hilos de correo"
+    },
+    "chill": {
+      "name": "Modo Relajado",
+      "description": "Conversación casual con mínima carga de memoria"
+    },
+    "research": {
+      "name": "Modo Investigación",
+      "description": "Para investigación profunda y tareas de exploración"
+    },
+    "debug": {
+      "name": "Modo Depuración",
+      "description": "Para depuración y resolución de problemas"
+    }
+  },
+  "concepts": {
+    "how-it-works": "Cómo Funciona",
+    "why-it-exists": "Por Qué Existe",
+    "what-changed": "Qué Cambió",
+    "problem-solution": "Problema y Solución",
+    "gotcha": "Trampa/Gotcha",
+    "workaround": "Solución Temporal",
+    "pattern": "Patrón",
+    "anti-pattern": "Anti-Patrón",
+    "trade-off": "Compromiso",
+    "architecture": "Arquitectura",
+    "interface": "Interfaz",
+    "dependency": "Dependencia"
+  },
+  "types": {
+    "bugfix": "Corrección de Bug",
+    "feature": "Característica",
+    "decision": "Decisión",
+    "refactor": "Refactorización",
+    "discovery": "Descubrimiento",
+    "change": "Cambio",
+    "note": "Nota",
+    "code_review": "Revisión de Código",
+    "test": "Test",
+    "tool_output": "Salida de Herramienta",
+    "interaction": "Interacción",
+    "preference": "Preferencia",
+    "summary": "Resumen"
+  },
+  "ui": {
+    "dashboard": {
+      "title": "Panel de ai-mem",
+      "observations": "Observaciones",
+      "search": "Buscar memorias...",
+      "settings": "Configuración",
+      "endless_mode": "Modo Endless",
+      "refresh": "Actualizar"
+    },
+    "observation": {
+      "type": "Tipo",
+      "concept": "Concepto",
+      "created": "Creado",
+      "project": "Proyecto",
+      "tags": "Etiquetas",
+      "summary": "Resumen",
+      "content": "Contenido",
+      "view_json": "Ver JSON"
+    }
+  },
+  "errors": {
+    "not_found": "No encontrado: {resource}",
+    "invalid_input": "Entrada inválida: {field}",
+    "connection_failed": "Conexión fallida: {error}",
+    "unauthorized": "Acceso no autorizado",
+    "internal_error": "Ocurrió un error interno"
+  },
+  "messages": {
+    "loading": "Cargando...",
+    "saving": "Guardando...",
+    "success": "¡Éxito!",
+    "error": "Error",
+    "confirm": "¿Estás seguro?",
+    "cancel": "Cancelar",
+    "ok": "Aceptar"
+  }
+}

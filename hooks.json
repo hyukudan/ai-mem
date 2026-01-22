@@ -1,0 +1,111 @@
+{
+  "$schema": "https://claude.ai/plugins/hooks-schema.json",
+  "name": "ai-mem",
+  "version": "2.0.0",
+  "description": "Universal persistent memory system for AI agents. Multi-LLM support, Knowledge Graph, Semantic Search.",
+  "author": "ai-mem contributors",
+  "license": "MIT",
+  "homepage": "https://github.com/sergiocayuqueo/ai-mem",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sergiocayuqueo/ai-mem.git"
+  },
+  "keywords": [
+    "memory",
+    "ai",
+    "llm",
+    "claude",
+    "mcp",
+    "persistent-memory",
+    "knowledge-graph",
+    "semantic-search"
+  ],
+  "engines": {
+    "claude-code": ">=1.0.0"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "command": "ai-mem hook pre-tool --tool \"$TOOL_NAME\" --input \"$TOOL_INPUT\""
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "command": "ai-mem hook post-tool --tool \"$TOOL_NAME\" --output \"$TOOL_OUTPUT\" --input \"$TOOL_INPUT\""
+      }
+    ],
+    "PreUserPrompt": [
+      {
+        "command": "ai-mem hook pre-prompt --prompt \"$USER_PROMPT\""
+      }
+    ],
+    "PostUserPrompt": [
+      {
+        "command": "ai-mem hook post-prompt --prompt \"$USER_PROMPT\" --response \"$ASSISTANT_RESPONSE\""
+      }
+    ],
+    "SessionStart": [
+      {
+        "command": "ai-mem session start --project \"$PROJECT_PATH\""
+      }
+    ],
+    "SessionEnd": [
+      {
+        "command": "ai-mem session end"
+      }
+    ]
+  },
+  "mcp": {
+    "server": {
+      "command": "ai-mem",
+      "args": ["mcp"],
+      "env": {
+        "AI_MEM_LOG_LEVEL": "INFO"
+      }
+    },
+    "tools": [
+      "remember",
+      "search",
+      "get_context",
+      "list_observations",
+      "get_observation",
+      "create_entity",
+      "search_entities",
+      "search_with_skills",
+      "find_skills",
+      "get_skill"
+    ]
+  },
+  "skills": [
+    {
+      "name": "mem-search",
+      "description": "Search ai-mem memory for relevant context",
+      "command": "ai-mem search --query \"$QUERY\" --limit 5"
+    },
+    {
+      "name": "mem-remember",
+      "description": "Remember something important for future reference",
+      "command": "ai-mem add --content \"$CONTENT\" --type note"
+    }
+  ],
+  "configuration": {
+    "ui": true,
+    "configFile": ".ai-mem.json",
+    "environmentPrefix": "AI_MEM_"
+  },
+  "install": {
+    "preInstall": "python3 -c \"import sys; assert sys.version_info >= (3, 10), 'Python 3.10+ required'\"",
+    "command": "pip install -e .",
+    "postInstall": "ai-mem init --quiet",
+    "verify": "ai-mem --version"
+  },
+  "update": {
+    "command": "pip install -e . --upgrade",
+    "postUpdate": "ai-mem migrate --quiet"
+  },
+  "uninstall": {
+    "command": "pip uninstall ai-mem -y"
+  }
+}

@@ -85,6 +85,39 @@ class ContextConfig(BaseModel):
     include_related_entities: bool = True  # Include related entities in context
 
 
+class EndlessModeConfig(BaseModel):
+    """Configuration for Endless Mode - real-time compression for extended sessions.
+
+    Endless Mode transforms O(N²) context growth into O(N) linear scaling by:
+    - Compressing tool outputs in real-time (~500 tokens per observation)
+    - Maintaining full transcripts in archive memory (disk)
+    - Achieving ~20x more tool uses before context exhaustion
+    """
+
+    # Enable/disable Endless Mode
+    enabled: bool = False
+    # Target tokens per compressed observation (~500 recommended)
+    target_observation_tokens: int = 500
+    # Compression ratio target (e.g., 4.0 = 4x compression)
+    compression_ratio: float = 4.0
+    # Maximum wait time for compression in seconds
+    compression_timeout_s: float = 30.0
+    # Archive directory for full transcripts (relative to data_dir)
+    archive_dir: str = "archive"
+    # Enable archive memory (full transcripts on disk)
+    enable_archive: bool = True
+    # Compression method: "ai" (LLM-powered) or "heuristic" (fast, no LLM)
+    compression_method: str = "ai"
+    # Minimum output length to trigger compression (chars)
+    min_output_for_compression: int = 500
+    # Show compression stats in context
+    show_compression_stats: bool = True
+    # Auto-enable when context approaches limit (tokens)
+    auto_enable_threshold: Optional[int] = None
+    # Maximum observations before forcing compression
+    max_observations_before_compress: int = 50
+
+
 class HostConfig(BaseModel):
     """Configuration for a specific LLM host."""
 
@@ -228,6 +261,7 @@ class AppConfig(BaseModel):
     vector: VectorConfig = Field(default_factory=VectorConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
     hosts: HostsConfig = Field(default_factory=HostsConfig)
+    endless: EndlessModeConfig = Field(default_factory=EndlessModeConfig)
 
 
 def _config_path() -> Path:
@@ -500,6 +534,42 @@ def _apply_env_overrides(config: AppConfig) -> AppConfig:
             host_config.progressive_disclosure = progressive
         if max_context is not None:
             host_config.max_context_tokens = max_context
+
+    # Endless Mode config overrides
+    endless_enabled = _env_bool("AI_MEM_ENDLESS_ENABLED")
+    endless_target_tokens = _env_int("AI_MEM_ENDLESS_TARGET_TOKENS")
+    endless_compression_ratio = _env_float("AI_MEM_ENDLESS_COMPRESSION_RATIO")
+    endless_timeout = _env_float("AI_MEM_ENDLESS_TIMEOUT")
+    endless_archive_dir = os.environ.get("AI_MEM_ENDLESS_ARCHIVE_DIR")
+    endless_enable_archive = _env_bool("AI_MEM_ENDLESS_ENABLE_ARCHIVE")
+    endless_method = os.environ.get("AI_MEM_ENDLESS_METHOD")
+    endless_min_output = _env_int("AI_MEM_ENDLESS_MIN_OUTPUT")
+    endless_show_stats = _env_bool("AI_MEM_ENDLESS_SHOW_STATS")
+    endless_auto_threshold = _env_int("AI_MEM_ENDLESS_AUTO_THRESHOLD")
+    endless_max_obs = _env_int("AI_MEM_ENDLESS_MAX_OBSERVATIONS")
+
+    if endless_enabled is not None:
+        config.endless.enabled = endless_enabled
+    if endless_target_tokens is not None:
+        config.endless.target_observation_tokens = endless_target_tokens
+    if endless_compression_ratio is not None:
+        config.endless.compression_ratio = endless_compression_ratio
+    if endless_timeout is not None:
+        config.endless.compression_timeout_s = endless_timeout
+    if endless_archive_dir:
+        config.endless.archive_dir = endless_archive_dir
+    if endless_enable_archive is not None:
+        config.endless.enable_archive = endless_enable_archive
+    if endless_method:
+        config.endless.compression_method = endless_method
+    if endless_min_output is not None:
+        config.endless.min_output_for_compression = endless_min_output
+    if endless_show_stats is not None:
+        config.endless.show_compression_stats = endless_show_stats
+    if endless_auto_threshold is not None:
+        config.endless.auto_enable_threshold = endless_auto_threshold
+    if endless_max_obs is not None:
+        config.endless.max_observations_before_compress = endless_max_obs
 
     return config
 
