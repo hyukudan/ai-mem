@@ -1,7 +1,35 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Literal, Dict, Any
+from enum import Enum
 import time
 import uuid
+
+
+class UserRole(str, Enum):
+    """User roles for authorization."""
+    ADMIN = "admin"
+    USER = "user"
+
+
+class User(BaseModel):
+    """User account model."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    email: str
+    password_hash: Optional[str] = None  # NULL if using OAuth only
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    role: UserRole = UserRole.USER
+    oauth_provider: Optional[str] = None  # 'google', 'github', etc.
+    oauth_id: Optional[str] = None
+    created_at: float = Field(default_factory=time.time)
+    last_login: Optional[float] = None
+    is_active: bool = True
+    must_change_password: bool = False  # Force password change on first login
+    settings: Dict[str, Any] = Field(default_factory=dict)
+
+    def is_admin(self) -> bool:
+        """Check if user has admin privileges."""
+        return self.role == UserRole.ADMIN
 
 ObservationType = Literal[
     "decision",

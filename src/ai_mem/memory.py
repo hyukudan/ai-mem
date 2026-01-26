@@ -540,8 +540,9 @@ class MemoryManager:
         diff: Optional[str] = None,
         event_id: Optional[str] = None,
         host: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Observation]:
-        logger.debug(f"Adding observation: type={obs_type}, project={project}, event_id={event_id}")
+        logger.debug(f"Adding observation: type={obs_type}, project={project}, user_id={user_id}, event_id={event_id}")
         start = time.perf_counter()
 
         # Check idempotency: if event_id was already processed, return existing observation
@@ -637,7 +638,7 @@ class MemoryManager:
                 )
                 for asset in normalized_assets
             ]
-        await self.db.add_observation(obs)
+        await self.db.add_observation(obs, user_id=user_id)
         if obs.assets:
             await self._store_assets(obs.id, obs.assets)
         self._index_observation(obs)
@@ -864,8 +865,9 @@ class MemoryManager:
         date_end: Optional[str] = None,
         since: Optional[str] = None,
         tag_filters: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> List[ObservationIndex]:
-        logger.debug(f"Searching: query='{query}', project={project}, limit={limit}")
+        logger.debug(f"Searching: query='{query}', project={project}, user_id={user_id}, limit={limit}")
         search_start = time.perf_counter()
 
         if date_start is None and since is not None:
@@ -883,6 +885,7 @@ class MemoryManager:
                 tag_filters=tags,
                 date_start=start_ts,
                 date_end=end_ts,
+                user_id=user_id,
             )
 
         cache_key = None
@@ -917,6 +920,7 @@ class MemoryManager:
                 date_end=end_ts,
                 tag_filters=tags,
                 limit=self.config.search.fts_top_k,
+                user_id=user_id,
             ),
             vector_search=lambda: self._vector_search(
                 query_str,

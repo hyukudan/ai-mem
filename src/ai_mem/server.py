@@ -33,6 +33,7 @@ from .exceptions import (
     UnknownHostError,
     PayloadParseError,
 )
+from .services.auth import AuthService
 
 import logging
 
@@ -46,6 +47,13 @@ async def lifespan(app: FastAPI):
 
     manager = get_manager()
     await manager.initialize()
+
+    # Initialize auth service and ensure default admin exists
+    auth_service = get_auth_service()
+    try:
+        await auth_service.ensure_default_admin()
+    except Exception as e:
+        logger.warning(f"Failed to ensure default admin: {e}")
 
     # Cleanup old event IDs to prevent table growth
     try:
@@ -496,10 +504,14 @@ except ImportError:
     limiter = None
 
 _manager: Optional[MemoryManager] = None
+_auth_service: Optional[AuthService] = None
 
 # 🔐 Get API token from secure storage (keyring) or environment
 from .secrets import SecretManager
 _api_token = SecretManager.get_api_token()
+
+# JWT secret key for authentication
+_jwt_secret = os.environ.get("AI_MEM_JWT_SECRET") or SecretManager.get_api_token() or "dev-secret-change-me"
 
 # Constants
 MAX_LIMIT = 1000
@@ -512,6 +524,54 @@ def get_manager() -> MemoryManager:
     if _manager is None:
         _manager = MemoryManager()
     return _manager
+
+
+def get_auth_service() -> AuthService:
+    """Get the authentication service instance."""
+    global _auth_service
+    if _auth_service is None:
+        manager = get_manager()
+        _auth_service = AuthService(db=manager.db, secret_key=_jwt_secret)
+    return _auth_service
+
+
+async def _check_jwt_token(request: Request) -> Optional[Dict[str, Any]]:
+    """
+    Validate JWT token from Authorization header.
+
+    Returns user info if valid, None otherwise.
+    """
+    auth = request.headers.get("authorization") or ""
+    if not auth.lower().startswith("bearer "):
+        return None
+
+    token = auth.split(" ", 1)[1].strip()
+    if not token:
+        return None
+
+    auth_service = get_auth_service()
+    success, payload = auth_service.verify_access_token(token)
+
+    if not success or not payload:
+        return None
+
+    return payload
+
+
+async def _require_auth(request: Request) -> Dict[str, Any]:
+    """Require JWT authentication. Raises UnauthorizedError if invalid."""
+    user = await _check_jwt_token(request)
+    if not user:
+        raise UnauthorizedError("Authentication required")
+    return user
+
+
+async def _require_admin(request: Request) -> Dict[str, Any]:
+    """Require admin role. Raises UnauthorizedError if not admin."""
+    user = await _require_auth(request)
+    if user.get("role") != "admin":
+        raise UnauthorizedError("Admin access required")
+    return user
 
 
 def _check_token(request: Request) -> None:
@@ -613,6 +673,82 @@ class SessionStartRequest(BaseModel):
     session_id: Optional[str] = None
 
 
+# =============================================================================
+# Authentication Models
+# =============================================================================
+
+class LoginRequest(BaseModel):
+    """Login request with email and password."""
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., description="User password", min_length=1)
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request to refresh access token."""
+    refresh_token: str = Field(..., description="Valid refresh token")
+
+
+class ChangePasswordRequest(BaseModel):
+    """Request to change password."""
+    old_password: str = Field(..., description="Current password")
+    new_password: str = Field(..., description="New password", min_length=8)
+
+
+class CreateUserRequest(BaseModel):
+    """Admin request to create a new user."""
+    email: str = Field(..., description="User email address")
+    password: str = Field(..., description="Initial password", min_length=8)
+    name: Optional[str] = Field(None, description="Display name")
+    role: str = Field("user", description="User role: admin or user")
+    require_password_change: bool = Field(False, description="Force password change on first login")
+
+
+class ResetPasswordRequest(BaseModel):
+    """Admin request to reset user password."""
+    new_password: str = Field(..., description="New password", min_length=8)
+    require_change: bool = Field(True, description="Force password change on next login")
+
+
+class UpdateUserRequest(BaseModel):
+    """Request to update user profile."""
+    name: Optional[str] = None
+    settings: Optional[Dict[str, Any]] = None
+
+
+class TokenResponse(BaseModel):
+    """JWT token pair response."""
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int  # seconds
+
+
+class AuthResponse(BaseModel):
+    """Authentication response."""
+    success: bool
+    user_id: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    role: Optional[str] = None
+    must_change_password: bool = False
+    tokens: Optional[TokenResponse] = None
+    error: Optional[str] = None
+
+
+class UserResponse(BaseModel):
+    """User profile response (excludes password hash)."""
+    id: str
+    email: str
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    role: str
+    created_at: float
+    last_login: Optional[float] = None
+    is_active: bool
+    must_change_password: bool
+    settings: Dict[str, Any] = Field(default_factory=dict)
+
+
 def _validate_uuid(uid: str) -> None:
     try:
         uuid.UUID(uid)
@@ -695,6 +831,272 @@ def read_root():
     with open(template_path, "r", encoding="utf-8") as f:
         return f.read()
 
+
+# =============================================================================
+# Authentication API Routes
+# =============================================================================
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+async def auth_login(credentials: LoginRequest):
+    """
+    Authenticate user with email and password.
+
+    Returns JWT access and refresh tokens if successful.
+    If must_change_password is True, the user should be redirected to change password.
+    """
+    auth_service = get_auth_service()
+    result = await auth_service.login(credentials.email, credentials.password)
+
+    if not result.success:
+        raise HTTPException(status_code=401, detail=result.error or "Invalid credentials")
+
+    return AuthResponse(
+        success=True,
+        user_id=result.user_id,
+        email=result.email,
+        name=result.name,
+        role=result.role,
+        must_change_password=result.must_change_password,
+        tokens=TokenResponse(
+            access_token=result.tokens.access_token,
+            refresh_token=result.tokens.refresh_token,
+            token_type=result.tokens.token_type,
+            expires_in=result.tokens.expires_in,
+        ) if result.tokens else None,
+    )
+
+
+@app.post("/api/auth/refresh", response_model=AuthResponse)
+async def auth_refresh(body: RefreshTokenRequest):
+    """
+    Refresh access token using a valid refresh token.
+
+    Returns new access and refresh tokens.
+    """
+    auth_service = get_auth_service()
+    result = await auth_service.refresh_tokens(body.refresh_token)
+
+    if not result.success:
+        raise HTTPException(status_code=401, detail=result.error or "Invalid refresh token")
+
+    return AuthResponse(
+        success=True,
+        user_id=result.user_id,
+        email=result.email,
+        name=result.name,
+        role=result.role,
+        must_change_password=result.must_change_password,
+        tokens=TokenResponse(
+            access_token=result.tokens.access_token,
+            refresh_token=result.tokens.refresh_token,
+            token_type=result.tokens.token_type,
+            expires_in=result.tokens.expires_in,
+        ) if result.tokens else None,
+    )
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def auth_get_current_user(request: Request):
+    """
+    Get current authenticated user's profile.
+
+    Requires valid JWT access token in Authorization header.
+    """
+    user = await _require_auth(request)
+    auth_service = get_auth_service()
+
+    full_user = await auth_service.get_current_user(
+        request.headers.get("authorization", "").split(" ", 1)[1].strip()
+    )
+
+    if not full_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    return UserResponse(**full_user)
+
+
+@app.put("/api/auth/me", response_model=UserResponse)
+async def auth_update_profile(body: UpdateUserRequest, request: Request):
+    """
+    Update current user's profile.
+
+    Can update name and settings.
+    """
+    user = await _require_auth(request)
+    manager = get_manager()
+
+    update_data = {}
+    if body.name is not None:
+        update_data["name"] = body.name
+    if body.settings is not None:
+        update_data["settings"] = body.settings
+
+    if update_data:
+        await manager.db.update_user(user["user_id"], **update_data)
+
+    updated_user = await manager.db.get_user_by_id(user["user_id"])
+    if not updated_user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    updated_user.pop("password_hash", None)
+    return UserResponse(**updated_user)
+
+
+@app.put("/api/auth/password")
+async def auth_change_password(body: ChangePasswordRequest, request: Request):
+    """
+    Change current user's password.
+
+    Requires current password for verification.
+    """
+    user = await _require_auth(request)
+    auth_service = get_auth_service()
+
+    success, message = await auth_service.change_password(
+        user["user_id"],
+        body.old_password,
+        body.new_password,
+    )
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"success": True, "message": message}
+
+
+# =============================================================================
+# Admin User Management API Routes
+# =============================================================================
+
+@app.get("/api/admin/users")
+async def admin_list_users(
+    request: Request,
+    role: Optional[str] = None,
+    active_only: bool = True,
+):
+    """
+    List all users (admin only).
+
+    Args:
+        role: Filter by role (admin/user)
+        active_only: Only return active users (default: True)
+    """
+    await _require_admin(request)
+    auth_service = get_auth_service()
+
+    users = await auth_service.list_users(role=role, active_only=active_only)
+    return {"users": users, "count": len(users)}
+
+
+@app.post("/api/admin/users")
+async def admin_create_user(body: CreateUserRequest, request: Request):
+    """
+    Create a new user (admin only).
+
+    Users can only be created by admins - no public registration.
+    """
+    admin = await _require_admin(request)
+    auth_service = get_auth_service()
+
+    success, message, user_id = await auth_service.create_user(
+        email=body.email,
+        password=body.password,
+        name=body.name,
+        role=body.role,
+        require_password_change=body.require_password_change,
+    )
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"success": True, "message": message, "user_id": user_id}
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, request: Request):
+    """
+    Delete a user (admin only).
+
+    Cannot delete your own account.
+    """
+    admin = await _require_admin(request)
+    auth_service = get_auth_service()
+
+    success, message = await auth_service.delete_user(user_id, admin["user_id"])
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"success": True, "message": message}
+
+
+@app.put("/api/admin/users/{user_id}/reset-password")
+async def admin_reset_password(user_id: str, body: ResetPasswordRequest, request: Request):
+    """
+    Reset a user's password (admin only).
+
+    Can optionally require password change on next login.
+    """
+    await _require_admin(request)
+    auth_service = get_auth_service()
+
+    success, message = await auth_service.reset_password(
+        user_id,
+        body.new_password,
+        require_change=body.require_change,
+    )
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"success": True, "message": message}
+
+
+@app.put("/api/admin/users/{user_id}/role")
+async def admin_update_role(
+    user_id: str,
+    request: Request,
+    role: str = Query(..., description="New role: admin or user"),
+):
+    """
+    Change a user's role (admin only).
+
+    Cannot remove your own admin privileges.
+    """
+    admin = await _require_admin(request)
+    auth_service = get_auth_service()
+
+    success, message = await auth_service.update_user_role(
+        user_id, role, admin["user_id"]
+    )
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"success": True, "message": message}
+
+
+@app.put("/api/admin/users/{user_id}/toggle-active")
+async def admin_toggle_user_active(user_id: str, request: Request):
+    """
+    Enable or disable a user (admin only).
+
+    Cannot disable your own account.
+    """
+    admin = await _require_admin(request)
+    auth_service = get_auth_service()
+
+    success, message = await auth_service.toggle_user_active(user_id, admin["user_id"])
+
+    if not success:
+        raise HTTPException(status_code=400, detail=message)
+
+    return {"success": True, "message": message}
+
+
+# =============================================================================
+# Memory API Routes
+# =============================================================================
 
 @app.post("/api/memories")
 async def add_memory(mem: MemoryInput, request: Request):

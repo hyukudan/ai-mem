@@ -16,6 +16,7 @@ Services:
 - ConsolidationService: Find and consolidate similar observations
 - UserMemoryService: User-scoped memory operations
 - IndexingService: Handle vector indexing
+- AuthService: User authentication and JWT tokens
 """
 
 from .listener import ListenerService
@@ -30,6 +31,7 @@ from .project import ProjectService
 from .consolidation import ConsolidationService
 from .user_memory import UserMemoryService
 from .indexing import IndexingService
+from .auth import AuthService
 
 __all__ = [
     "ListenerService",
@@ -44,4 +46,5 @@ __all__ = [
     "ConsolidationService",
     "UserMemoryService",
     "IndexingService",
+    "AuthService",
 ]

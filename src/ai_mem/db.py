@@ -12,9 +12,13 @@ from .exceptions import (
     DatabaseIntegrityError,
 )
 from .logging_config import get_logger, log_duration
-from .models import Observation, Session, ObservationIndex
+from .models import Observation, Session, ObservationIndex, User, UserRole
 
 logger = get_logger("db")
+
+# Default admin credentials - MUST be changed on first login
+DEFAULT_ADMIN_EMAIL = "admin@local"
+DEFAULT_ADMIN_PASSWORD = "changeme"
 
 
 class DatabaseManager:
@@ -159,6 +163,8 @@ class DatabaseManager:
         await self._ensure_asset_table()
         await self._ensure_event_idempotency_table()
         await self._ensure_entity_tables()
+        await self._ensure_user_tables()
+        await self._ensure_user_id_columns()
 
     def _tag_clause(
         self,
@@ -342,6 +348,389 @@ class DatabaseManager:
             "CREATE INDEX IF NOT EXISTS idx_entity_relations_obs ON entity_relations(observation_id)"
         )
         await self.conn.commit()
+
+    async def _ensure_user_tables(self) -> None:
+        """Create tables for user management."""
+        if not self.conn:
+            return
+        # Users table
+        await self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT,
+                name TEXT,
+                avatar_url TEXT,
+                role TEXT NOT NULL DEFAULT 'user',
+                oauth_provider TEXT,
+                oauth_id TEXT,
+                created_at REAL NOT NULL,
+                last_login REAL,
+                is_active INTEGER DEFAULT 1,
+                must_change_password INTEGER DEFAULT 0,
+                settings TEXT
+            )
+            """
+        )
+        # Indexes for user queries
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_oauth ON users(oauth_provider, oauth_id)"
+        )
+        await self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)"
+        )
+        await self.conn.commit()
+        logger.debug("User tables ensured")
+
+    async def _ensure_user_id_columns(self) -> None:
+        """Add user_id columns to sessions and observations for multi-user isolation."""
+        if not self.conn:
+            return
+
+        # Check sessions table
+        async with self.conn.execute("PRAGMA table_info(sessions)") as cursor:
+            rows = await cursor.fetchall()
+            session_columns = {row["name"] for row in rows}
+
+        if "user_id" not in session_columns:
+            await self.conn.execute("ALTER TABLE sessions ADD COLUMN user_id TEXT")
+            await self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)"
+            )
+            logger.info("Added user_id column to sessions table")
+            await self.conn.commit()
+
+        # Check observations table
+        async with self.conn.execute("PRAGMA table_info(observations)") as cursor:
+            rows = await cursor.fetchall()
+            obs_columns = {row["name"] for row in rows}
+
+        if "user_id" not in obs_columns:
+            await self.conn.execute("ALTER TABLE observations ADD COLUMN user_id TEXT")
+            await self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_observations_user ON observations(user_id)"
+            )
+            logger.info("Added user_id column to observations table")
+            await self.conn.commit()
+
+        # Check entities table
+        async with self.conn.execute("PRAGMA table_info(entities)") as cursor:
+            rows = await cursor.fetchall()
+            entity_columns = {row["name"] for row in rows}
+
+        if "user_id" not in entity_columns:
+            await self.conn.execute("ALTER TABLE entities ADD COLUMN user_id TEXT")
+            await self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entities_user ON entities(user_id)"
+            )
+            logger.info("Added user_id column to entities table")
+            await self.conn.commit()
+
+    # ==================== User Management Methods ====================
+
+    async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """Get a user by email address.
+
+        Args:
+            email: User email
+
+        Returns:
+            User dict or None
+        """
+        if not self.conn:
+            return None
+        async with self.conn.execute(
+            "SELECT * FROM users WHERE email = ?",
+            (email.lower(),),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return self._row_to_user(row) if row else None
+
+    async def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Get a user by ID.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            User dict or None
+        """
+        if not self.conn:
+            return None
+        async with self.conn.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return self._row_to_user(row) if row else None
+
+    async def get_user_by_oauth(
+        self, provider: str, oauth_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """Get a user by OAuth provider and ID.
+
+        Args:
+            provider: OAuth provider (google, github, etc.)
+            oauth_id: OAuth user ID
+
+        Returns:
+            User dict or None
+        """
+        if not self.conn:
+            return None
+        async with self.conn.execute(
+            "SELECT * FROM users WHERE oauth_provider = ? AND oauth_id = ?",
+            (provider, oauth_id),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return self._row_to_user(row) if row else None
+
+    async def create_user(
+        self,
+        email: str,
+        password_hash: Optional[str] = None,
+        name: Optional[str] = None,
+        role: str = "user",
+        oauth_provider: Optional[str] = None,
+        oauth_id: Optional[str] = None,
+        must_change_password: bool = False,
+        user_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Create a new user.
+
+        Args:
+            email: User email (unique)
+            password_hash: Hashed password (None for OAuth-only)
+            name: Display name
+            role: User role (admin/user)
+            oauth_provider: OAuth provider if using OAuth
+            oauth_id: OAuth user ID
+            must_change_password: Force password change on first login
+            user_id: Optional custom user ID
+
+        Returns:
+            User ID if created, None if email exists
+        """
+        if not self.conn:
+            return None
+
+        user_id = user_id or str(uuid.uuid4())
+        now = time.time()
+
+        try:
+            await self.conn.execute(
+                """
+                INSERT INTO users (
+                    id, email, password_hash, name, role,
+                    oauth_provider, oauth_id, created_at, is_active,
+                    must_change_password, settings
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, '{}')
+                """,
+                (
+                    user_id,
+                    email.lower(),
+                    password_hash,
+                    name,
+                    role,
+                    oauth_provider,
+                    oauth_id,
+                    now,
+                    1 if must_change_password else 0,
+                ),
+            )
+            await self.conn.commit()
+            logger.info(f"Created user: {email} (id={user_id}, role={role})")
+            return user_id
+        except sqlite3.IntegrityError:
+            logger.warning(f"User creation failed - email exists: {email}")
+            return None
+
+    async def update_user(
+        self,
+        user_id: str,
+        **kwargs,
+    ) -> bool:
+        """Update user fields.
+
+        Args:
+            user_id: User ID
+            **kwargs: Fields to update (name, avatar_url, settings, etc.)
+
+        Returns:
+            True if updated
+        """
+        if not self.conn or not kwargs:
+            return False
+
+        # Allowed fields for update
+        allowed_fields = {
+            "name", "avatar_url", "settings", "is_active",
+            "password_hash", "must_change_password", "last_login",
+            "oauth_provider", "oauth_id", "role"
+        }
+
+        updates = []
+        params = []
+        for key, value in kwargs.items():
+            if key not in allowed_fields:
+                continue
+            if key == "settings" and isinstance(value, dict):
+                value = json.dumps(value)
+            elif key in ("is_active", "must_change_password"):
+                value = 1 if value else 0
+            updates.append(f"{key} = ?")
+            params.append(value)
+
+        if not updates:
+            return False
+
+        params.append(user_id)
+        sql = f"UPDATE users SET {', '.join(updates)} WHERE id = ?"
+
+        async with self.conn.execute(sql, params) as cursor:
+            await self.conn.commit()
+            return cursor.rowcount > 0
+
+    async def delete_user(self, user_id: str) -> bool:
+        """Delete a user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            True if deleted
+        """
+        if not self.conn:
+            return False
+
+        async with self.conn.execute(
+            "DELETE FROM users WHERE id = ?",
+            (user_id,),
+        ) as cursor:
+            await self.conn.commit()
+            deleted = cursor.rowcount > 0
+
+        if deleted:
+            logger.info(f"Deleted user: {user_id}")
+
+        return deleted
+
+    async def list_users(
+        self,
+        role: Optional[str] = None,
+        active_only: bool = True,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """List all users.
+
+        Args:
+            role: Filter by role
+            active_only: Only return active users
+            limit: Maximum users to return
+
+        Returns:
+            List of user dicts
+        """
+        if not self.conn:
+            return []
+
+        conditions = []
+        params: List[Any] = []
+
+        if active_only:
+            conditions.append("is_active = 1")
+        if role:
+            conditions.append("role = ?")
+            params.append(role)
+
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        sql = f"""
+            SELECT * FROM users
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        async with self.conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
+
+        return [self._row_to_user(row) for row in rows]
+
+    async def get_user_count(self) -> int:
+        """Get total user count.
+
+        Returns:
+            Number of users
+        """
+        if not self.conn:
+            return 0
+
+        async with self.conn.execute("SELECT COUNT(*) as count FROM users") as cursor:
+            row = await cursor.fetchone()
+            return row["count"] if row else 0
+
+    async def ensure_default_admin(self, password_hash: str) -> Optional[str]:
+        """Ensure a default admin user exists.
+
+        Creates the default admin with must_change_password=True if no users exist.
+
+        Args:
+            password_hash: Hashed default password
+
+        Returns:
+            Admin user ID if created, None if users already exist
+        """
+        if not self.conn:
+            return None
+
+        # Check if any users exist
+        user_count = await self.get_user_count()
+        if user_count > 0:
+            return None
+
+        # Create default admin
+        logger.warning(
+            f"Creating default admin user: {DEFAULT_ADMIN_EMAIL} "
+            "(password must be changed on first login)"
+        )
+        return await self.create_user(
+            email=DEFAULT_ADMIN_EMAIL,
+            password_hash=password_hash,
+            name="Administrator",
+            role="admin",
+            must_change_password=True,
+        )
+
+    def _row_to_user(self, row: sqlite3.Row) -> Dict[str, Any]:
+        """Convert database row to user dict."""
+        settings = {}
+        if row["settings"]:
+            try:
+                settings = json.loads(row["settings"])
+            except json.JSONDecodeError:
+                pass
+
+        return {
+            "id": row["id"],
+            "email": row["email"],
+            "password_hash": row["password_hash"],
+            "name": row["name"],
+            "avatar_url": row["avatar_url"],
+            "role": row["role"],
+            "oauth_provider": row["oauth_provider"],
+            "oauth_id": row["oauth_id"],
+            "created_at": row["created_at"],
+            "last_login": row["last_login"],
+            "is_active": bool(row["is_active"]),
+            "must_change_password": bool(row["must_change_password"]),
+            "settings": settings,
+        }
 
     # ==================== Entity Graph Methods (Phase 4) ====================
 
@@ -837,11 +1226,11 @@ class DatabaseManager:
         )
         await self.conn.commit()
 
-    async def add_observation(self, obs: Observation) -> None:
+    async def add_observation(self, obs: Observation, user_id: Optional[str] = None) -> None:
         if not self.conn:
             logger.warning("Cannot add observation: database not connected")
             raise DatabaseConnectionError(str(self.db_path), "Database not connected")
-        logger.debug(f"Adding observation: id={obs.id}, type={obs.type}, project={obs.project}")
+        logger.debug(f"Adding observation: id={obs.id}, type={obs.type}, project={obs.project}, user_id={user_id}")
         start = time.perf_counter()
         try:
             await self.conn.execute(
@@ -860,9 +1249,10 @@ class DatabaseManager:
                     importance_score,
                     tags,
                     metadata,
-                    diff
+                    diff,
+                    user_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     obs.id,
@@ -879,6 +1269,7 @@ class DatabaseManager:
                     json.dumps(obs.tags),
                     json.dumps(obs.metadata),
                     obs.diff,
+                    user_id,
                 ),
             )
             await self.conn.commit()
@@ -1005,11 +1396,15 @@ class DatabaseManager:
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
         tag_filters: Optional[List[str]] = None,
+        user_id: Optional[str] = None,
     ) -> List[ObservationIndex]:
         if not self.conn:
             return []
         params: List[Any] = []
         conditions: List[str] = []
+        if user_id:
+            conditions.append("user_id = ?")
+            params.append(user_id)
         if project:
             conditions.append("project = ?")
             params.append(project)
@@ -1525,11 +1920,12 @@ class DatabaseManager:
         date_end: Optional[float] = None,
         tag_filters: Optional[List[str]] = None,
         limit: int = 20,
+        user_id: Optional[str] = None,
     ) -> List[ObservationIndex]:
         if not self.conn:
             logger.warning("Cannot search: database not connected")
             return []
-        logger.debug(f"FTS search: query='{query}', project={project}, limit={limit}")
+        logger.debug(f"FTS search: query='{query}', project={project}, user_id={user_id}, limit={limit}")
         start = time.perf_counter()
         conditions = []
         params: List[Any] = []
@@ -1539,6 +1935,11 @@ class DatabaseManager:
             safe_query = '"' + query.replace('"', '""') + '"'
             conditions.append("observations_fts MATCH ?")
             params.append(safe_query)
+
+        # User isolation - filter by user_id if provided
+        if user_id:
+            conditions.append("observations.user_id = ?")
+            params.append(user_id)
 
         if project:
             conditions.append("observations.project = ?")
@@ -1608,6 +2009,7 @@ class DatabaseManager:
         tag_filters: Optional[List[str]] = None,
         date_start: Optional[float] = None,
         date_end: Optional[float] = None,
+        user_id: Optional[str] = None,
     ) -> List[ObservationIndex]:
         if not self.conn:
             return []
@@ -1617,6 +2019,10 @@ class DatabaseManager:
             FROM observations
         """
         conditions = []
+        # User isolation - always filter by user_id first if provided
+        if user_id:
+            conditions.append("user_id = ?")
+            params.append(user_id)
         if project:
             conditions.append("project = ?")
             params.append(project)

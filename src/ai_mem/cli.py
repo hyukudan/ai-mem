@@ -3906,5 +3906,40 @@ def bug_report_cmd(
         print(report)
 
 
+@app.command(name="init")
+def init_cmd():
+    """Initialize the database and create default admin user.
+
+    This command should be run once during setup to:
+    1. Initialize the ai-mem database schema
+    2. Create a default admin user (admin@local / changeme)
+
+    Examples:
+        ai-mem init
+    """
+    async def _run():
+        manager = get_memory_manager()
+        await manager.initialize()
+        console.print("[green]Database initialized successfully.[/green]")
+
+        try:
+            from .services.auth import AuthService
+            auth_service = AuthService(manager.db)
+            user_id = await auth_service.ensure_default_admin()
+            if user_id:
+                console.print("[yellow]Default admin created:[/yellow]")
+                console.print("  Email: admin@local")
+                console.print("  Password: changeme")
+                console.print("  [bold red]*** CHANGE THIS PASSWORD ON FIRST LOGIN ***[/bold red]")
+            else:
+                console.print("[dim]Admin user already exists.[/dim]")
+        except Exception as e:
+            console.print(f"[red]Failed to create default admin: {e}[/red]")
+        finally:
+            await manager.close()
+
+    asyncio.run(_run())
+
+
 if __name__ == "__main__":
     app()
